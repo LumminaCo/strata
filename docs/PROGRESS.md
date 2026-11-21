@@ -1,0 +1,29 @@
+# Strata progress
+
+## M0 · Scaffold and development environment
+
+Status: implementation ready for milestone verification.
+
+| Acceptance check | State |
+| --- | --- |
+| Browser workspace in light and dark | Passed against Docker-hosted Vite+ and Axum. Keyboard activation, theme persistence, and backend readiness passed. |
+| `./x up` with all default services | Verification in progress. |
+| `./x check` | Vite+ format, lint and types, three transport tests, and production frontend build passed. Full workspace verification in progress. |
+| `./x test-int` | PostgreSQL 17, SQL Server 2022, and Oracle Free verified individually with public sample schemas and one million generated records each. |
+| Linux AppImage and Debian package build and launch | Verification in progress. |
+| Windows x64 NSIS build and launch | Verification in progress. The Windows runner executes the native launch under the Bundles workflow. |
+
+## Decisions
+
+- Use Strata for the project name and store the private repository under LumminaCo.
+- Stop after each milestone for owner review. Use conventional commits and one pull request per milestone.
+- Use Base UI with the shadcn Nova preset and system fonts. Reserve the browser-only tab shortcuts documented in SMOKE.md.
+- Run Linux Docker checks and fixture smoke tests on branch pushes and pull requests. Run the cross-platform Bundles workflow for version tags and manual dispatch.
+- Ship unsigned Windows installers and ad-hoc signed macOS arm64 bundles. The automated Windows smoke runs separately from the owner’s M8 acceptance on a Windows machine.
+- Use Pagila, AdventureWorksLT, and Oracle HR with synthetic data for edge cases and large result sets.
+- Publish fixture ports 15432, 11433, 11521, and 11522 on localhost to avoid collisions with other local projects. Use shared SELinux labels on the repository bind mount.
+- Keep the agreed scope adjustments and development orchestration decisions in the ADRs.
+
+## Next milestone
+
+M1 starts after owner review of M0. Build the core, local storage and PostgreSQL integration. Use the Rust integration suite to verify streaming and cancellation.

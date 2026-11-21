@@ -7,9 +7,9 @@ Status: implementation ready for milestone verification.
 | Acceptance check | State |
 | --- | --- |
 | Browser workspace in light and dark | Passed against Docker-hosted Vite+ and Axum. Keyboard activation, theme persistence, and backend readiness passed. |
-| `./x up` with all default services | Verification in progress. |
-| `./x check` | Vite+ format, lint and types, three transport tests, and production frontend build passed. Full workspace verification in progress. |
-| `./x test-int` | PostgreSQL 17, SQL Server 2022, and Oracle Free verified individually with public sample schemas and one million generated records each. |
+| `./x up` with all default services | Passed with Compose health checks and the browser smoke. |
+| `./x check` | Passed in Docker, including Rust formatting, lint and tests, Go vet and tests, Vite+ type checks, and three transport tests. No OpenSSL or native-tls crates in the workspace. |
+| `./x test-int` | Passed with the legacy profile. PostgreSQL 17, SQL Server 2022, Oracle Free, and Oracle XE 11g each verified with public sample schemas and one million generated records. |
 | Linux AppImage and Debian package build and launch | Verification in progress. |
 | Windows x64 NSIS build and launch | Verification in progress. The Windows runner executes the native launch under the Bundles workflow. |
 

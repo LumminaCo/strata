@@ -2,16 +2,21 @@
 
 ## M0 · Scaffold and development environment
 
-Status: implementation ready for milestone verification.
+Status: implementation complete. Native Windows startup and hosted CI are undergoing verification.
 
 | Acceptance check | State |
 | --- | --- |
 | Browser workspace in light and dark | Passed against Docker-hosted Vite+ and Axum. Keyboard activation, theme persistence, and backend readiness passed. |
 | `./x up` with all default services | Passed with Compose health checks and the browser smoke. |
 | `./x check` | Passed in Docker, including Rust formatting, lint and tests, Go vet and tests, Vite+ type checks, and three transport tests. No OpenSSL or native-tls crates in the workspace. |
-| `./x test-int` | Passed with the legacy profile. PostgreSQL 17, SQL Server 2022, Oracle Free, and Oracle XE 11g each verified with public sample schemas and one million generated records. |
-| Linux AppImage and Debian package build and launch | Verification in progress. |
+| `./x test-int` | Passed with the default and legacy profiles. PostgreSQL 17, SQL Server 2022, Oracle Free, and Oracle XE 11g each verified with public sample schemas and one million generated records. |
+| Linux AppImage and Debian package build and launch | Passed. Both bundles opened the Strata window under Xvfb on Fedora x64. |
 | Windows x64 NSIS build and launch | Verification in progress. The Windows runner executes the native launch under the Bundles workflow. |
+
+## Packaging notes
+
+- The Linux M0 AppImage is 93.96 MiB and the Debian package is 2.49 MiB. The AppImage is above the 35 MB installer budget measured at M8.
+- Windows cross-compilation uses NSIS 3.13. The Tauri installer template requires headers beyond the NSIS version packaged with Debian Bookworm.
 
 ## Decisions
 

@@ -11,7 +11,7 @@ Status: implementation complete. Native Windows startup and hosted CI are underg
 | `./x check` | Passed in Docker, including Rust formatting, lint and tests, Go vet and tests, Vite+ type checks, and three transport tests. No OpenSSL or native-tls crates in the workspace. |
 | `./x test-int` | Passed with the default and legacy profiles. PostgreSQL 17, SQL Server 2022, Oracle Free, and Oracle XE 11g each verified with public sample schemas and one million generated records. |
 | Linux AppImage and Debian package build and launch | Passed. Both bundles opened the Strata window under Xvfb on Fedora x64. |
-| Windows x64 NSIS build and launch | Verification in progress. The Windows runner executes the native launch under the Bundles workflow. |
+| Windows x64 NSIS build and launch | Cross-build passed. The 3.55 MiB installer contains the Strata x64 executable and WebView2 bootstrapper. Native startup is pending the Bundles workflow. |
 
 ## Packaging notes
 

@@ -64,7 +64,7 @@ RUN groupadd --non-unique --gid "$HOST_GID" strata \
 ARG NSIS_VERSION=3.13
 ARG NSIS_SOURCE_SHA256=a8ffe024602d46b6d766f9e1ce30c324ad2a24daeacd3efc2642d436a0c157ac
 ARG NSIS_DATA_SHA256=ba63dffc4410ee89193e1cb5a41989991bd77c61068da17e3156d136b7b0b3d8
-ENV NSISDIR="/opt/nsis-${NSIS_VERSION}"
+ENV NSISDIR="/opt/nsis-${NSIS_VERSION}" NSIS_PATH="/opt/nsis-${NSIS_VERSION}"
 RUN apt-get update && apt-get install --no-install-recommends -y scons zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 RUN set -eu; \
@@ -76,10 +76,10 @@ RUN set -eu; \
     cd "/tmp/nsis-${NSIS_VERSION}-src"; \
     scons -s -j "$(nproc)" VERSION="$NSIS_VERSION" VER_MAJOR="${NSIS_VERSION%%.*}" VER_MINOR="${NSIS_VERSION#*.}" \
       SKIPSTUBS=all SKIPPLUGINS=all SKIPUTILS=all SKIPMISC=all \
-      NSIS_CONFIG_CONST_DATA_PATH=no PREFIX="$NSISDIR" install-compiler; \
+      NSIS_CONFIG_CONST_DATA_PATH=yes PREFIX="$NSISDIR" PREFIX_BIN="$NSISDIR" PREFIX_DATA="$NSISDIR" install-compiler; \
     ln -s "$NSISDIR/makensis" /usr/local/bin/makensis; \
     test -f "$NSISDIR/Include/Win/RestartManager.nsh"; \
-    actual_version="$(makensis -VERSION)"; printf '%s\n' "$actual_version"; test "$actual_version" = "v$NSIS_VERSION"; \
+    actual_version="$(env -u NSISDIR makensis -VERSION)"; printf '%s\n' "$actual_version"; test "$actual_version" = "v$NSIS_VERSION"; \
     rm -rf /tmp/nsis-src.tar.bz2 /tmp/nsis-data.zip "/tmp/nsis-${NSIS_VERSION}-src"
 
 ENV PATH="/usr/local/go/bin:$PATH" \

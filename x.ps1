@@ -18,7 +18,9 @@ function Start-Databases {
         $random = [System.Security.Cryptography.RandomNumberGenerator]::Create()
         try {
             $lines = foreach ($key in $keys) {
-                $bytes = New-Object byte[] 16
+                # Oracle XE 11g limits passwords to 30 bytes.
+                $byteCount = if ($key.StartsWith("ORACLE_")) { 10 } else { 16 }
+                $bytes = New-Object byte[] $byteCount
                 $random.GetBytes($bytes)
                 "$key=Strata9_$([BitConverter]::ToString($bytes).Replace('-', '').ToLowerInvariant())"
             }

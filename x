@@ -10,7 +10,10 @@ ensure_env() {
       umask 077
       set -o noclobber
       for key in POSTGRES_PASSWORD MSSQL_SA_PASSWORD ORACLE_PASSWORD ORACLE_APP_PASSWORD STRATA_DEV_TOKEN; do
-        printf '%s=Strata9_%s\n' "$key" "$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+        bytes=16
+        # Oracle XE 11g limits passwords to 30 bytes.
+        if [[ "$key" == ORACLE_* ]]; then bytes=10; fi
+        printf '%s=Strata9_%s\n' "$key" "$(od -An -N"$bytes" -tx1 /dev/urandom | tr -d ' \n')"
       done > .env
     ) || [[ -f .env ]]
   fi

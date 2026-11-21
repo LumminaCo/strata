@@ -23,7 +23,7 @@ On Windows, run `.\x.ps1 up` with Docker Desktop. Keep the clone in the WSL2 fil
 | Oracle Free | `127.0.0.1:11521` | Service `FREEPDB1`, user `hr` |
 | Oracle XE 11g | `127.0.0.1:11522` | Service `XE`, user `hr` |
 
-Set `COMPOSE_PROFILES=legacy` to include Oracle 11g. Each engine includes a public sample schema, a type zoo, and one million synthetic records. Provenance and licenses are recorded in [dev/seed/README.md](dev/seed/README.md).
+Set `COMPOSE_PROFILES=legacy` to include Oracle 11g. Use Oracle fixture passwords of at most 30 bytes when customizing credentials for that profile. Each engine includes a public sample schema, a type zoo, and one million synthetic records. Provenance and licenses are recorded in [dev/seed/README.md](dev/seed/README.md).
 
 ## Desktop bundles
 

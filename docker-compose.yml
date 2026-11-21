@@ -50,6 +50,9 @@ services:
   web:
     <<: *dev
     command: ["just", "web"]
+    environment:
+      STRATA_WATCH_POLL: ${STRATA_WATCH_POLL:-0}
+      VITE_STRATA_DEV_TOKEN: ${STRATA_DEV_TOKEN:-}
     ports:
       - "127.0.0.1:5173:5173"
     depends_on:

@@ -1,6 +1,7 @@
 //! Commands shared by the desktop and browser development transports.
 
 mod engine;
+mod metadata;
 mod protocol;
 mod query;
 
@@ -18,16 +19,19 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub use engine::Engine;
+pub use metadata::{CatalogScope, CatalogSnapshot, Metadata};
 pub use protocol::*;
 
 pub struct AppService {
     engine: Engine,
     sessions: RwLock<HashMap<Uuid, Arc<Session>>>,
     profile_edit: Mutex<()>,
+    metadata: Metadata,
     keychain: bool,
 }
 
 struct Session {
+    connection_id: Uuid,
     production: bool,
     lifetime: CancellationToken,
     control: Mutex<RunControl>,
@@ -54,6 +58,7 @@ impl AppService {
             engine: Engine::open(paths)?,
             sessions: RwLock::default(),
             profile_edit: Mutex::default(),
+            metadata: Metadata::default(),
             keychain,
         })
     }
@@ -83,10 +88,15 @@ impl AppService {
                     .collect::<Vec<_>>(),
             ),
             Command::SaveConnection { profile, password } => {
-                json(self.save_connection(profile, password).await?)
+                let connection = self.save_connection(profile, password).await?;
+                if let Some(id) = connection.id {
+                    self.metadata.invalidate(&self.engine, id).await?;
+                }
+                json(connection)
             }
             Command::DeleteConnection { id } => {
                 self.delete_connection(id).await?;
+                self.metadata.invalidate(&self.engine, id).await?;
                 Ok(Value::Null)
             }
             Command::TestConnection { profile, password } => {
@@ -103,9 +113,13 @@ impl AppService {
             Command::ParseConnectionUrl { url } => json(parse_url(&url)?),
             Command::OpenSession {
                 connection_id,
+                database,
                 password,
             } => {
-                let profile = self.engine.profile(connection_id)?;
+                let mut profile = self.engine.profile(connection_id)?;
+                if let Some(database) = database {
+                    profile.database = database;
+                }
                 self.open_session(profile, password, lifetime)
                     .await
                     .and_then(json)
@@ -172,6 +186,43 @@ impl AppService {
                     confirmation: plan.confirmation,
                 })
             }
+            Command::ListDatabases { scope } => json(
+                self.metadata
+                    .catalog(&self.engine, &scope)
+                    .await?
+                    .databases()
+                    .await?,
+            ),
+            Command::ListSchemas { scope } => json(
+                self.metadata
+                    .catalog(&self.engine, &scope)
+                    .await?
+                    .schemas(false)
+                    .await?,
+            ),
+            Command::CatalogSnapshot { scope, schema } => json(
+                self.metadata
+                    .snapshot(&self.engine, &scope, schema)
+                    .await?
+                    .as_ref(),
+            ),
+            Command::RefreshMetadata { connection_id } => {
+                self.metadata
+                    .invalidate(&self.engine, connection_id)
+                    .await?;
+                Ok(Value::Null)
+            }
+            Command::HistoryList {
+                connection_id,
+                limit,
+            } => json(
+                self.engine
+                    .history(connection_id, limit.unwrap_or(100).clamp(1, 1_000))
+                    .await?
+                    .into_iter()
+                    .map(HistoryItem::from)
+                    .collect::<Vec<_>>(),
+            ),
             Command::WorkspaceLoad => {
                 let workspace = self.engine.workspace().await?;
                 let saved: Workspace = match workspace {
@@ -312,6 +363,7 @@ impl AppService {
         if lifetime.is_cancelled() {
             return Err(CoreError::Cancelled);
         }
+        let connection_id = profile.id;
         let production = profile.env == Environment::Prod;
         let started = Instant::now();
         let id = self
@@ -328,6 +380,7 @@ impl AppService {
         sessions.insert(
             id,
             Arc::new(Session {
+                connection_id,
                 production,
                 lifetime,
                 control: Mutex::default(),

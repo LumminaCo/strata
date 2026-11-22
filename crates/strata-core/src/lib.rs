@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use futures_util::Stream;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use ts_rs::TS;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -289,7 +290,7 @@ pub trait DbConnection: Send {
     fn is_closed(&self) -> bool;
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum ObjectKind {
     Table,
@@ -301,12 +302,13 @@ pub enum ObjectKind {
     Sequence,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 pub struct Object {
     pub oid: u32,
     pub schema: String,
     pub name: String,
     pub kind: ObjectKind,
+    #[ts(type = "number | null")]
     pub rows: Option<i64>,
     pub comment: Option<String>,
 }
@@ -342,6 +344,35 @@ pub trait Introspector: Send + Sync {
     async fn databases(&self) -> Result<Vec<String>>;
     async fn schemas(&self, include_system: bool) -> Result<Vec<String>>;
     async fn objects(&self, schema: &str, kinds: &[ObjectKind]) -> Result<Vec<Object>>;
+    async fn column_names(
+        &self,
+        schema: &str,
+    ) -> Result<std::collections::BTreeMap<u32, Vec<String>>> {
+        let mut columns = std::collections::BTreeMap::new();
+        for object in self
+            .objects(
+                schema,
+                &[
+                    ObjectKind::Table,
+                    ObjectKind::View,
+                    ObjectKind::MaterializedView,
+                    ObjectKind::ForeignTable,
+                ],
+            )
+            .await?
+        {
+            columns.insert(
+                object.oid,
+                self.table_detail(&object)
+                    .await?
+                    .columns
+                    .into_iter()
+                    .map(|column| column.name)
+                    .collect(),
+            );
+        }
+        Ok(columns)
+    }
     async fn table_detail(&self, object: &Object) -> Result<TableDetail>;
     async fn ddl(&self, object: &Object) -> Result<String>;
     async fn resolve(&self, identifier: &str) -> Result<Option<Object>>;

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ResultSet } from "@/components/result-grid";
 import type { EditorDiagnostic } from "@/components/sql-editor";
 import type {
+  CatalogScope,
   Cell,
   Connection,
   RunEvent,
@@ -37,7 +38,7 @@ interface Query {
 }
 
 type Modal =
-  | { kind: "password"; name: string; submit: (password: string) => void }
+  | { kind: "password"; name: string; submit: (password: string) => void; cancel?: () => void }
   | { kind: "query"; name: string; reason: string; sql: string; submit: () => void };
 
 const idle: Activity = { results: [], selected: null, messages: [] };
@@ -47,6 +48,8 @@ export function useWorkspace() {
   const [workspace, setWorkspace] = useState<Workspace>();
   const [activities, setActivities] = useState<Record<string, Activity>>({});
   const [modal, setModal] = useState<Modal>();
+  const [catalogRevision, setCatalogRevision] = useState(0);
+  const [historyRevision, setHistoryRevision] = useState(0);
   const [notice, setNotice] = useState("");
   const [loadAttempt, setLoadAttempt] = useState(0);
   const jobs = useRef(new Map<string, Job>());
@@ -102,12 +105,12 @@ export function useWorkspace() {
     setWorkspace((current) => current && { ...current, activeTab: id });
   }
 
-  function addTab(connectionId: string) {
+  function addTab(connectionId: string, database?: string, text = "") {
     if (!workspace || workspace.tabs.length >= 100) {
       setNotice("Close a tab before opening another.");
       return;
     }
-    const newTab = { id: crypto.randomUUID(), connectionId, text: "" };
+    const newTab = { id: crypto.randomUUID(), connectionId, database, text };
     setWorkspace((current) => current && { tabs: [...current.tabs, newTab], activeTab: newTab.id });
   }
 
@@ -169,6 +172,7 @@ export function useWorkspace() {
     const id = value.id;
     const alreadyExists = profiles.some((existing) => existing.id === id);
     passwords.current.delete(id);
+    setCatalogRevision((value) => value + 1);
     if (password !== undefined) passwords.current.set(id, password);
     setProfiles((current) =>
       alreadyExists
@@ -190,6 +194,7 @@ export function useWorkspace() {
     try {
       await dispatch("delete_connection", { id });
       passwords.current.delete(id);
+      setCatalogRevision((value) => value + 1);
       setProfiles((current) => current.filter((value) => value.id !== id));
       for (const item of tabs.filter((item) => item.connectionId === id)) {
         closeSession(item.id);
@@ -270,7 +275,11 @@ export function useWorkspace() {
         }));
         break;
       }
+      case "catalogChanged":
+        setCatalogRevision((value) => value + 1);
+        break;
       case "done":
+        setHistoryRevision((value) => value + 1);
         update(id, (current) => ({
           ...current,
           elapsed: event.elapsedMs,
@@ -324,7 +333,11 @@ export function useWorkspace() {
     try {
       const session =
         existing ??
-        (await dispatch("open_session", { connectionId: connection.id, password: credential }));
+        (await dispatch("open_session", {
+          connectionId: connection.id,
+          database: item.database,
+          password: credential,
+        }));
       if (job.stopped) {
         if (!existing) await dispatch("close_session", { sessionId: session.id });
         return;
@@ -482,8 +495,58 @@ export function useWorkspace() {
     return dispatch("get_cell", { sessionId: active.session.id, cursorId: result.id, row, column });
   }
 
+  function scope(connection: Connection, database?: string, prompt = false): Promise<CatalogScope> {
+    const connectionId = connection.id;
+    if (!connectionId) return Promise.reject(new Error("Save the connection first."));
+    const credentials = passwords.current.get(connectionId);
+    if (connection.secret !== "prompt" || credentials !== undefined || !prompt) {
+      return Promise.resolve({
+        connectionId,
+        database: database ?? null,
+        password: credentials ?? null,
+      });
+    }
+    return new Promise((resolve, reject) => {
+      setModal({
+        kind: "password",
+        name: connection.name,
+        cancel: () => reject(new Error("Enter a password to browse this connection.")),
+        submit(value) {
+          setModal(undefined);
+          passwords.current.set(connectionId, value);
+          resolve({ connectionId, database: database ?? null, password: value });
+        },
+      });
+    });
+  }
+
+  function dismissModal() {
+    if (modal?.kind === "password") modal.cancel?.();
+    setModal(undefined);
+  }
+
+  function setDatabase(id: string, database: string) {
+    closeSession(id);
+    jobs.current.delete(id);
+    update(id, () => idle);
+    setWorkspace(
+      (current) =>
+        current && {
+          ...current,
+          tabs: current.tabs.map((item) => (item.id === id ? { ...item, database } : item)),
+        },
+    );
+    setCatalogRevision((value) => value + 1);
+  }
+
   return {
     profiles,
+    catalogRevision,
+    historyRevision,
+    scope,
+    dismissModal,
+    setDatabase,
+    invalidateCatalog: () => setCatalogRevision((value) => value + 1),
     workspace,
     tabs,
     tab,

@@ -60,6 +60,26 @@ impl Introspector for Catalog {
             .collect())
     }
 
+    async fn column_names(
+        &self,
+        schema: &str,
+    ) -> Result<std::collections::BTreeMap<u32, Vec<String>>> {
+        let client = self.client().await?;
+        let rows = client
+            .query(include_str!("queries/completion_columns.sql"), &[&schema])
+            .await
+            .map_err(query_error)?;
+        let mut columns = std::collections::BTreeMap::<_, Vec<_>>::new();
+        for row in rows {
+            let oid: u32 = row.try_get(0).map_err(query_error)?;
+            columns
+                .entry(oid)
+                .or_default()
+                .push(row.try_get(1).map_err(query_error)?);
+        }
+        Ok(columns)
+    }
+
     async fn table_detail(&self, object: &Object) -> Result<TableDetail> {
         let mut client = self.client().await?;
         let tx = client

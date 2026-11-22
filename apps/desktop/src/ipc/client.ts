@@ -1,6 +1,9 @@
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 
 import type {
+  CatalogScope,
+  CatalogSnapshot,
+  HistoryItem,
   Cell,
   Connection,
   Page,
@@ -21,12 +24,17 @@ interface Commands {
   test_connection: [{ profile: Connection; password?: string }, SessionInfo];
   delete_connection: [{ id: string }, null];
   parse_connection_url: [{ url: string }, ParsedUrl];
-  open_session: [{ connectionId: string; password?: string }, SessionInfo];
+  open_session: [{ connectionId: string; database?: string; password?: string }, SessionInfo];
   close_session: [{ sessionId: string }, null];
   stop: [{ sessionId: string; runId?: string }, null];
   plan_query: [{ text: string; target: Target; mode: RunMode; production: boolean }, QueryPlan];
   fetch_more: [{ sessionId: string; cursorId: string; count: number }, Page];
   get_cell: [{ sessionId: string; cursorId: string; row: number; column: number }, Cell];
+  list_databases: [{ scope: CatalogScope }, string[]];
+  list_schemas: [{ scope: CatalogScope }, string[]];
+  catalog_snapshot: [{ scope: CatalogScope; schema: string }, CatalogSnapshot];
+  refresh_metadata: [{ connectionId: string }, null];
+  history_list: [{ connectionId: string; limit?: number }, HistoryItem[]];
   workspace_load: [undefined, Workspace];
   workspace_save: [{ workspace: Workspace }, null];
 }

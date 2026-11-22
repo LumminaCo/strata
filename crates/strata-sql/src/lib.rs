@@ -275,6 +275,20 @@ pub fn needs_mutation_confirmation(sql: &str) -> bool {
     }
 }
 
+/// Credential statements are usable in the editor but are not durable history.
+pub fn history_sql(sql: &str) -> &str {
+    let upper = sql.to_ascii_uppercase();
+    if upper.contains("PASSWORD")
+        || upper.contains("IDENTIFIED BY")
+        || upper.contains("CREDENTIAL")
+        || upper.contains("SECRET")
+    {
+        "-- Credential statement omitted"
+    } else {
+        sql
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

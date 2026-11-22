@@ -89,6 +89,43 @@ impl Database {
         Ok(())
     }
 
+    pub fn catalog(
+        &self,
+        profile: &str,
+        database: &str,
+        schema: &str,
+        min_time: i64,
+    ) -> Result<Option<String>> {
+        use rusqlite::OptionalExtension;
+        self.connection.query_row(
+            "SELECT payload FROM metadata_cache WHERE conn_id=?1 AND database_name=?2 AND schema_name=?3 AND fetched_at>=?4",
+            params![profile, database, schema, min_time], |row| row.get(0),
+        ).optional().map_err(io_error)
+    }
+
+    pub fn save_catalog(
+        &self,
+        profile: &str,
+        database: &str,
+        schema: &str,
+        payload: &str,
+        now: i64,
+    ) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO metadata_cache VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT (conn_id, database_name, schema_name) DO UPDATE SET payload=excluded.payload,fetched_at=excluded.fetched_at",
+            params![profile, database, schema, payload, now],
+        ).map_err(io_error)?;
+        Ok(())
+    }
+
+    pub fn clear_catalog(&self, profile: &str) -> Result<()> {
+        self.connection
+            .execute("DELETE FROM metadata_cache WHERE conn_id=?1", [profile])
+            .map_err(io_error)?;
+        Ok(())
+    }
+
     pub fn record_history(&mut self, entry: &HistoryEntry) -> Result<()> {
         let tx = self
             .connection
@@ -162,7 +199,7 @@ impl Source {
 }
 
 impl HistoryStatus {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Ok => "ok",
             Self::Error => "error",

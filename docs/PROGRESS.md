@@ -58,3 +58,9 @@ The Tauri window and browser workspace share a Rust service for PostgreSQL profi
 | Light and dark themes | Verified in Chromium. [Workspace screenshots](DESIGN.md#m2-postgresql-workspace) |
 
 The native runtime smoke used Linux with WebKitGTK. The next milestone is M3, covering the explorer, metadata, autocomplete, command palette, and history.
+
+## M3 · Explorer, metadata, and history
+
+- The explorer loads databases and schemas on demand and keeps the visible rows mounted. Catalog objects and columns use a five-minute memory and SQLite cache. Successful DDL refreshes loaded metadata.
+- Chromium expanded a PostgreSQL schema containing 2,000 tables in 125 ms on the local fixture with a cold cache. The explorer mounted 27 rows when the Tables group opened.
+- Verified `actor_id` completion after `a.` with `FROM actor AS a`, DDL refresh after creating a table, fuzzy search, and reopening SQL from history. `./x check` passed.

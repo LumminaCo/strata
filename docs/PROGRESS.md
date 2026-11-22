@@ -116,4 +116,10 @@ The native runtime smoke used Linux with WebKitGTK. The next milestone is M3, co
 | Windows x64 NSIS installer | 11.59 MiB |
 | macOS arm64 DMG | 14.88 MiB |
 
-The AppImage opened under Xvfb and exceeds the 35 MB target. The Windows and macOS startup-to-editor and one-connection idle memory budgets still need platform measurements, as does the interactive clean Windows acceptance checklist.
+The original AppImage opened under Xvfb and exceeded the 35 MB target. The follow-up results below use the updated Linux package and measurement procedure.
+
+## V1 performance and Codex MCP acceptance
+
+- The Linux AppImage is 15,608,312 bytes and opened under Xvfb. It ships Strata and the Oracle bridge and uses the host GTK 3 and WebKitGTK 4.1 libraries. The build enforces the 35 MB limit.
+- A fresh-process Linux probe on the Debian build opened a restored editor in 905–924 ms across three Xvfb runs. The first PostgreSQL row painted in 60–74 ms, and scrolling through 100,000 rows measured 7–8 ms at p95, with a 16 ms maximum. These measurements used one PostgreSQL session on the same host.
+- Codex completed `list_connections`, `describe_table` for `public.actor`, and `run_query` for actor ID 1 against the packaged binary and the synthetic Pagila fixture. The query returned one row. The local audit recorded all three calls as allowed with client `codex-mcp-client`. Codex was used for this acceptance pass. Claude Code connected to the server and reached its weekly model limit.

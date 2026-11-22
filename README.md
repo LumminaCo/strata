@@ -37,7 +37,7 @@ Session controls let you choose auto-commit or enter manual mode. Strata prompts
 
 ## Desktop bundles
 
-Use `./x bundle-linux` for the AppImage and Debian package, or `./x bundle-windows` for the Windows x64 NSIS installer. Bundles are copied to `artifacts/`. The Bundles workflow also builds the macOS arm64 disk image on a macOS runner. Each installer includes the Oracle sidecar. On Linux, the Debian installer uses system WebKitGTK libraries and the AppImage bundles them.
+Use `./x bundle-linux` for the AppImage and Debian package, or `./x bundle-windows` for the Windows x64 NSIS installer. Bundles are copied to `artifacts/`. The Bundles workflow also builds the macOS arm64 disk image on a macOS runner. Each installer includes the Oracle sidecar. Both Linux bundles use system GTK 3 and WebKitGTK 4.1. The Debian package declares these dependencies. Install them on the host before running the AppImage.
 
 Windows bundles are unsigned and may show a SmartScreen prompt. `embedBootstrapper` assumes a supported Windows installation with WebView2 Evergreen already present for offline installation. If the runtime is missing, the bootstrapper downloads it. [WebView2 installation decision](docs/adr/0003-webview2-bootstrapper.md)
 
@@ -47,10 +47,11 @@ macOS bundles use ad-hoc signing. After verifying that the bundle came from Lumm
 
 Set **Agent access** to **Read** on a connection that an MCP client may use. Use an OS keychain entry or an environment variable for the password. Use a database account with read privileges for production.
 
-Choose **Copy MCP config** in the native window, or register the installed binary with Claude Code.
+Choose **Copy MCP config** in the native window, or register the installed binary with your client.
 
 ```sh
 claude mcp add strata -- /path/to/strata mcp
+codex mcp add strata -- /path/to/strata mcp
 ```
 
 Example configuration for a client that accepts `mcpServers`:

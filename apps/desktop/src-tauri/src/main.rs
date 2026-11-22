@@ -1,5 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod benchmark;
+
+use benchmark::{Benchmark, benchmark_sample};
 use serde_json::Value;
 use strata_app::{AppService, Command, ErrorDto, Health, RunEvent, RunRequest};
 use tauri::{State, ipc::Channel};
@@ -61,9 +64,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(_) => return Err("Use strata, strata --version, or strata mcp".into()),
         None => {}
     }
-    tauri::Builder::default()
+    let benchmark = Benchmark::open()?;
+    let mut builder = tauri::Builder::default();
+    if benchmark.enabled() {
+        builder = builder.plugin(
+            tauri::plugin::Builder::<tauri::Wry>::new("benchmark")
+                .js_init_script(include_str!("../../../../dev/benchmark-webview.js"))
+                .build(),
+        );
+    }
+    builder
+        .manage(benchmark)
         .manage(AppService::open(true)?)
-        .invoke_handler(tauri::generate_handler![health, dispatch, run_query])
+        .invoke_handler(tauri::generate_handler![
+            health,
+            dispatch,
+            run_query,
+            benchmark_sample
+        ])
         .run(tauri::generate_context!())?;
     Ok(())
 }

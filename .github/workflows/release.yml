@@ -72,7 +72,7 @@ jobs:
           path: artifacts
           github-token: ${{ github.token }}
           run-id: ${{ inputs.windows_artifact_run || github.run_id }}
-      - name: Install and open the Windows bundle
+      - name: Install the Windows bundle
         shell: pwsh
         run: |
           $installer = Get-ChildItem artifacts -Filter '*.exe' | Select-Object -First 1
@@ -82,6 +82,31 @@ jobs:
           $binary = Join-Path $destination "strata.exe"
           $bridge = Join-Path $destination "oracle-bridge.exe"
           if (!(Test-Path $bridge)) { throw "The Oracle sidecar is missing from the installation." }
+          "STRATA_BUNDLE_BIN=$binary" >> $env:GITHUB_ENV
+          "Windows installer bytes $($installer.Length)" >> $env:GITHUB_STEP_SUMMARY
+      - uses: actions/setup-python@v6
+        if: ${{ !inputs.windows_artifact_run }}
+        with:
+          python-version: "3.12"
+      - name: Measure Windows editor and connected webview
+        if: ${{ !inputs.windows_artifact_run }}
+        shell: pwsh
+        run: |
+          python -m pip install psutil==7.2.2
+          python dev/benchmark-desktop.py "$env:STRATA_BUNDLE_BIN" --pg-bin "$env:PGBIN" |
+            Tee-Object -FilePath windows-performance.jsonl
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-Content windows-performance.jsonl >> $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v7
+        if: ${{ !inputs.windows_artifact_run }}
+        with:
+          name: strata-windows-performance
+          path: windows-performance.jsonl
+          if-no-files-found: error
+      - name: Open the Windows bundle and initialize MCP
+        shell: pwsh
+        run: |
+          $binary = $env:STRATA_BUNDLE_BIN
           $env:STRATA_HOME = Join-Path $env:RUNNER_TEMP "strata-smoke-home"
           $clock = [System.Diagnostics.Stopwatch]::StartNew()
           $process = Start-Process $binary -PassThru
@@ -101,7 +126,6 @@ jobs:
           } finally {
             if (!$process.HasExited) { Stop-Process -Id $process.Id }
           }
-          "Windows installer bytes $($installer.Length)" >> $env:GITHUB_STEP_SUMMARY
           "Windows startup to window title $($clock.ElapsedMilliseconds) ms" >> $env:GITHUB_STEP_SUMMARY
           Write-Host "Windows startup to window title $($clock.ElapsedMilliseconds) ms"
           $start = [System.Diagnostics.ProcessStartInfo]::new()
@@ -177,7 +201,14 @@ jobs:
       - run: cargo test --locked --workspace
       - run: cargo tauri build --target aarch64-apple-darwin --bundles dmg -- --locked
         working-directory: apps/desktop
-      - name: Verify the mounted DMG
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Prepare the macOS benchmark fixture
+        run: |
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install postgresql@17
+          python -m pip install psutil==7.2.2
+      - name: Verify and measure the mounted DMG
         run: |
           disk="$(find target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)"
           mount="$RUNNER_TEMP/strata-dmg"
@@ -188,6 +219,13 @@ jobs:
           test -x "$binaries/oracle-bridge"
           "$binaries/strata" --version
           printf 'macOS installer bytes %s\n' "$(stat -f %z "$disk")" >> "$GITHUB_STEP_SUMMARY"
+          python dev/benchmark-desktop.py "$binaries/strata" --pg-bin "$(brew --prefix postgresql@17)/bin" | tee macos-performance.jsonl
+          cat macos-performance.jsonl >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: strata-macos-performance
+          path: macos-performance.jsonl
+          if-no-files-found: error
       - uses: actions/upload-artifact@v7
         with:
           name: strata-macos-arm64

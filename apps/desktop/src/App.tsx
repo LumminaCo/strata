@@ -74,7 +74,8 @@ export function App() {
   const schemaActive = schemaTabs.find((item) => inspectionKey(item) === schemaSelected);
   const pinned = tab ? (pinnedByTab[tab.id] ?? []) : [];
   const [entries, setEntries] = useState<CatalogEntry[]>([]);
-  const defaultSchema = active.session?.schema ?? "public";
+  const defaultSchema =
+    active.session?.schema ?? (profile?.kind === "sqlserver" ? "dbo" : "public");
   const catalog = useCatalogSchema(profile, tab, data.catalogRevision, defaultSchema, data.scope);
   const editor = useRef<EditorHandle>(null);
   const editors = useRef(new Map<string, { current: EditorState | null }>());
@@ -167,7 +168,7 @@ export function App() {
       }
       const entry = {
         connection: profile,
-        database: tab.database ?? profile.database,
+        database: object.database,
         object: object.object,
         column: object.column ?? undefined,
       };
@@ -603,6 +604,7 @@ export function App() {
                       savedState={state}
                       schema={catalog.completion}
                       defaultSchema={defaultSchema}
+                      kind={profile?.kind}
                       onNavigate={(offset, full) => void navigate(offset, full)}
                       diagnostic={active.diagnostic}
                       onChange={(text) => data.editText(tab.id, text)}

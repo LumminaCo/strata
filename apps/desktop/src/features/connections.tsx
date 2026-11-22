@@ -23,7 +23,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
-import type { Connection } from "@/ipc/bindings/protocol";
+import type { Connection, DriverOptions } from "@/ipc/bindings/protocol";
 import { browserMode, dispatch, errorMessage } from "@/ipc/client";
 
 export const emptyConnection: Connection = {
@@ -39,7 +39,20 @@ export const emptyConnection: Connection = {
   readOnly: false,
   tls: "prefer",
   color: null,
+  options: null,
   folder: null,
+};
+
+const emptyOptions: DriverOptions = {
+  instance: null,
+  auth: null,
+  encrypt: null,
+  encryption: null,
+  trust_server_cert: null,
+  service_name: null,
+  sid: null,
+  descriptor: null,
+  role: null,
 };
 
 interface ConnectionDialogProps {
@@ -57,7 +70,17 @@ export function ConnectionDialog({ initial, onSave, onClose }: ConnectionDialogP
   );
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<{ text: string; error?: boolean }>();
-  const source = profile.secret.startsWith("env:") ? "env" : profile.secret;
+  const options = profile.options ?? emptyOptions;
+  const windowsAuth = profile.kind === "sqlserver" && options.auth === "windows";
+  const source = windowsAuth
+    ? "windows"
+    : profile.secret.startsWith("env:")
+      ? "env"
+      : profile.secret;
+
+  function option<K extends keyof DriverOptions>(key: K, value: DriverOptions[K]) {
+    field("options", { ...options, [key]: value });
+  }
 
   function field<K extends keyof Connection>(key: K, value: Connection[K]) {
     setProfile((current) => ({ ...current, [key]: value }));
@@ -65,7 +88,11 @@ export function ConnectionDialog({ initial, onSave, onClose }: ConnectionDialogP
   }
 
   function connection() {
-    return { ...profile, secret: source === "env" ? `env:${envVariable.trim()}` : source };
+    return {
+      ...profile,
+      secret:
+        source === "env" ? `env:${envVariable.trim()}` : source === "windows" ? "prompt" : source,
+    };
   }
 
   async function action(work: () => Promise<void>) {
@@ -100,6 +127,8 @@ export function ConnectionDialog({ initial, onSave, onClose }: ConnectionDialogP
       const { password: parsedPassword, ...details } = await dispatch("parse_connection_url", {
         url,
       });
+      if (initial.id && details.kind !== initial.kind)
+        throw new Error("The URL uses a different database driver.");
       setProfile((current) => ({
         ...current,
         ...details,
@@ -109,6 +138,24 @@ export function ConnectionDialog({ initial, onSave, onClose }: ConnectionDialogP
       if (parsedPassword !== null) setPassword(parsedPassword);
       setUrl("");
     });
+  }
+
+  function sqlServerFixture() {
+    setProfile({
+      ...emptyConnection,
+      id: profile.id,
+      name: "Local SQL Server",
+      kind: "sqlserver",
+      host: "mssql",
+      port: 1433,
+      database: "AdventureWorksLT2022",
+      user: "sa",
+      secret: "env:SQLCMDPASSWORD",
+      options: { ...emptyOptions, encryption: "on", trust_server_cert: true },
+    });
+    setEnvVariable("SQLCMDPASSWORD");
+    setPassword(undefined);
+    setFeedback(undefined);
   }
 
   function localFixture() {
@@ -136,7 +183,7 @@ export function ConnectionDialog({ initial, onSave, onClose }: ConnectionDialogP
       <DialogContent className="connection-dialog" showCloseButton={!busy}>
         <DialogHeader>
           <DialogTitle>{initial.id ? "Edit connection" : "New connection"}</DialogTitle>
-          <DialogDescription>PostgreSQL</DialogDescription>
+          <DialogDescription>Configure a database connection.</DialogDescription>
         </DialogHeader>
         <div className="url-row">
           <Input
@@ -144,7 +191,7 @@ export function ConnectionDialog({ initial, onSave, onClose }: ConnectionDialogP
             type="password"
             autoComplete="off"
             spellCheck={false}
-            placeholder="postgresql://…"
+            placeholder="postgresql://… or jdbc:sqlserver://…"
             value={url}
             onChange={(event) => setUrl(event.target.value)}
           />
@@ -153,18 +200,49 @@ export function ConnectionDialog({ initial, onSave, onClose }: ConnectionDialogP
           </Button>
         </div>
         {browserMode && import.meta.env.DEV && !initial.id && (
-          <Button
-            type="button"
-            variant="ghost"
-            className="fixture-button"
-            disabled={busy}
-            onClick={localFixture}
-          >
-            <Database /> Use local PostgreSQL
-          </Button>
+          <div className="toolbar-actions">
+            <Button
+              type="button"
+              variant="ghost"
+              className="fixture-button"
+              disabled={busy}
+              onClick={localFixture}
+            >
+              <Database /> Use local PostgreSQL
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              className="fixture-button"
+              disabled={busy}
+              onClick={sqlServerFixture}
+            >
+              <Database /> Use local SQL Server
+            </Button>
+          </div>
         )}
         <form onSubmit={save} className="connection-form">
           <fieldset disabled={busy} className="connection-fields">
+            <Field name="connection-kind" label="Driver">
+              <NativeSelect
+                id="connection-kind"
+                value={profile.kind}
+                disabled={!!initial.id}
+                onChange={(event) => {
+                  const kind = event.target.value as Connection["kind"];
+                  setProfile((current) => ({
+                    ...current,
+                    kind,
+                    options: null,
+                    port: kind === "sqlserver" ? 1433 : 5432,
+                    database: kind === "sqlserver" ? "master" : "postgres",
+                  }));
+                }}
+              >
+                <NativeSelectOption value="postgres">PostgreSQL</NativeSelectOption>
+                <NativeSelectOption value="sqlserver">SQL Server</NativeSelectOption>
+              </NativeSelect>
+            </Field>
             <Field name="connection-name" label="Name">
               <Input
                 id="connection-name"
@@ -216,7 +294,8 @@ export function ConnectionDialog({ initial, onSave, onClose }: ConnectionDialogP
             <Field name="connection-user" label="User">
               <Input
                 id="connection-user"
-                required
+                required={!windowsAuth}
+                disabled={windowsAuth}
                 value={profile.user}
                 onChange={(event) => field("user", event.target.value)}
               />
@@ -226,7 +305,15 @@ export function ConnectionDialog({ initial, onSave, onClose }: ConnectionDialogP
                 id="connection-secret"
                 value={source}
                 onChange={(event) => {
-                  field("secret", event.target.value === "env" ? "env:" : event.target.value);
+                  const chosen = event.target.value;
+                  setProfile((current) => ({
+                    ...current,
+                    secret: chosen === "env" ? "env:" : chosen === "windows" ? "prompt" : chosen,
+                    options:
+                      current.kind === "sqlserver"
+                        ? { ...options, auth: chosen === "windows" ? "windows" : null }
+                        : current.options,
+                  }));
                   setPassword(undefined);
                 }}
               >
@@ -235,6 +322,11 @@ export function ConnectionDialog({ initial, onSave, onClose }: ConnectionDialogP
                   <NativeSelectOption value="keychain">OS keychain</NativeSelectOption>
                 )}
                 <NativeSelectOption value="env">Environment variable</NativeSelectOption>
+                {profile.kind === "sqlserver" &&
+                  !browserMode &&
+                  navigator.userAgent.includes("Windows") && (
+                    <NativeSelectOption value="windows">Windows integrated</NativeSelectOption>
+                  )}
               </NativeSelect>
             </Field>
             {source === "env" ? (
@@ -248,34 +340,68 @@ export function ConnectionDialog({ initial, onSave, onClose }: ConnectionDialogP
                 />
               </Field>
             ) : (
-              <Field name="connection-password" label="Password">
-                <Input
-                  id="connection-password"
-                  type="password"
-                  autoComplete="off"
-                  value={password ?? ""}
-                  placeholder={
-                    initial.secret === "keychain" && initial.id
-                      ? "Keep saved password"
-                      : "Enter to test or open"
-                  }
-                  onChange={(event) => setPassword(event.target.value)}
-                />
+              !windowsAuth && (
+                <Field name="connection-password" label="Password">
+                  <Input
+                    id="connection-password"
+                    type="password"
+                    autoComplete="off"
+                    value={password ?? ""}
+                    placeholder={
+                      initial.secret === "keychain" && initial.id
+                        ? "Keep saved password"
+                        : "Enter to test or open"
+                    }
+                    onChange={(event) => setPassword(event.target.value)}
+                  />
+                </Field>
+              )
+            )}
+            {profile.kind === "sqlserver" ? (
+              <>
+                <Field name="connection-instance" label="Named instance">
+                  <Input
+                    id="connection-instance"
+                    value={options.instance ?? ""}
+                    onChange={(event) => option("instance", event.target.value || null)}
+                  />
+                </Field>
+                <Field name="connection-encrypt" label="Encryption">
+                  <NativeSelect
+                    id="connection-encrypt"
+                    value={options.encryption ?? (options.encrypt === false ? "off" : "on")}
+                    onChange={(event) => option("encryption", event.target.value)}
+                  >
+                    <NativeSelectOption value="on">On</NativeSelectOption>
+                    <NativeSelectOption value="off">Off</NativeSelectOption>
+                    <NativeSelectOption value="strict">Strict</NativeSelectOption>
+                  </NativeSelect>
+                </Field>
+                <Label className="read-only-field">
+                  <input
+                    type="checkbox"
+                    checked={!!options.trust_server_cert && options.encryption !== "strict"}
+                    disabled={options.encryption === "strict"}
+                    onChange={(event) => option("trust_server_cert", event.target.checked)}
+                  />
+                  Trust server certificate
+                </Label>
+              </>
+            ) : (
+              <Field name="connection-tls" label="TLS">
+                <NativeSelect
+                  id="connection-tls"
+                  value={profile.tls}
+                  onChange={(event) => field("tls", event.target.value as Connection["tls"])}
+                >
+                  <NativeSelectOption value="prefer">Prefer</NativeSelectOption>
+                  <NativeSelectOption value="disable">Disable</NativeSelectOption>
+                  <NativeSelectOption value="require">Require</NativeSelectOption>
+                  <NativeSelectOption value="verify-ca">Verify CA</NativeSelectOption>
+                  <NativeSelectOption value="verify-full">Verify full</NativeSelectOption>
+                </NativeSelect>
               </Field>
             )}
-            <Field name="connection-tls" label="TLS">
-              <NativeSelect
-                id="connection-tls"
-                value={profile.tls}
-                onChange={(event) => field("tls", event.target.value as Connection["tls"])}
-              >
-                <NativeSelectOption value="prefer">Prefer</NativeSelectOption>
-                <NativeSelectOption value="disable">Disable</NativeSelectOption>
-                <NativeSelectOption value="require">Require</NativeSelectOption>
-                <NativeSelectOption value="verify-ca">Verify CA</NativeSelectOption>
-                <NativeSelectOption value="verify-full">Verify full</NativeSelectOption>
-              </NativeSelect>
-            </Field>
             <Field name="connection-folder" label="Folder">
               <Input
                 id="connection-folder"

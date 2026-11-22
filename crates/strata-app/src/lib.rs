@@ -33,6 +33,7 @@ pub struct AppService {
 }
 
 struct Session {
+    kind: DbKind,
     connection_id: Uuid,
     production: bool,
     lifetime: CancellationToken,
@@ -155,6 +156,22 @@ impl AppService {
                         .await?,
                 ))
             }
+            Command::NextResult {
+                session_id,
+                cursor_id,
+                count,
+            } => {
+                let mut batch = self
+                    .engine
+                    .core()
+                    .next_result(session_id, cursor_id, count.clamp(1, 500), None)
+                    .await?;
+                json(NextResult {
+                    cursor_id: batch.cursor,
+                    columns: std::mem::take(&mut batch.columns),
+                    page: batch.into(),
+                })
+            }
             Command::GetCell {
                 session_id,
                 cursor_id,
@@ -167,6 +184,7 @@ impl AppService {
                     .await?,
             )),
             Command::PlanQuery {
+                kind,
                 text,
                 target,
                 mode,
@@ -178,6 +196,7 @@ impl AppService {
                     mode,
                     self.engine.config().settings.blank_line_delimiter,
                     production,
+                    inspection::dialect(kind.unwrap_or(DbKind::Postgres)),
                 )?;
                 json(QueryPlan {
                     statements: plan
@@ -278,8 +297,8 @@ impl AppService {
     }
 
     fn candidate(&self, input: Connection) -> Result<Profile> {
-        if input.kind != DbKind::Postgres {
-            return Err(CoreError::config("Only PostgreSQL is available"));
+        if input.kind == DbKind::Oracle {
+            return Err(CoreError::config("The Oracle driver is unavailable"));
         }
         if input.secret == "keychain" && !self.keychain {
             return Err(CoreError::config(
@@ -290,7 +309,7 @@ impl AppService {
         let mut profile = previous.unwrap_or_else(|| Profile {
             id: Uuid::now_v7(),
             name: String::new(),
-            kind: DbKind::Postgres,
+            kind: input.kind,
             env: Environment::Dev,
             color: None,
             folder: None,
@@ -306,6 +325,10 @@ impl AppService {
             options: Default::default(),
         });
         profile.name = input.name.trim().into();
+        profile.kind = input.kind;
+        if let Some(options) = input.options {
+            profile.options = options;
+        }
         profile.env = input.env;
         profile.color = input.color.filter(|value| !value.is_empty());
         profile.folder = input
@@ -396,6 +419,7 @@ impl AppService {
             return Err(CoreError::Cancelled);
         }
         let connection_id = profile.id;
+        let kind = profile.kind;
         let production = profile.env == Environment::Prod;
         let started = Instant::now();
         let id = self
@@ -412,6 +436,7 @@ impl AppService {
         sessions.insert(
             id,
             Arc::new(Session {
+                kind,
                 connection_id,
                 production,
                 lifetime,
@@ -497,6 +522,7 @@ impl From<Profile> for Connection {
             secret: profile.secret,
             read_only: profile.read_only,
             tls: profile.tls.mode,
+            options: Some(profile.options),
         }
     }
 }
@@ -504,6 +530,9 @@ impl From<Profile> for Connection {
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ParsedUrl {
+    #[ts(type = "Connection['kind']")]
+    kind: DbKind,
+    options: Option<strata_core::DriverOptions>,
     host: String,
     port: u16,
     database: String,
@@ -514,6 +543,9 @@ pub struct ParsedUrl {
 }
 
 fn parse_url(value: &str) -> Result<ParsedUrl> {
+    if let Some(value) = value.trim().strip_prefix("jdbc:sqlserver://") {
+        return parse_sql_server_url(value);
+    }
     let url = url::Url::parse(value.trim())
         .map_err(|_| CoreError::config("Enter a valid PostgreSQL URL"))?;
     if !matches!(url.scheme(), "postgres" | "postgresql") {
@@ -547,6 +579,8 @@ fn parse_url(value: &str) -> Result<ParsedUrl> {
         };
     }
     Ok(ParsedUrl {
+        kind: DbKind::Postgres,
+        options: None,
         host: host.trim_matches(['[', ']']).into(),
         port: url.port().unwrap_or(5432),
         database: decode(url.path().trim_start_matches('/'))?,
@@ -554,6 +588,108 @@ fn parse_url(value: &str) -> Result<ParsedUrl> {
         password: url.password().map(decode).transpose()?,
         tls,
     })
+}
+
+fn parse_sql_server_url(value: &str) -> Result<ParsedUrl> {
+    let (address, options) = value.split_once(';').unwrap_or((value, ""));
+    let (address, instance) = address
+        .split_once('\\')
+        .map_or((address, None), |(host, instance)| {
+            (host, Some(instance.to_owned()))
+        });
+    let url = url::Url::parse(&format!("tcp://{address}"))
+        .map_err(|_| CoreError::config("Enter a valid SQL Server host and port"))?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| CoreError::config("The URL needs a host"))?;
+    let mut parsed = ParsedUrl {
+        kind: DbKind::SqlServer,
+        options: None,
+        host: host.trim_matches(['[', ']']).into(),
+        port: url.port().unwrap_or(1433),
+        database: "master".into(),
+        user: String::new(),
+        password: None,
+        tls: TlsMode::Require,
+    };
+    let mut properties = strata_core::DriverOptions {
+        instance,
+        ..Default::default()
+    };
+    let mut rest = options;
+    while !rest.trim().is_empty() {
+        let (key, value) = rest
+            .split_once('=')
+            .ok_or_else(|| CoreError::config("Invalid SQL Server URL property"))?;
+        let (value, next) = if let Some(braced) = value.strip_prefix('{') {
+            let mut decoded = String::new();
+            let mut chars = braced.char_indices().peekable();
+            let end = loop {
+                let Some((at, ch)) = chars.next() else {
+                    return Err(CoreError::config("Unterminated SQL Server URL value"));
+                };
+                if ch == '}' {
+                    if chars.next_if(|(_, next)| *next == '}').is_some() {
+                        decoded.push('}');
+                    } else {
+                        break at + 1;
+                    }
+                } else {
+                    decoded.push(ch);
+                }
+            };
+            let next = &braced[end..];
+            (
+                decoded,
+                if next.is_empty() {
+                    next
+                } else {
+                    next.strip_prefix(';').ok_or_else(|| {
+                        CoreError::config("Invalid SQL Server URL property separator")
+                    })?
+                },
+            )
+        } else {
+            let (value, next) = value.split_once(';').unwrap_or((value, ""));
+            (value.to_owned(), next)
+        };
+        rest = next;
+        match key.trim().to_ascii_lowercase().as_str() {
+            "databasename" | "database" => parsed.database = value,
+            "user" | "username" => parsed.user = value,
+            "password" => parsed.password = Some(value),
+            "instancename" => properties.instance = Some(value),
+            "encrypt" => {
+                properties.encryption = Some(
+                    match value.to_ascii_lowercase().as_str() {
+                        "false" | "off" => "off",
+                        "true" | "on" => "on",
+                        "strict" => "strict",
+                        _ => {
+                            return Err(CoreError::config(
+                                "Unsupported SQL Server encryption mode",
+                            ));
+                        }
+                    }
+                    .into(),
+                )
+            }
+            "trustservercertificate" => {
+                properties.trust_server_cert = Some(value.eq_ignore_ascii_case("true"))
+            }
+            "integratedsecurity" if value.eq_ignore_ascii_case("true") => {
+                properties.auth = Some("windows".into())
+            }
+            "integratedsecurity" => {}
+            _ => {
+                return Err(CoreError::config(
+                    "The URL contains an unsupported SQL Server property",
+                ));
+            }
+        }
+    }
+    parsed.options = Some(properties);
+    Ok(parsed)
 }
 
 fn elapsed_ms(started: Instant) -> u32 {

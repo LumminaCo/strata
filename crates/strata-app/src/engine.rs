@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use strata_core::{Core, CoreError, Driver, Introspector, Limits, Profile, Result, Secret};
+use strata_driver_mssql::SqlServer;
 use strata_driver_postgres::Postgres;
 use strata_store::{
     Config, ConfigStore, ConfigUpdate, Database, HistoryEntry, Keychain, Paths, WatchedConfig,
@@ -25,7 +26,10 @@ impl Engine {
             row_cap: settings.row_cap,
             timeout_ms: settings.statement_timeout_ms,
         };
-        let core = Core::new([Arc::new(Postgres) as Arc<dyn Driver>], limits)?;
+        let core = Core::new(
+            [Arc::new(Postgres) as Arc<dyn Driver>, Arc::new(SqlServer)],
+            limits,
+        )?;
         Ok(Self {
             paths,
             config,
@@ -130,7 +134,11 @@ impl Engine {
 
 async fn resolve_secret(profile: Profile, prompted: Option<Secret>) -> Result<(Profile, Secret)> {
     tokio::task::spawn_blocking(move || {
-        let secret = Keychain::resolve(&profile, prompted)?;
+        let secret = if profile.options.auth.as_deref() == Some("windows") {
+            Secret::new(String::new())
+        } else {
+            Keychain::resolve(&profile, prompted)?
+        };
         Ok((profile, secret))
     })
     .await

@@ -93,5 +93,27 @@ The native runtime smoke used Linux with WebKitGTK. The next milestone is M3, co
 
 ## M8 · Safety, settings, and packaging
 
-- Chromium verified production confirmation, manual Commit and Rollback, and the rollback prompt on tab close. Settings persisted and applied a reduced fetch size and row cap when opening a new session.
-- Added SQL file open and download, platform installer smoke steps, and a Linux window-startup and memory probe.
+- `./x check` and `COMPOSE_PROFILES=legacy ./x test-int` passed, including MCP and database fixtures for PostgreSQL 17, SQL Server 2022, Oracle 23ai Free, and Oracle 11g XE.
+- Chromium verified SQL file open and download, production confirmation, the warning on an UPDATE without WHERE, read-only enforcement, manual Commit and Rollback, and the rollback prompt on tab close. New sessions used the saved fetch size and row cap.
+- The Debian build queried all four database fixtures with the packaged binaries, saved a SQL file, and prompted during an operating-system close request. Cancelling the prompt preserved the open transaction. Confirming it closed the window.
+- The Windows x64 build enables TDS integrated authentication through the Windows-only `winauth` feature. Interactive login with a Windows SQL Server account remains pending.
+- The macOS arm64 job ran workspace tests, mounted the built DMG, and verified the Strata executable and the bundled Oracle bridge. [Bundles workflow](https://github.com/LumminaCo/strata/actions/runs/44976526285)
+
+| Measurement | Result |
+| --- | --- |
+| PostgreSQL server timestamp to first canvas row, five Chromium runs | 27–87 ms |
+| PostgreSQL server timestamp to first canvas row, five native Linux runs on an idle host | 25–73 ms |
+| Same native Linux probe during local build and test activity | 59–173 ms |
+| Chromium scroll through 100,000 rows, 120 frames | 17.1 ms p95, 17.5 ms max |
+| Debian build startup to visible window, three Xvfb runs | 140–152 ms |
+| Debian build startup to restored editable SQL tab, three Xvfb runs | 894–928 ms |
+| Debian build session-free app and child process RSS | 376.6–379.5 MiB |
+| Debian build RSS with one idle PostgreSQL session | 411.2 MiB |
+| Debian build RSS on a one-million-row query, paused at 500 rows | 416.3 MiB |
+| Same query after resume to the 200,000-row cap | 548.1 MiB |
+| Debian x64 package | 16.10 MiB |
+| Linux x64 AppImage including WebKitGTK | 105.78 MiB |
+| Windows x64 NSIS installer | 11.59 MiB |
+| macOS arm64 DMG | 14.88 MiB |
+
+The AppImage opened under Xvfb and exceeds the 35 MB target. The Windows and macOS startup-to-editor and one-connection idle memory budgets still need platform measurements, as does the interactive clean Windows acceptance checklist.

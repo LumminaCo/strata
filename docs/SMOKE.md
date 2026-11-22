@@ -15,6 +15,9 @@ Use Ctrl+Enter to run a statement, Ctrl+Shift+Enter or Alt+X for a script, and C
 
 ## Desktop bundles
 
-1. On Linux, run `./x bundle-linux`. Install the Debian package or launch the AppImage and confirm that Strata opens the PostgreSQL workspace.
-2. Run `./x bundle-windows` and install the NSIS executable on Windows x64. Confirm that Strata opens and includes the theme control. The Bundles workflow runs the silent installation and launch on a Windows runner.
-3. Use the M8 checklist in the spec for interactive Windows acceptance, installer budgets, and the MCP smoke once those entry points are available.
+1. On Linux, run `./x bundle-linux`. Open both the Debian package and the AppImage and connect to the local PostgreSQL fixture. With Xvfb and xdotool installed, run `xvfb-run -a python3 dev/measure-linux.py /absolute/path/to/strata` to record time to a visible window and session-free memory.
+2. Run `./x bundle-windows` and install the NSIS executable on Windows x64. Confirm that Strata opens and registers as an MCP server. The Bundles workflow checks silent installation, startup, the installed Oracle bridge, and MCP initialization.
+3. On macOS arm64, mount the DMG from the Bundles workflow, copy Strata to Applications, and open it. Follow the connection and query checks above. The workflow mounts the disk image and verifies the executables.
+4. In Settings, set the initial fetch size and row cap, then reconnect and query past the cap. Confirm the limits and restore the original settings. Open and download a SQL file and compare its contents.
+5. On a disposable test database, submit an `UPDATE` with a `WHERE` clause on a Production profile and an `UPDATE` without a `WHERE` clause on a Development profile. Verify and cancel each prompt. On a read-only profile, confirm that the first statement is rejected and a `SELECT` succeeds. In manual mode, run a query, roll back, run it again, and commit. Start another transaction and try closing the tab and the desktop window. Cancel once and confirm the transaction remains open, then choose **Roll back and close**.
+6. Follow [MCP setup](../README.md#mcp-setup) and use Claude Code to list connections, describe a table, and run a read. Check allowed and denied calls in **Agent activity**. Use the [V1 definition of done](SPEC.md#17-v1-definition-of-done) for interactive Windows acceptance.

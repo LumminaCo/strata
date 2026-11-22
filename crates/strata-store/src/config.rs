@@ -32,6 +32,7 @@ pub struct Settings {
     pub editor_font_size: u16,
     pub statement_timeout_ms: u32,
     pub agent_default_row_limit: usize,
+    pub agent_max_row_limit: usize,
     pub agent_statement_timeout_s: u32,
 }
 
@@ -45,6 +46,7 @@ impl Default for Settings {
             editor_font_size: 13,
             statement_timeout_ms: 0,
             agent_default_row_limit: 200,
+            agent_max_row_limit: 10_000,
             agent_statement_timeout_s: 30,
         }
     }
@@ -82,6 +84,7 @@ impl Config {
             || settings.row_cap == 0
             || settings.row_cap > 200_000
             || settings.agent_default_row_limit == 0
+            || settings.agent_max_row_limit == 0
             || settings.agent_statement_timeout_s == 0
         {
             return Err(CoreError::config("Invalid query limits"));

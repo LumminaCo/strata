@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Copy,
   Database,
+  ShieldCheck,
   History,
   Command as CommandIcon,
   FileCode2,
@@ -34,6 +35,7 @@ import {
   PasswordDialog,
   emptyConnection,
 } from "@/features/connections";
+import { AgentActivity } from "@/features/agent-activity";
 import { CatalogExplorer, type CatalogEntry } from "@/features/catalog-explorer";
 import { CatalogPalette, DatabasePicker, QueryHistory } from "@/features/catalog-dialogs";
 import { TableInspector, type Inspection } from "@/features/table-inspector";
@@ -66,6 +68,7 @@ export function App() {
   const [explorerOpen, setExplorerOpen] = useState(true);
   const [palette, setPalette] = useState(false);
   const [history, setHistory] = useState(false);
+  const [agentActivity, setAgentActivity] = useState(false);
   const [schemaTabs, setSchemaTabs] = useState<Inspection[]>([]);
   const [schemaSelected, setSchemaSelected] = useState<string>();
   const [pinnedByTab, setPinned] = useState<Record<string, Inspection[]>>({});
@@ -267,6 +270,7 @@ export function App() {
           data.modal ||
           palette ||
           history ||
+          agentActivity ||
           event.defaultPrevented
         )
           return;
@@ -317,6 +321,28 @@ export function App() {
           <span>Strata</span>
         </div>
         <div className="toolbar-actions">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            title="Agent activity"
+            aria-label="Agent activity"
+            onClick={() => setAgentActivity(true)}
+          >
+            <ShieldCheck />
+          </Button>
+          {!browserMode && (
+            <Button
+              variant="ghost"
+              onClick={() =>
+                void dispatch("mcp_config")
+                  .then((config) => navigator.clipboard.writeText(JSON.stringify(config, null, 2)))
+                  .then(() => data.setNotice("MCP configuration copied."))
+                  .catch((error: unknown) => data.setNotice(errorMessage(error)))
+              }
+            >
+              Copy MCP config
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="icon-sm"
@@ -841,6 +867,16 @@ export function App() {
         {profile?.readOnly && <span>Read-only</span>}
       </footer>
 
+      {agentActivity && (
+        <AgentActivity
+          profiles={data.profiles}
+          onClose={() => setAgentActivity(false)}
+          onOpen={(id, database, sql) => {
+            openTab(id, database, sql);
+            setAgentActivity(false);
+          }}
+        />
+      )}
       {palette && (
         <CatalogPalette
           entries={entries}

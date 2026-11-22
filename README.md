@@ -1,6 +1,6 @@
 # Strata
 
-Strata is a desktop database client. The PostgreSQL workspace supports saved connections, per-tab sessions, a SQL editor, and streamed results. SQL Server, Oracle, and MCP access are planned for later milestones.
+Strata is a desktop database client for PostgreSQL, SQL Server, and Oracle. It includes saved connections, per-tab sessions, a SQL editor, streamed results, catalog inspection, and an MCP server.
 
 ## Docker development
 
@@ -36,5 +36,30 @@ Use `./x bundle-linux` for the AppImage and Debian package, or `./x bundle-windo
 Windows bundles are unsigned and may show a SmartScreen prompt. `embedBootstrapper` assumes a supported Windows installation with WebView2 Evergreen already present for offline installation. If the runtime is missing, the bootstrapper downloads it. [WebView2 installation decision](docs/adr/0003-webview2-bootstrapper.md)
 
 macOS bundles use ad-hoc signing. After verifying that the bundle came from Lummina, users who encounter a Gatekeeper quarantine prompt can remove the quarantine attribute with `xattr -dr com.apple.quarantine /Applications/Strata.app`.
+
+## MCP setup
+
+Set **Agent access** to **Read** on a connection that an MCP client may use. Use an OS keychain entry or an environment variable for the password. Use a database account with read privileges for production.
+
+Choose **Copy MCP config** in the native window, or register the installed binary with Claude Code.
+
+```sh
+claude mcp add strata -- /path/to/strata mcp
+```
+
+Example configuration for a client that accepts `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "strata": {
+      "command": "/path/to/strata",
+      "args": ["mcp", "--only", "Analytics"]
+    }
+  }
+}
+```
+
+**Agent activity** shows tool calls and decisions. Reads accept one classified statement, restrict callable routines, and enforce a row limit and timeout. **Read and write** enables writes for a non-production profile. Each tool call creates an audit record.
 
 See [the progress log](docs/PROGRESS.md) for the acceptance checklist and [the smoke checklist](docs/SMOKE.md) for verification steps.

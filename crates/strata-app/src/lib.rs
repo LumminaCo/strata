@@ -284,6 +284,19 @@ impl AppService {
                 }
                 json(self.open_session(profile, scope.password, lifetime).await?)
             }
+            Command::AuditList { limit } => json(self.engine.audit(limit.unwrap_or(200)).await?),
+            Command::McpConfig => {
+                if !self.keychain {
+                    return Err(CoreError::config(
+                        "Open the native app to copy the MCP configuration",
+                    ));
+                }
+                let path = std::env::current_exe()
+                    .map_err(|_| CoreError::config("The Strata executable path is unavailable"))?;
+                Ok(
+                    serde_json::json!({ "mcpServers": { "strata": { "command": path, "args": ["mcp"] } } }),
+                )
+            }
             Command::WorkspaceLoad => {
                 let workspace = self.engine.workspace().await?;
                 let saved: Workspace = match workspace {
@@ -348,6 +361,8 @@ impl AppService {
         profile.user = input.user;
         profile.secret = input.secret;
         profile.read_only = input.read_only;
+        profile.agent_access = input.agent_access;
+        profile.allow_agent_ddl = input.allow_agent_ddl;
         profile.tls.mode = input.tls;
         profile.validate()?;
         Ok(profile)
@@ -528,6 +543,8 @@ impl From<Profile> for Connection {
             user: profile.user,
             secret: profile.secret,
             read_only: profile.read_only,
+            agent_access: profile.agent_access,
+            allow_agent_ddl: profile.allow_agent_ddl,
             tls: profile.tls.mode,
             options: Some(profile.options),
         }

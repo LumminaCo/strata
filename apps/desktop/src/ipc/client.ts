@@ -2,6 +2,7 @@ import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 
 import type {
   CatalogScope,
+  AuditEntry,
   Object as CatalogObject,
   NextResult,
   ObjectReference,
@@ -52,6 +53,8 @@ interface Commands {
   resolve_object: [{ scope: CatalogScope; reference: ObjectReference }, CatalogObject | null];
   object_details: [{ scope: CatalogScope; object: CatalogObject }, ObjectDetails];
   open_inspection_session: [{ scope: CatalogScope }, SessionInfo];
+  audit_list: [{ limit?: number }, AuditEntry[]];
+  mcp_config: [undefined, { mcpServers: Record<string, { command: string; args: string[] }> }];
   workspace_load: [undefined, Workspace];
   workspace_save: [{ workspace: Workspace }, null];
 }

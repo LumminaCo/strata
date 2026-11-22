@@ -34,7 +34,7 @@ pub struct HistoryEntry {
 }
 
 pub struct Database {
-    connection: Connection,
+    pub(crate) connection: Connection,
 }
 
 impl Database {

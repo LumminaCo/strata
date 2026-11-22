@@ -736,3 +736,46 @@ body {
 .grid-container:has(.grid-copy) .grid-note {
   bottom: 46px;
 }
+
+.activity-dialog {
+  width: min(640px, calc(100vw - 32px));
+  max-width: none;
+}
+.activity-list {
+  max-height: 58dvh;
+  overflow: auto;
+}
+.activity-list article {
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  gap: 4px;
+}
+.activity-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.activity-heading [data-decision="allowed"] {
+  color: var(--env-dev);
+}
+.activity-heading [data-decision="denied"],
+.activity-heading [data-decision="error"] {
+  color: var(--env-prod);
+}
+.activity-heading small {
+  margin-left: auto;
+  color: var(--muted-foreground);
+}
+.activity-context {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.activity-list pre {
+  font-family: var(--editor-font);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.activity-list button {
+  justify-self: start;
+}

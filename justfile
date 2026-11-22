@@ -38,13 +38,14 @@ check: frontend
 seed:
     bash dev/seed/mssql/seed.sh
 
-test-int: bridge
+test-int: bridge frontend
     bash dev/test-int.sh
     STRATA_IT=1 SSL_CERT_FILE=/opt/strata-pg-trust/ca.pem cargo test --locked -p strata-driver-postgres --test postgres -- --ignored
     STRATA_IT=1 cargo test --locked -p strata-driver-mssql --test sql_server -- --ignored
     STRATA_IT=1 STRATA_ORACLE_BRIDGE=/workspace/artifacts/oracle-bridge ORACLE11_TEST="$(getent hosts oracle11 >/dev/null && printf 1 || printf 0)" cargo test --locked -p strata-driver-oracle -- --ignored
     STRATA_IT=1 cargo test --locked -p strata-app --test engine -- --ignored
     STRATA_IT=1 cargo test --locked -p strata-app --test desktop -- --ignored
+    STRATA_IT=1 STRATA_ORACLE_BRIDGE=/workspace/artifacts/oracle-bridge cargo test --locked -p strata --test mcp -- --ignored
 
 bridge:
     mkdir -p artifacts

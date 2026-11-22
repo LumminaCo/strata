@@ -1,20 +1,72 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 
+import type {
+  Cell,
+  Connection,
+  Page,
+  ParsedUrl,
+  QueryPlan,
+  RunEvent,
+  RunMode,
+  RunRequest,
+  SessionInfo,
+  Target,
+  Workspace,
+} from "./bindings/protocol";
 import { createDevTransport } from "./transport-dev";
 
-interface Health {
-  version: string;
+interface Commands {
+  list_connections: [undefined, Connection[]];
+  save_connection: [{ profile: Connection; password?: string }, Connection];
+  test_connection: [{ profile: Connection; password?: string }, SessionInfo];
+  delete_connection: [{ id: string }, null];
+  parse_connection_url: [{ url: string }, ParsedUrl];
+  open_session: [{ connectionId: string; password?: string }, SessionInfo];
+  close_session: [{ sessionId: string }, null];
+  stop: [{ sessionId: string; runId?: string }, null];
+  plan_query: [{ text: string; target: Target; mode: RunMode; production: boolean }, QueryPlan];
+  fetch_more: [{ sessionId: string; cursorId: string; count: number }, Page];
+  get_cell: [{ sessionId: string; cursorId: string; row: number; column: number }, Cell];
+  workspace_load: [undefined, Workspace];
+  workspace_save: [{ workspace: Workspace }, null];
 }
 
-export function health(signal?: AbortSignal): Promise<Health> {
-  if (isTauri()) {
-    return invoke<Health>("health");
+const dev = createDevTransport({
+  url: import.meta.env.VITE_STRATA_DEV_URL ?? "http://localhost:7420",
+  token: import.meta.env.VITE_STRATA_DEV_TOKEN ?? "",
+});
+
+export const browserMode = !isTauri();
+
+export function dispatch<K extends keyof Commands>(
+  command: K,
+  ...args: Commands[K][0] extends undefined ? [] : [Commands[K][0]]
+): Promise<Commands[K][1]> {
+  const request = { command, args: args[0] };
+  return browserMode ? dev.dispatch(request) : invoke("dispatch", { request });
+}
+
+export function runQuery(request: RunRequest, onEvent: (event: RunEvent) => void) {
+  if (browserMode) return dev.run(request, onEvent);
+  const channel = new Channel<RunEvent>();
+  const done = new Promise<void>((resolve) => {
+    channel.onmessage = (event) => {
+      onEvent(event);
+      if (event.type === "done") resolve();
+    };
+  });
+  // Large Tauri frames are retrieved asynchronously by the WebView.
+  return Promise.all([invoke<void>("run_query", { request, channel }), done]).then(() => {});
+}
+
+export function errorMessage(error: unknown): string {
+  if (
+    typeof error === "object" &&
+    error &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
   }
-  if (!import.meta.env.DEV) {
-    return Promise.reject(new Error("Browser mode requires the development server."));
-  }
-  return createDevTransport({
-    url: import.meta.env.VITE_STRATA_DEV_URL ?? "http://localhost:7420",
-    token: import.meta.env.VITE_STRATA_DEV_TOKEN ?? "",
-  }).health(signal);
+  return typeof error === "string" ? error : "The operation failed.";
 }

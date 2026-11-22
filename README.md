@@ -1,6 +1,6 @@
 # Strata
 
-Strata is a desktop database client for PostgreSQL, SQL Server, and Oracle. The M0 scaffold opens a workspace with an explorer, editor region, and results area. Database interaction starts in M1. Agent access through MCP is scheduled for M7.
+Strata is a desktop database client. The PostgreSQL workspace supports saved connections, per-tab sessions, a SQL editor, and streamed results. SQL Server, Oracle, and MCP access are planned for later milestones.
 
 ## Docker development
 
@@ -13,6 +13,10 @@ Use Docker with Compose and Git. Run these commands from the repository root.
 ```
 
 Open [localhost:5173](http://localhost:5173) for the browser workspace. The first run creates a private `.env`, builds the development image, and seeds the local databases. Keep `.env` alongside its Docker volumes so subsequent runs use the original fixture credentials. `./x down` stops Strata's containers and preserves these volumes. `./x rebuild` rebuilds the tooling image after changes to `dev/Dockerfile`.
+
+In the browser, choose **New connection → Use local PostgreSQL**, test the connection, and save it. Strata opens an editor tab. **Run** executes the statement at the caret, and **Run script** executes the editor or selection in order. The grid fetches more rows near the end of the loaded results. **Fetch all** reads up to the configured row cap. Open **Messages** for notices, affected rows, and errors.
+
+Strata saves scratch tabs and editor text every two seconds while the workspace has changes. Connections and workspace data in browser mode live in the Compose state volume. Native Strata uses its platform data directories and supports password prompts, environment variables, and the OS keychain.
 
 On Windows, run `.\x.ps1 up` with Docker Desktop. Keep the clone in the WSL2 filesystem for faster bind mounts. When the repository is on the Windows filesystem, set `STRATA_WATCH_POLL=1`. For a native development window, use `./x gui` from Linux with X11/XWayland or from WSLg.
 

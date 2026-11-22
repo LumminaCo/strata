@@ -2,6 +2,7 @@ services:
   dev:
     environment:
       DISPLAY: ${DISPLAY:-}
+      STRATA_HOME: /cache/strata/native
       STRATA_XAUTH_SOURCE: /tmp/strata.xauth
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:ro

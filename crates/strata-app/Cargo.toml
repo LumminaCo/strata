@@ -8,11 +8,17 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+percent-encoding = "2"
 serde.workspace = true
+serde_json.workspace = true
 strata-core.workspace = true
 strata-driver-postgres.workspace = true
+strata-sql.workspace = true
 strata-store.workspace = true
+tokio-util.workspace = true
 tokio.workspace = true
+ts-rs.workspace = true
+url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]

@@ -57,7 +57,7 @@ RUN vp --version && vp env off
 RUN groupadd --non-unique --gid "$HOST_GID" strata \
     && useradd --non-unique --uid "$HOST_UID" --gid "$HOST_GID" --create-home strata \
     && chown -R "$HOST_UID:$HOST_GID" "$VP_HOME" \
-    && install -d -o "$HOST_UID" -g "$HOST_GID" /cache/cargo /cache/bun /cache/xwin /cache/go /workspace/target /workspace/node_modules /workspace/apps/desktop/node_modules
+    && install -d -o "$HOST_UID" -g "$HOST_GID" /cache/strata /cache/cargo /cache/bun /cache/xwin /cache/go /workspace/target /workspace/node_modules /workspace/apps/desktop/node_modules
 
 
 # Tauri's NSIS template uses headers added after Debian Bookworm's NSIS 3.08.

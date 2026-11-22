@@ -58,6 +58,7 @@ struct Cursor {
 struct SessionState {
     connection: Box<dyn DbConnection>,
     cursor: Option<Cursor>,
+    previous: HashMap<Uuid, Cursor>,
     broken: bool,
     manual: bool,
     transaction_open: bool,
@@ -120,6 +121,7 @@ impl Core {
                 state: Mutex::new(SessionState {
                     connection,
                     cursor: None,
+                    previous: HashMap::new(),
                     broken: false,
                     manual: false,
                     transaction_open: false,
@@ -155,6 +157,17 @@ impl Core {
     }
 
     pub async fn run(&self, session: Uuid, sql: &str) -> Result<Batch> {
+        self.run_batch(session, sql, self.limits.fetch_size, None)
+            .await
+    }
+
+    pub async fn run_batch(
+        &self,
+        session: Uuid,
+        sql: &str,
+        count: usize,
+        cancellation: Option<&CancellationToken>,
+    ) -> Result<Batch> {
         let session = self.session(session).await?;
         let spans = split(sql, session.dialect, false);
         let [statement] = spans.as_slice() else {
@@ -178,6 +191,9 @@ impl Core {
             state.transaction_open = true;
             state.transaction_failed = false;
         }
+        if cancellation.is_some_and(CancellationToken::is_cancelled) {
+            return Err(CoreError::Cancelled);
+        }
         let cancel = session.closed.child_token();
         let stream = state.connection.execute(sql, cancel.clone()).await?;
         let cursor = Uuid::now_v7();
@@ -191,17 +207,28 @@ impl Core {
             capped: false,
             affected: None,
         });
-        self.read(&session, &mut state, cursor, self.limits.fetch_size)
-            .await
+        let read = self.read(&session, &mut state, cursor, count, cancellation);
+        read.await
     }
 
     pub async fn fetch_more(&self, session: Uuid, cursor: Uuid, count: usize) -> Result<Batch> {
+        self.fetch_batch(session, cursor, count, None).await
+    }
+
+    pub async fn fetch_batch(
+        &self,
+        session: Uuid,
+        cursor: Uuid,
+        count: usize,
+        cancellation: Option<&CancellationToken>,
+    ) -> Result<Batch> {
         if count == 0 {
             return Err(CoreError::config("Fetch size must be positive"));
         }
         let session = self.session(session).await?;
         let mut state = session.state.lock().await;
-        self.read(&session, &mut state, cursor, count).await
+        self.read(&session, &mut state, cursor, count, cancellation)
+            .await
     }
 
     async fn read(
@@ -210,6 +237,7 @@ impl Core {
         state: &mut SessionState,
         id: Uuid,
         count: usize,
+        cancellation: Option<&CancellationToken>,
     ) -> Result<Batch> {
         session.ensure_open(state)?;
         let cursor = state
@@ -218,7 +246,18 @@ impl Core {
             .filter(|cursor| cursor.id == id)
             .ok_or_else(|| CoreError::config("Cursor does not exist"))?;
         *session.active.lock().await = Some((id, cursor.cancel.clone()));
-        let result = state.read(count, self.limits.row_cap).await;
+        let retained = state
+            .previous
+            .values()
+            .map(|cursor| cursor.rows.len())
+            .sum::<usize>();
+        let result = state
+            .read(
+                count,
+                self.limits.row_cap.saturating_sub(retained),
+                cancellation,
+            )
+            .await;
         *session.active.lock().await = None;
         if state.transaction_open
             && (result.is_err() || result.as_ref().is_ok_and(|batch| batch.capped))
@@ -301,10 +340,48 @@ impl Core {
             .cursor
             .as_ref()
             .filter(|value| value.id == cursor)
+            .or_else(|| state.previous.get(&cursor))
             .and_then(|value| value.rows.get(row))
             .and_then(|row| row.get(column))
             .cloned()
             .ok_or_else(|| CoreError::config("Cell does not exist"))
+    }
+
+    pub async fn server_info(&self, session: Uuid) -> Result<crate::ServerInfo> {
+        let session = self.session(session).await?;
+        let mut state = session.state.lock().await;
+        session.ensure_open(&state)?;
+        if state
+            .cursor
+            .as_ref()
+            .is_some_and(|cursor| cursor.stream.is_some())
+        {
+            return Err(CoreError::config(
+                "Finish fetching before inspecting the session",
+            ));
+        }
+        state.connection.server_info().await
+    }
+
+    pub async fn clear_results(&self, session: Uuid) -> Result<()> {
+        let session = self.session(session).await?;
+        let mut state = session.state.lock().await;
+        state.previous.clear();
+        state.discard().await
+    }
+
+    pub async fn retain_result(&self, session: Uuid, cursor: Uuid) -> Result<()> {
+        let session = self.session(session).await?;
+        let mut state = session.state.lock().await;
+        if state
+            .cursor
+            .as_ref()
+            .is_some_and(|value| value.id == cursor && value.stream.is_none())
+            && let Some(value) = state.cursor.take()
+        {
+            state.previous.insert(cursor, value);
+        }
+        Ok(())
     }
 
     pub async fn stop(&self, session: Uuid) -> Result<()> {
@@ -354,7 +431,12 @@ impl SessionState {
         Ok(())
     }
 
-    async fn read(&mut self, count: usize, cap: usize) -> Result<Batch> {
+    async fn read(
+        &mut self,
+        count: usize,
+        cap: usize,
+        cancellation: Option<&CancellationToken>,
+    ) -> Result<Batch> {
         let cursor = self
             .cursor
             .as_mut()
@@ -362,13 +444,22 @@ impl SessionState {
         let from = cursor.delivered;
         let target = from.saturating_add(count).min(cap);
         let mut messages = Vec::new();
-        while cursor.rows.len() < target {
+        while cursor.rows.len() < target || cap == 0 {
             let Some(stream) = cursor.stream.as_mut() else {
                 break;
             };
             let next = tokio::select! {
                 biased;
-                _ = cursor.cancel.cancelled() => {
+                _ = async {
+                    match cancellation {
+                        Some(run) => tokio::select! {
+                            () = run.cancelled() => (),
+                            () = cursor.cancel.cancelled() => (),
+                        },
+                        None => cursor.cancel.cancelled().await,
+                    }
+                } => {
+                    cursor.cancel.cancel();
                     let result = cancel_and_drain(self.connection.cancel_handle(), stream).await;
                     cursor.stream = None;
                     self.broken |= result.is_err();
@@ -379,6 +470,7 @@ impl SessionState {
             };
             match next {
                 Some(Ok(ExecEvent::ResultStart(columns))) => cursor.columns = columns,
+                Some(Ok(ExecEvent::Row(_))) if cap == 0 => break,
                 Some(Ok(ExecEvent::Row(row))) => cursor.rows.push(
                     row.into_iter()
                         .enumerate()

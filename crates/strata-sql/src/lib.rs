@@ -1,6 +1,9 @@
 //! SQL tokenization, statement selection, and conservative classification.
 
+mod identifier;
 mod lexer;
+
+pub use identifier::{RelationAt, relation_at};
 
 use lexer::{Kind, lex};
 use sqlparser::{

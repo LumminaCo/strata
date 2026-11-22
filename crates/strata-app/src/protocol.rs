@@ -119,6 +119,7 @@ pub enum Target {
 pub enum RunMode {
     Statement,
     Script,
+    Explain,
 }
 
 #[derive(Serialize, TS)]
@@ -296,6 +297,23 @@ pub enum Command {
         connection_id: Uuid,
         limit: Option<u32>,
     },
+    ResolveAt {
+        scope: crate::CatalogScope,
+        session_id: Option<Uuid>,
+        text: String,
+        offset: u32,
+    },
+    ObjectDetails {
+        scope: crate::CatalogScope,
+        object: strata_core::Object,
+    },
+    ResolveObject {
+        scope: crate::CatalogScope,
+        reference: strata_core::ObjectReference,
+    },
+    OpenInspectionSession {
+        scope: crate::CatalogScope,
+    },
     WorkspaceLoad,
     WorkspaceSave {
         workspace: Workspace,
@@ -337,6 +355,12 @@ fn typescript_bindings() {
     for decl in [
         strata_core::ObjectKind::decl(&cfg),
         strata_core::Object::decl(&cfg),
+        strata_core::ObjectReference::decl(&cfg),
+        strata_core::TableColumn::decl(&cfg),
+        strata_core::Definition::decl(&cfg),
+        strata_core::TableDetail::decl(&cfg),
+        crate::ObjectDetails::decl(&cfg),
+        crate::ResolvedObject::decl(&cfg),
         crate::CatalogScope::decl(&cfg),
         crate::CatalogSnapshot::decl(&cfg),
         HistoryItem::decl(&cfg),

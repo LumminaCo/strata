@@ -1,7 +1,7 @@
 import { autocompletion } from "@codemirror/autocomplete";
 import { history } from "@codemirror/commands";
 import { PostgreSQL, sql, type SQLNamespace } from "@codemirror/lang-sql";
-import { bracketMatching, foldGutter } from "@codemirror/language";
+import { bracketMatching, foldGutter, syntaxTree } from "@codemirror/language";
 import { setDiagnostics } from "@codemirror/lint";
 import { Compartment, EditorState, StateEffect, StateField } from "@codemirror/state";
 import {
@@ -22,6 +22,21 @@ import { editorTheme } from "@/theme/codemirror";
 
 const listener = new Compartment();
 const language = new Compartment();
+const setNavigation = StateEffect.define<[number, number] | undefined>();
+const navigationMarks = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(marks, transaction) {
+    for (const effect of transaction.effects) {
+      if (effect.is(setNavigation)) {
+        return effect.value
+          ? Decoration.set(Decoration.mark({ class: "cm-navigation" }).range(...effect.value))
+          : Decoration.none;
+      }
+    }
+    return transaction.docChanged ? Decoration.none : marks;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
 const setStatement = StateEffect.define<[number, number] | undefined>();
 const statementMarks = StateField.define<DecorationSet>({
   create: () => Decoration.none,
@@ -42,6 +57,7 @@ export interface EditorHandle {
   target: () => Target;
   text: () => string;
   focus: () => void;
+  replace: (value: string, range?: [number, number]) => void;
 }
 
 export interface EditorDiagnostic {
@@ -56,6 +72,7 @@ interface SqlEditorProps {
   diagnostic?: EditorDiagnostic;
   schema?: SQLNamespace;
   defaultSchema?: string;
+  onNavigate?: (offset: number, full: boolean) => void;
   onChange: (text: string) => void;
   savedState: { current: EditorState | null };
 }
@@ -66,15 +83,16 @@ export function SqlEditor({
   diagnostic,
   schema,
   defaultSchema,
+  onNavigate,
   onChange,
   savedState,
 }: SqlEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
-  const latest = useRef({ text, onChange });
+  const latest = useRef({ text, onChange, onNavigate });
   useLayoutEffect(() => {
-    latest.current = { text, onChange };
-  }, [text, onChange]);
+    latest.current = { text, onChange, onNavigate };
+  }, [text, onChange, onNavigate]);
 
   useImperativeHandle(
     ref,
@@ -85,6 +103,17 @@ export function SqlEditor({
         return { selection: [selection.from, selection.to] };
       },
       focus: () => view.current?.focus(),
+      replace(value, range) {
+        const editor = view.current;
+        if (editor)
+          editor.dispatch({
+            changes: {
+              from: range?.[0] ?? 0,
+              to: range?.[1] ?? editor.state.doc.length,
+              insert: value,
+            },
+          });
+      },
       text: () => view.current?.state.doc.toString() ?? latest.current.text,
     }),
     [],
@@ -114,10 +143,49 @@ export function SqlEditor({
           .catch(() => {});
       }, 150);
     };
-    const updates = EditorView.updateListener.of((update) => {
-      if (update.docChanged) latest.current.onChange(update.state.doc.toString());
-      if (update.docChanged || update.selectionSet) highlight();
-    });
+    let hovered: [number, number] | undefined;
+    let point: [number, number] | undefined;
+    function mark(editor: EditorView, modifier: boolean) {
+      const offset = modifier && point ? editor.posAtCoords({ x: point[0], y: point[1] }) : null;
+      let range: [number, number] | undefined;
+      if (offset !== null) {
+        const identifier = syntaxTree(editor.state).resolveInner(offset, 1);
+        if (identifier.name.endsWith("Identifier")) range = [identifier.from, identifier.to];
+      }
+      if (range?.[0] === hovered?.[0] && range?.[1] === hovered?.[1]) return;
+      hovered = range;
+      editor.dispatch({ effects: setNavigation.of(range) });
+    }
+    const updates = [
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged) latest.current.onChange(update.state.doc.toString());
+        if (update.docChanged || update.selectionSet) highlight();
+      }),
+      EditorView.domEventHandlers({
+        mousemove(event, editor) {
+          point = [event.clientX, event.clientY];
+          mark(editor, event.ctrlKey || event.metaKey);
+        },
+        mouseleave(_event, editor) {
+          point = undefined;
+          mark(editor, false);
+        },
+        keydown(event, editor) {
+          if (event.key === "Control" || event.key === "Meta") mark(editor, true);
+        },
+        keyup(event, editor) {
+          if (event.key === "Control" || event.key === "Meta") mark(editor, false);
+        },
+        mousedown(event, editor) {
+          if (event.button !== 0 || event.altKey || !(event.ctrlKey || event.metaKey)) return false;
+          const offset = editor.posAtCoords({ x: event.clientX, y: event.clientY });
+          if (offset === null) return false;
+          event.preventDefault();
+          latest.current.onNavigate?.(offset, event.shiftKey);
+          return true;
+        },
+      }),
+    ];
     const state =
       savedState.current?.update({ effects: listener.reconfigure(updates) }).state ??
       EditorState.create({
@@ -137,6 +205,7 @@ export function SqlEditor({
           EditorView.clickAddsSelectionRange.of((event) => event.altKey),
           EditorView.contentAttributes.of({ "aria-label": "SQL editor", spellcheck: "false" }),
           statementMarks,
+          navigationMarks,
           editorTheme,
           listener.of(updates),
         ],

@@ -64,3 +64,9 @@ The native runtime smoke used Linux with WebKitGTK. The next milestone is M3, co
 - The explorer loads databases and schemas on demand and keeps the visible rows mounted. Catalog objects and columns use a five-minute memory and SQLite cache. Successful DDL refreshes loaded metadata.
 - Chromium expanded a PostgreSQL schema containing 2,000 tables in 125 ms on the local fixture with a cold cache. The explorer mounted 27 rows when the Tables group opened.
 - Verified `actor_id` completion after `a.` with `FROM actor AS a`, DDL refresh after creating a table, fuzzy search, and reopening SQL from history. `./x check` passed.
+
+## M4 · Table and schema navigation
+
+- Ctrl+Click resolves a relation from the SQL text and opens a pinned inspector. Ctrl+Shift+Click and Quick open expose a dedicated Schema tab. The editor underlines the identifier while the modifier is held.
+- Chromium verification used the PostgreSQL fixture. Tested an alias with a highlighted column, qualified and quoted names, incoming and outgoing foreign keys, server-side filtering and counting, DDL, formatting, Explain and JSON clipboard output.
+- Inspection uses its own read-only database session so an open SQL editor keeps its session and cursor.

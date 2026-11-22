@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use deadpool_postgres::{Pool, PoolError};
 use strata_core::{
-    CoreError, Definition, Introspector, Object, ObjectKind, Result, TableColumn, TableDetail,
+    CoreError, Definition, Introspector, Object, ObjectKind, ObjectReference, Result, TableColumn,
+    TableDetail,
 };
 use tokio_postgres::Row;
 
@@ -268,6 +269,14 @@ fn definitions(rows: Vec<Row>) -> Result<Vec<Definition>> {
             Ok(Definition {
                 name: row.try_get(0).map_err(query_error)?,
                 sql: row.try_get(1).map_err(query_error)?,
+                related: if row.len() > 2 {
+                    row.try_get::<_, Option<String>>(2)
+                        .map_err(query_error)?
+                        .zip(row.try_get::<_, Option<String>>(3).map_err(query_error)?)
+                        .map(|(schema, name)| ObjectReference { schema, name })
+                } else {
+                    None
+                },
             })
         })
         .collect()

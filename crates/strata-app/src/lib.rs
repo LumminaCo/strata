@@ -156,6 +156,16 @@ impl AppService {
                         .await?,
                 ))
             }
+            Command::SetDbmsOutput {
+                session_id,
+                enabled,
+            } => {
+                self.engine
+                    .core()
+                    .set_dbms_output(session_id, enabled)
+                    .await?;
+                Ok(Value::Null)
+            }
             Command::NextResult {
                 session_id,
                 cursor_id,
@@ -297,9 +307,6 @@ impl AppService {
     }
 
     fn candidate(&self, input: Connection) -> Result<Profile> {
-        if input.kind == DbKind::Oracle {
-            return Err(CoreError::config("The Oracle driver is unavailable"));
-        }
         if input.secret == "keychain" && !self.keychain {
             return Err(CoreError::config(
                 "Use a password prompt or environment variable in browser mode",
@@ -543,8 +550,16 @@ pub struct ParsedUrl {
 }
 
 fn parse_url(value: &str) -> Result<ParsedUrl> {
-    if let Some(value) = value.trim().strip_prefix("jdbc:sqlserver://") {
+    let value = value.trim();
+    if let Some(value) = value.strip_prefix("jdbc:sqlserver://") {
         return parse_sql_server_url(value);
+    }
+    if value.starts_with("oracle://")
+        || value.starts_with("//")
+        || value.starts_with("(DESCRIPTION")
+        || (!value.contains("://") && value.contains('/'))
+    {
+        return parse_oracle_url(value);
     }
     let url = url::Url::parse(value.trim())
         .map_err(|_| CoreError::config("Enter a valid PostgreSQL URL"))?;
@@ -690,6 +705,77 @@ fn parse_sql_server_url(value: &str) -> Result<ParsedUrl> {
     }
     parsed.options = Some(properties);
     Ok(parsed)
+}
+
+fn parse_oracle_url(value: &str) -> Result<ParsedUrl> {
+    if value.starts_with('(') {
+        let host = descriptor_component(value, "HOST")
+            .ok_or_else(|| CoreError::config("The Oracle descriptor needs a HOST"))?;
+        let service = descriptor_component(value, "SERVICE_NAME");
+        let sid = descriptor_component(value, "SID");
+        let database = service.clone().or_else(|| sid.clone()).ok_or_else(|| {
+            CoreError::config("The Oracle descriptor needs a SERVICE_NAME or SID")
+        })?;
+        return Ok(ParsedUrl {
+            kind: DbKind::Oracle,
+            host,
+            database,
+            user: String::new(),
+            password: None,
+            port: descriptor_component(value, "PORT")
+                .and_then(|port| port.parse().ok())
+                .unwrap_or(1521),
+            tls: if descriptor_component(value, "PROTOCOL")
+                .is_some_and(|protocol| protocol.eq_ignore_ascii_case("TCPS"))
+            {
+                TlsMode::Require
+            } else {
+                TlsMode::Prefer
+            },
+            options: Some(strata_core::DriverOptions {
+                service_name: service,
+                sid,
+                descriptor: Some(value.into()),
+                ..Default::default()
+            }),
+        });
+    }
+    let bare = value.strip_prefix("//").unwrap_or(value);
+    let owned;
+    let input = if bare.starts_with("oracle://") {
+        bare
+    } else {
+        owned = format!("oracle://{bare}");
+        &owned
+    };
+    let url = url::Url::parse(input)
+        .map_err(|_| CoreError::config("Enter an Oracle EZConnect host and service"))?;
+    let decode = |text: &str| percent_decode_str(text).decode_utf8_lossy().into_owned();
+    let host = url
+        .host_str()
+        .ok_or_else(|| CoreError::config("The Oracle URL needs a host"))?;
+    let database = decode(url.path().trim_start_matches('/'));
+    if database.is_empty() || database.contains('/') {
+        return Err(CoreError::config("The Oracle URL needs one service name"));
+    }
+    Ok(ParsedUrl {
+        kind: DbKind::Oracle,
+        host: host.trim_matches(['[', ']']).into(),
+        port: url.port().unwrap_or(1521),
+        database,
+        user: decode(url.username()),
+        password: url.password().map(decode),
+        options: None,
+        tls: TlsMode::Prefer,
+    })
+}
+
+fn descriptor_component(value: &str, key: &str) -> Option<String> {
+    let uppercase = value.to_ascii_uppercase();
+    let marker = format!("({key}=");
+    let start = uppercase.find(&marker)? + marker.len();
+    let end = value[start..].find(')')? + start;
+    Some(value[start..end].trim().into())
 }
 
 fn elapsed_ms(started: Instant) -> u32 {

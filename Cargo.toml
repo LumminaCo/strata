@@ -45,6 +45,7 @@ strata-core = { path = "crates/strata-core" }
 strata-store = { path = "crates/strata-store" }
 strata-driver-postgres = { path = "crates/strata-driver-postgres" }
 strata-driver-mssql = { path = "crates/strata-driver-mssql" }
+strata-driver-oracle = { path = "crates/strata-driver-oracle" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

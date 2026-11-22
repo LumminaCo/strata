@@ -23,6 +23,14 @@ The base text size is 13 px, with 12 px secondary text. Use the 4 px spacing gri
 
 Use token-backed colors in feature code. Keep primitive imports inside the owned shadcn components. Use the environment color for the connection dot and badge. A production tab also adds an accent strip to the top of the window. Use the Messages tab for errors and database notices so the editor and results remain available.
 
+## M6 Oracle workspace
+
+The Oracle query toolbar offers DBMS Output for the current session. The connection form accepts an EZConnect service, SID, or TNS descriptor.
+
+![Strata M6 Oracle workspace in light theme](screenshots/m6-light.png)
+
+![Strata M6 Oracle workspace in dark theme](screenshots/m6-dark.png)
+
 ## M5 SQL Server workspace
 
 The workspace uses the same editor and result controls for a TDS session. The editor uses the Transact-SQL dialect and Run script recognizes `GO` boundaries.

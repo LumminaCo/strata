@@ -2,7 +2,7 @@
 
 export type Cell = null | boolean | number | string;
 export type ColumnMeta = { name: string; db_type: string; kind: string; nullable: boolean | null; table_oid: number | null; column_id: number | null };
-export type ObjectKind = "table" | "view" | "materialized_view" | "foreign_table" | "function" | "procedure" | "sequence";
+export type ObjectKind = "table" | "view" | "materialized_view" | "foreign_table" | "function" | "procedure" | "sequence" | "synonym";
 export type Object = { oid: number, schema: string, name: string, kind: ObjectKind, rows: number | null, comment: string | null, };
 export type ObjectReference = { schema: string, name: string, };
 export type TableColumn = { name: string, db_type: string, nullable: boolean, default: string | null, identity: string, generated: string, comment: string | null, };
@@ -13,7 +13,7 @@ export type ResolvedObject = { database: string, object: Object, column: string 
 export type CatalogScope = { connectionId: string, database: string | null, password: string | null, };
 export type CatalogSnapshot = { objects: Array<Object>, columns: Record<string, string[]>, };
 export type HistoryItem = { sql: string, startedAt: number, durationMs: number, rows: number, status: string, };
-export type DriverOptions = { instance: string | null, auth: string | null, encrypt: boolean | null, encryption: string | null, trust_server_cert: boolean | null, service_name: string | null, sid: string | null, descriptor: string | null, role: string | null, };
+export type DriverOptions = { instance: string | null, auth: string | null, encrypt: boolean | null, encryption: string | null, trust_server_cert: boolean | null, service_name: string | null, sid: string | null, descriptor: string | null, role: string | null, wallet: string | null, };
 export type Connection = { id: string | null, name: string, kind: 'postgres' | 'sqlserver' | 'oracle', env: 'dev' | 'staging' | 'prod', color: string | null, folder: string | null, host: string, port: number, database: string, user: string, secret: string, readOnly: boolean, options: DriverOptions | null, tls: 'disable' | 'prefer' | 'require' | 'verify-ca' | 'verify-full', };
 export type SessionInfo = { id: string, version: string, database: string, schema: string | null, elapsedMs: number, };
 export type Workspace = { tabs: Array<SavedTab>, activeTab: string | null, };

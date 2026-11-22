@@ -25,6 +25,7 @@
     }
   },
   "bundle": {
+    "externalBin": ["bin/oracle-bridge"],
     "active": true,
     "useLocalToolsDir": true,
     "icon": [

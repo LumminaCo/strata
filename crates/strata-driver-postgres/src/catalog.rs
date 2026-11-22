@@ -146,6 +146,7 @@ impl Introspector for Catalog {
         let name = format!("{}.{}", quote(&object.schema), quote(&object.name));
         let id = object.oid;
         match object.kind {
+            Synonym => Err(CoreError::config("PostgreSQL does not expose synonyms")),
             Function | Procedure => {
                 let client = self.client().await?;
                 client

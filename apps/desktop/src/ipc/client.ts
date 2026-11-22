@@ -37,6 +37,7 @@ interface Commands {
     QueryPlan,
   ];
   fetch_more: [{ sessionId: string; cursorId: string; count: number }, Page];
+  set_dbms_output: [{ sessionId: string; enabled: boolean }, null];
   next_result: [{ sessionId: string; cursorId: string; count: number }, NextResult];
   get_cell: [{ sessionId: string; cursorId: string; row: number; column: number }, Cell];
   list_databases: [{ scope: CatalogScope }, string[]];

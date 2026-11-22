@@ -45,6 +45,7 @@ const groups: Record<CatalogObject["kind"], string> = {
   function: "Functions",
   procedure: "Procedures",
   sequence: "Sequences",
+  synonym: "Synonyms",
 };
 const rowHeight = 29;
 

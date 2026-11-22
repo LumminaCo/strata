@@ -146,15 +146,18 @@ impl AppService {
                 )
                 .await?;
                 let sql = slice(&request.text, span.start, span.end)?;
-                let explain;
-                let sql = if matches!(request.mode, RunMode::Explain)
-                    && session.kind == DbKind::Postgres
-                {
-                    explain = format!("EXPLAIN {sql}");
-                    &explain
-                } else {
-                    sql
+                let explain = match (request.mode, session.kind) {
+                    (RunMode::Explain, DbKind::Oracle) => {
+                        let (source, _) = strata_sql::oracle_execution(sql);
+                        let label = format!("S{}", &request.run_id.simple().to_string()[..24]);
+                        let plan = format!("EXPLAIN PLAN SET STATEMENT_ID = '{label}' FOR {source}");
+                        self.engine.core().run_batch(request.session_id, &plan, 1, Some(&cancel)).await?;
+                        Some(format!("SELECT PLAN_TABLE_OUTPUT FROM TABLE(DBMS_XPLAN.DISPLAY(NULL,'{label}','TYPICAL'))"))
+                    }
+                    (RunMode::Explain, DbKind::Postgres) => Some(format!("EXPLAIN {sql}")),
+                    _ => None,
                 };
+                let sql = explain.as_deref().unwrap_or(sql);
                 recorded_sql.push(strata_sql::history_sql(sql).to_owned());
                 for _ in 0..span.repeat {
                     check_cancel(&cancel)?;

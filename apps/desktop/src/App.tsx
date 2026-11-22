@@ -75,7 +75,12 @@ export function App() {
   const pinned = tab ? (pinnedByTab[tab.id] ?? []) : [];
   const [entries, setEntries] = useState<CatalogEntry[]>([]);
   const defaultSchema =
-    active.session?.schema ?? (profile?.kind === "sqlserver" ? "dbo" : "public");
+    active.session?.schema ??
+    (profile?.kind === "sqlserver"
+      ? "dbo"
+      : profile?.kind === "oracle"
+        ? profile.user.toUpperCase()
+        : "public");
   const catalog = useCatalogSchema(profile, tab, data.catalogRevision, defaultSchema, data.scope);
   const editor = useRef<EditorHandle>(null);
   const editors = useRef(new Map<string, { current: EditorState | null }>());
@@ -568,6 +573,16 @@ export function App() {
                 >
                   Format
                 </Button>
+                {profile?.kind === "oracle" && (
+                  <Button
+                    variant="ghost"
+                    aria-pressed={!!active.dbmsOutput}
+                    onClick={() => void data.toggleDbmsOutput()}
+                    disabled={!active.session || !!active.busy}
+                  >
+                    DBMS Output
+                  </Button>
+                )}
                 <div className="query-actions-end">
                   {profile?.id && (
                     <DatabasePicker

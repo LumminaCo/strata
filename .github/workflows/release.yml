@@ -56,6 +56,10 @@ jobs:
     needs: linux-and-windows-bundles
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: bridge/oracle/go.mod
+          cache-dependency-path: bridge/oracle/go.sum
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -104,6 +108,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: bridge/oracle/go.mod
+          cache-dependency-path: bridge/oracle/go.sum
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}

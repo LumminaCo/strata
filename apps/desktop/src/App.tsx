@@ -4,6 +4,8 @@ import {
   ChevronRight,
   Copy,
   Database,
+  History,
+  Command as CommandIcon,
   FileCode2,
   Layers3,
   Monitor,
@@ -32,10 +34,13 @@ import {
   PasswordDialog,
   emptyConnection,
 } from "@/features/connections";
+import { CatalogExplorer, type CatalogEntry } from "@/features/catalog-explorer";
+import { CatalogPalette, DatabasePicker, QueryHistory } from "@/features/catalog-dialogs";
+import { useCatalogSchema } from "@/features/use-catalog-schema";
 import { shortcuts, workspaceKeydown } from "@/features/keymap";
 import { useWorkspace } from "@/features/use-workspace";
 import type { Connection, RunMode } from "@/ipc/bindings/protocol";
-import { browserMode, errorMessage } from "@/ipc/client";
+import { browserMode, dispatch, errorMessage } from "@/ipc/client";
 
 const themes = ["system", "light", "dark"] as const;
 const themeIcons = { system: Monitor, light: Sun, dark: Moon };
@@ -58,6 +63,11 @@ export function App() {
   const [valueView, setValueView] = useState<{ name: string; text: string }>();
   const [filterResult, setFilterResult] = useState<{ cursor: string; text: string }>();
   const [explorerOpen, setExplorerOpen] = useState(true);
+  const [palette, setPalette] = useState(false);
+  const [history, setHistory] = useState(false);
+  const [entries, setEntries] = useState<CatalogEntry[]>([]);
+  const defaultSchema = active.session?.schema ?? "public";
+  const catalog = useCatalogSchema(profile, tab, data.catalogRevision, defaultSchema, data.scope);
   const editor = useRef<EditorHandle>(null);
   const editors = useRef(new Map<string, { current: EditorState | null }>());
   const filterInput = useRef<HTMLInputElement>(null);
@@ -92,10 +102,26 @@ export function App() {
     void data.run({ text: editor.current.text(), target: editor.current.target(), mode });
   }
 
-  function openTab(id: string) {
-    const existing = data.tabs.find((item) => item.connectionId === id);
-    if (existing) data.selectTab(existing.id);
-    else data.addTab(id);
+  function openTab(id: string, database?: string, text?: string) {
+    const profile = data.profiles.find((entry) => entry.id === id);
+    const existing = data.tabs.find(
+      (item) =>
+        item.connectionId === id &&
+        (item.database ?? profile?.database) === (database ?? profile?.database),
+    );
+    if (existing && text === undefined) data.selectTab(existing.id);
+    else data.addTab(id, database, text);
+  }
+
+  function openObject(entry: CatalogEntry) {
+    const identifier = (name: string) => `"${name.replaceAll('"', '""')}"`;
+    if (!entry.connection.id) return;
+    openTab(
+      entry.connection.id,
+      entry.database,
+      `SELECT * FROM ${identifier(entry.object.schema)}.${identifier(entry.object.name)};`,
+    );
+    setPalette(false);
   }
 
   function closeTab(id: string) {
@@ -121,14 +147,6 @@ export function App() {
     }
   }
 
-  const folders = new Map<string, Connection[]>();
-  for (const connection of data.profiles) {
-    const folder = connection.folder ?? "";
-    const entries = folders.get(folder) ?? [];
-    entries.push(connection);
-    folders.set(folder, entries);
-  }
-
   // Keep CodeMirror's undo history and selection while switching between tabs.
   let state = editorState;
   if (tab && !state) {
@@ -141,7 +159,15 @@ export function App() {
       className="workspace"
       data-env={profile?.env}
       onKeyDownCapture={(event) => {
-        if (connectionEditor || deletion || valueView || data.modal || event.defaultPrevented)
+        if (
+          connectionEditor ||
+          deletion ||
+          valueView ||
+          data.modal ||
+          palette ||
+          history ||
+          event.defaultPrevented
+        )
           return;
         const handled = workspaceKeydown(
           event.nativeEvent,
@@ -157,6 +183,9 @@ export function App() {
             },
             nextTab: () => data.moveTab(1),
             previousTab: () => data.moveTab(-1),
+            palette: () => setPalette(true),
+            history: () => setHistory(true),
+            explorer: () => setExplorerOpen((open) => !open),
           },
           browserMode,
         );
@@ -169,6 +198,24 @@ export function App() {
           <span>Strata</span>
         </div>
         <div className="toolbar-actions">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            title="Quick open (Ctrl+K)"
+            aria-label="Quick open"
+            onClick={() => setPalette(true)}
+          >
+            <CommandIcon />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            title="Query history (Ctrl+H)"
+            aria-label="Query history"
+            onClick={() => setHistory(true)}
+          >
+            <History />
+          </Button>
           <Button
             variant="ghost"
             onClick={changeTheme}
@@ -202,38 +249,17 @@ export function App() {
               <ChevronRight />
             </Button>
           </div>
-          <div className="connection-list">
-            {data.profiles.length === 0 && (
-              <p>{data.workspace ? "No saved connections" : "Loading workspace…"}</p>
-            )}
-            {Array.from(folders, ([folder, entries]) => (
-              <div key={folder} className="connection-group">
-                {folder && <h3>{folder}</h3>}
-                {entries.map(
-                  (connection) =>
-                    connection.id && (
-                      <Button
-                        key={connection.id}
-                        className="profile-button"
-                        variant="ghost"
-                        data-selected={profile?.id === connection.id}
-                        onClick={() => openTab(connection.id!)}
-                        title={`${connection.user}@${connection.host}:${connection.port}/${connection.database}`}
-                      >
-                        <Database />
-                        <span className="profile-name">{connection.name}</span>
-                        <span
-                          className="env-dot"
-                          data-env={connection.env}
-                          data-color={connection.color}
-                          aria-label={environments[connection.env]}
-                        />
-                      </Button>
-                    ),
-                )}
-              </div>
-            ))}
-          </div>
+          <CatalogExplorer
+            profiles={data.profiles}
+            active={profile?.id}
+            revision={data.catalogRevision}
+            scope={data.scope}
+            onSnapshot={catalog.capture}
+            onEntries={setEntries}
+            openSql={openTab}
+            onRefresh={data.invalidateCatalog}
+            onObject={openObject}
+          />
           {profile?.id && (
             <div className="profile-actions">
               <Button
@@ -365,6 +391,17 @@ export function App() {
                   <Square /> Stop
                 </Button>
                 <div className="query-actions-end">
+                  {profile?.id && (
+                    <DatabasePicker
+                      key={profile.id}
+                      selected={tab.database ?? profile.database}
+                      disabled={!!active.busy}
+                      load={async () =>
+                        dispatch("list_databases", { scope: await data.scope(profile) })
+                      }
+                      onChange={(database) => data.setDatabase(tab.id, database)}
+                    />
+                  )}
                   <Button
                     variant="ghost"
                     disabled={!profile || !!active.busy}
@@ -387,6 +424,8 @@ export function App() {
                       ref={editor}
                       text={tab.text}
                       savedState={state}
+                      schema={catalog.completion}
+                      defaultSchema={defaultSchema}
                       diagnostic={active.diagnostic}
                       onChange={(text) => data.editText(tab.id, text)}
                     />
@@ -578,6 +617,28 @@ export function App() {
         {profile?.readOnly && <span>Read-only</span>}
       </footer>
 
+      {palette && (
+        <CatalogPalette
+          entries={entries}
+          onClose={() => setPalette(false)}
+          onOpen={openObject}
+          onHistory={() => {
+            setPalette(false);
+            setHistory(true);
+          }}
+        />
+      )}
+      {history && (
+        <QueryHistory
+          connection={profile}
+          revision={data.historyRevision}
+          onClose={() => setHistory(false)}
+          onOpen={(sql) => {
+            if (profile?.id) data.addTab(profile.id, tab?.database, sql);
+            setHistory(false);
+          }}
+        />
+      )}
       {connectionEditor && (
         <ConnectionDialog
           initial={connectionEditor}
@@ -603,7 +664,7 @@ export function App() {
       {data.modal?.kind === "password" && (
         <PasswordDialog
           name={data.modal.name}
-          onClose={() => data.setModal(undefined)}
+          onClose={data.dismissModal}
           onSubmit={data.modal.submit}
         />
       )}

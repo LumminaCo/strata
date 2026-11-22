@@ -1,5 +1,6 @@
+import { autocompletion } from "@codemirror/autocomplete";
 import { history } from "@codemirror/commands";
-import { PostgreSQL, sql } from "@codemirror/lang-sql";
+import { PostgreSQL, sql, type SQLNamespace } from "@codemirror/lang-sql";
 import { bracketMatching, foldGutter } from "@codemirror/language";
 import { setDiagnostics } from "@codemirror/lint";
 import { Compartment, EditorState, StateEffect, StateField } from "@codemirror/state";
@@ -20,6 +21,7 @@ import { dispatch } from "@/ipc/client";
 import { editorTheme } from "@/theme/codemirror";
 
 const listener = new Compartment();
+const language = new Compartment();
 const setStatement = StateEffect.define<[number, number] | undefined>();
 const statementMarks = StateField.define<DecorationSet>({
   create: () => Decoration.none,
@@ -52,11 +54,21 @@ interface SqlEditorProps {
   ref?: Ref<EditorHandle>;
   text: string;
   diagnostic?: EditorDiagnostic;
+  schema?: SQLNamespace;
+  defaultSchema?: string;
   onChange: (text: string) => void;
   savedState: { current: EditorState | null };
 }
 
-export function SqlEditor({ ref, text, diagnostic, onChange, savedState }: SqlEditorProps) {
+export function SqlEditor({
+  ref,
+  text,
+  diagnostic,
+  schema,
+  defaultSchema,
+  onChange,
+  savedState,
+}: SqlEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const latest = useRef({ text, onChange });
@@ -111,7 +123,8 @@ export function SqlEditor({ ref, text, diagnostic, onChange, savedState }: SqlEd
       EditorState.create({
         doc: latest.current.text,
         extensions: [
-          sql({ dialect: PostgreSQL }),
+          language.of(sql({ dialect: PostgreSQL })),
+          autocompletion(),
           history(),
           lineNumbers(),
           foldGutter(),
@@ -139,6 +152,12 @@ export function SqlEditor({ ref, text, diagnostic, onChange, savedState }: SqlEd
       view.current = null;
     };
   }, [savedState]);
+
+  useLayoutEffect(() => {
+    view.current?.dispatch({
+      effects: language.reconfigure(sql({ dialect: PostgreSQL, schema, defaultSchema })),
+    });
+  }, [schema, defaultSchema]);
 
   useEffect(() => {
     const editor = view.current;

@@ -46,6 +46,9 @@ pub struct Workspace {
 pub struct SavedTab {
     pub id: Uuid,
     pub connection_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub database: Option<String>,
     pub text: String,
 }
 
@@ -168,6 +171,9 @@ pub enum RunEvent {
         statement_index: usize,
         error: ErrorDto,
     },
+    CatalogChanged {
+        connection_id: Uuid,
+    },
     Done {
         elapsed_ms: u32,
         statements: usize,
@@ -246,6 +252,7 @@ pub enum Command {
     },
     OpenSession {
         connection_id: Uuid,
+        database: Option<String>,
         password: Option<String>,
     },
     CloseSession {
@@ -272,10 +279,50 @@ pub enum Command {
         mode: RunMode,
         production: bool,
     },
+    ListDatabases {
+        scope: crate::CatalogScope,
+    },
+    ListSchemas {
+        scope: crate::CatalogScope,
+    },
+    CatalogSnapshot {
+        scope: crate::CatalogScope,
+        schema: String,
+    },
+    RefreshMetadata {
+        connection_id: Uuid,
+    },
+    HistoryList {
+        connection_id: Uuid,
+        limit: Option<u32>,
+    },
     WorkspaceLoad,
     WorkspaceSave {
         workspace: Workspace,
     },
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryItem {
+    pub sql: String,
+    #[ts(type = "number")]
+    pub started_at: i64,
+    pub duration_ms: u32,
+    pub rows: u32,
+    pub status: String,
+}
+
+impl From<strata_store::HistoryEntry> for HistoryItem {
+    fn from(entry: strata_store::HistoryEntry) -> Self {
+        Self {
+            sql: entry.sql,
+            started_at: entry.started_at,
+            duration_ms: entry.duration_ms,
+            rows: entry.rows,
+            status: entry.status.as_str().into(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -288,6 +335,11 @@ fn typescript_bindings() {
     output.push_str("export type ColumnMeta = { name: string; db_type: string; kind: string; nullable: boolean | null; table_oid: number | null; column_id: number | null };\n");
     let cfg = ts_rs::Config::default();
     for decl in [
+        strata_core::ObjectKind::decl(&cfg),
+        strata_core::Object::decl(&cfg),
+        crate::CatalogScope::decl(&cfg),
+        crate::CatalogSnapshot::decl(&cfg),
+        HistoryItem::decl(&cfg),
         Connection::decl(&cfg),
         SessionInfo::decl(&cfg),
         Workspace::decl(&cfg),

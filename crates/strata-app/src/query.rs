@@ -4,6 +4,7 @@ use strata_core::{Batch, CoreError, Result};
 use strata_sql::{
     Dialect, Span, StmtClass, needs_mutation_confirmation, split, statement_at, utf16_to_byte,
 };
+use strata_store::{HistoryEntry, HistoryStatus, Source};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -115,6 +116,9 @@ impl AppService {
         }
 
         let started = Instant::now();
+        let started_at = crate::metadata::now_ms();
+        let mut recorded_sql = Vec::new();
+        let mut rows = 0_u32;
         let mut statements = 0;
         let run = async {
             check_cancel(&cancel)?;
@@ -130,7 +134,8 @@ impl AppService {
                 )
                 .await?;
                 let sql = slice(&request.text, span.start, span.end)?;
-                stream_statement(
+                recorded_sql.push(strata_sql::history_sql(sql));
+                let fetched = stream_statement(
                     self.engine.core(),
                     Statement {
                         session: request.session_id,
@@ -143,7 +148,20 @@ impl AppService {
                     &emit,
                 )
                 .await?;
+                rows = rows.saturating_add(fetched);
                 statements += 1;
+                if span.kind_hint == StmtClass::Ddl {
+                    self.metadata
+                        .invalidate(&self.engine, session.connection_id)
+                        .await?;
+                    send(
+                        &emit,
+                        RunEvent::CatalogChanged {
+                            connection_id: session.connection_id,
+                        },
+                    )
+                    .await?;
+                }
             }
             Ok(())
         }
@@ -158,6 +176,36 @@ impl AppService {
                 control.cancelled = None;
             }
             control.active = None;
+        }
+        let status = match &run {
+            Ok(()) => HistoryStatus::Ok,
+            Err(CoreError::Cancelled) => HistoryStatus::Cancelled,
+            Err(_) => HistoryStatus::Error,
+        };
+        if !recorded_sql.is_empty()
+            && self
+                .engine
+                .record_history(HistoryEntry {
+                    connection_id: session.connection_id.to_string(),
+                    source: Source::Ui,
+                    sql: recorded_sql.join("\n"),
+                    started_at,
+                    duration_ms: elapsed_ms(started),
+                    rows,
+                    status,
+                    error: None,
+                })
+                .await
+                .is_err()
+        {
+            send(
+                &emit,
+                RunEvent::Message {
+                    level: "warning".into(),
+                    text: "Could not save query history.".into(),
+                },
+            )
+            .await?;
         }
         if let Err(error) = run {
             send(
@@ -193,7 +241,7 @@ async fn stream_statement<F, Fut>(
     core: &strata_core::Core,
     statement: Statement<'_>,
     emit: &F,
-) -> Result<()>
+) -> Result<u32>
 where
     F: Fn(RunEvent) -> Fut,
     Fut: Future<Output = bool>,
@@ -269,10 +317,14 @@ where
                 )
                 .await?;
             }
-            return Ok(());
+            return Ok(affected
+                .map_or(fetched, |count| count as usize)
+                .try_into()
+                .unwrap_or(u32::MAX));
         }
         if pause && fetched >= fetch_size {
-            return send(emit, RunEvent::ResultPaused { cursor_id, fetched }).await;
+            send(emit, RunEvent::ResultPaused { cursor_id, fetched }).await?;
+            return Ok(fetched.try_into().unwrap_or(u32::MAX));
         }
         check_cancel(cancel)?;
         let count = if pause {

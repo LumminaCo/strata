@@ -45,6 +45,7 @@ async fn desktop_streams_scripts_cancels_and_restores_workspace() {
         &app,
         Command::OpenSession {
             connection_id,
+            database: None,
             password: None,
         },
         &lifetime,

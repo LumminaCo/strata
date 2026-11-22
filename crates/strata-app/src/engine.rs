@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 /// Common Rust entry point for open profiles, sessions and the persistent store.
 pub struct Engine {
-    paths: Paths,
+    pub(crate) paths: Paths,
     config: WatchedConfig,
     core: Core,
 }
@@ -43,13 +43,13 @@ impl Engine {
         &self.core
     }
 
-    pub(crate) fn config(&self) -> Config {
+    pub fn config(&self) -> Config {
         self.config_store()
             .load()
             .unwrap_or_else(|_| self.config.updates().borrow().config.clone())
     }
 
-    pub(crate) fn profile(&self, id: Uuid) -> Result<Profile> {
+    pub fn profile(&self, id: Uuid) -> Result<Profile> {
         self.config()
             .connections
             .into_iter()
@@ -68,7 +68,19 @@ impl Engine {
         id: Uuid,
         prompted: Option<Secret>,
     ) -> Result<Box<dyn Introspector>> {
-        let profile = self.profile(id)?;
+        self.introspector_in(id, None, prompted).await
+    }
+
+    pub async fn introspector_in(
+        &self,
+        id: Uuid,
+        database: Option<&str>,
+        prompted: Option<Secret>,
+    ) -> Result<Box<dyn Introspector>> {
+        let mut profile = self.profile(id)?;
+        if let Some(database) = database {
+            profile.database = database.into();
+        }
         let (profile, secret) = resolve_secret(profile, prompted).await?;
         self.core.introspector(&profile, &secret).await
     }
@@ -125,7 +137,7 @@ async fn resolve_secret(profile: Profile, prompted: Option<Secret>) -> Result<(P
     .map_err(background_error)?
 }
 
-fn background_error(_: tokio::task::JoinError) -> CoreError {
+pub(crate) fn background_error(_: tokio::task::JoinError) -> CoreError {
     CoreError::Io {
         message: "Local storage task failed".into(),
     }

@@ -1,44 +1,6 @@
-:root {
-  color-scheme: light;
-  --surface: oklch(0.975 0.006 250);
-  --workspace-accent: oklch(0.46 0.13 255);
-  --accent-surface: oklch(0.95 0.022 250);
-  --env-dev: oklch(0.54 0.135 155);
-  --env-staging: oklch(0.59 0.14 78);
-  --env-prod: oklch(0.53 0.19 24);
-  --grid-header: var(--surface);
-  --grid-stripe: var(--muted);
-  --grid-selection: var(--accent-surface);
-  --grid-null: var(--muted-foreground);
-  --editor-active-line: var(--surface);
-  --editor-statement: var(--accent-surface);
-  --editor-selection: var(--grid-selection);
-  --syntax-keyword: oklch(0.47 0.155 290);
-  --syntax-string: var(--env-dev);
-  --syntax-number: oklch(0.52 0.16 52);
-  --syntax-comment: var(--muted-foreground);
-  --syntax-identifier: var(--foreground);
-  --syntax-function: var(--workspace-accent);
-  --editor-font: "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
-}
-
-.dark {
-  color-scheme: dark;
-  --surface: oklch(0.202 0.012 255);
-  --workspace-accent: oklch(0.77 0.105 250);
-  --accent-surface: oklch(0.28 0.04 250);
-  --env-dev: oklch(0.73 0.145 155);
-  --env-staging: oklch(0.79 0.135 78);
-  --env-prod: oklch(0.71 0.18 24);
-  --syntax-keyword: oklch(0.78 0.12 290);
-  --syntax-number: oklch(0.76 0.15 52);
-}
-
 body {
   margin: 0;
-  font:
-    13px/1.45 system-ui,
-    sans-serif;
+  font: var(--font-size-ui) / var(--leading-ui) var(--ui-font);
 }
 
 .workspace {
@@ -70,23 +32,24 @@ body {
 .toolbar {
   justify-content: space-between;
   border-bottom: 1px solid var(--border);
-  padding-inline: 12px;
+  padding-inline: var(--space-3);
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 15px;
+  gap: var(--space-2);
+  font-size: var(--font-size-title);
   font-weight: 650;
   letter-spacing: -0.025em;
 }
 
-.brand svg {
-  width: 18px;
-  height: 18px;
-  stroke-width: 1.75;
-  color: var(--workspace-accent);
+.brand img {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: var(--radius);
+  background: var(--brand-frost);
 }
 .toolbar-actions,
 .query-actions,
@@ -99,7 +62,7 @@ body {
 .query-tabs {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .workspace-body {
@@ -134,7 +97,7 @@ body {
 .connection-group h3 {
   margin: 0;
   font-weight: 600;
-  font-size: 12px;
+  font-size: var(--font-size-label);
 }
 
 .sidebar-heading button svg {
@@ -147,7 +110,7 @@ body {
 .connection-list > p {
   margin: 4px;
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--font-size-label);
 }
 .connection-group h3 {
   color: var(--muted-foreground);
@@ -253,7 +216,7 @@ body {
 
 .query-actions-end {
   margin-left: auto;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .environment-badge {
   color: var(--tag-color);
@@ -278,7 +241,7 @@ body {
 .empty-state {
   display: grid;
   place-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   padding: 16px;
   text-align: center;
 }
@@ -298,7 +261,7 @@ body {
 }
 .empty-state h1 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--font-size-title);
   font-weight: 600;
 }
 
@@ -335,13 +298,13 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 .results-empty {
   display: grid;
   place-items: center;
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--font-size-label);
 }
 .query-messages {
   overflow: auto;
@@ -351,7 +314,7 @@ body {
 .query-messages > div {
   display: grid;
   grid-template-columns: 64px minmax(0, 1fr);
-  gap: 8px;
+  gap: var(--space-2);
   padding: 4px 0;
   border-bottom: 1px solid var(--border);
 }
@@ -374,7 +337,7 @@ body {
   padding-inline: 10px;
   border-top: 1px solid var(--border);
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--font-size-label);
   white-space: nowrap;
 }
 .status-bar > span + span + span::before {
@@ -400,12 +363,12 @@ body {
   z-index: 10;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   max-width: min(480px, 90vw);
   background: var(--popover);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--elevation-popover);
   padding: 6px 8px;
 }
 
@@ -417,12 +380,12 @@ body {
 }
 .connection-form {
   display: grid;
-  gap: 12px;
+  gap: var(--space-3);
 }
 .connection-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: var(--space-3);
 }
 .connection-field {
   min-width: 0;
@@ -437,12 +400,12 @@ body {
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: minmax(0, 1fr) 90px;
-  gap: 12px;
+  gap: var(--space-3);
 }
 .url-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
+  gap: var(--space-2);
   align-items: center;
 }
 .fixture-button {
@@ -488,13 +451,13 @@ body {
 .catalog-filter {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   padding: 6px;
 }
 .catalog-filter input {
   height: 27px;
   padding-inline: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-label);
 }
 .catalog-scroll {
   overflow: auto;
@@ -533,7 +496,7 @@ body {
 }
 .catalog-name small,
 .catalog-dialog-list small {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   margin-left: auto;
   color: var(--muted-foreground);
 }
@@ -607,7 +570,7 @@ body {
 .table-inspector-header,
 .table-inspector-tabs {
   display: flex;
-  gap: 4px;
+  gap: var(--space-1);
   align-items: center;
   padding: 5px 8px;
   border-bottom: 1px solid var(--border);
@@ -656,7 +619,7 @@ body {
 }
 .table-data-status {
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--font-size-label);
 }
 .table-filters input {
   width: auto;
@@ -722,7 +685,7 @@ body {
   position: absolute;
   inset: auto 10px 10px auto;
   display: flex;
-  gap: 4px;
+  gap: var(--space-1);
   align-items: center;
 }
 .grid-copy [data-slot="native-select-wrapper"] {
@@ -749,7 +712,7 @@ body {
   padding: 8px 4px;
   border-bottom: 1px solid var(--border);
   display: grid;
-  gap: 4px;
+  gap: var(--space-1);
 }
 .activity-heading {
   display: flex;
@@ -769,7 +732,7 @@ body {
 }
 .activity-context {
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--font-size-label);
 }
 .activity-list pre {
   font-family: var(--editor-font);

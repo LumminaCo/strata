@@ -11,7 +11,6 @@ import {
   FileCode2,
   FolderOpen,
   Save,
-  Layers3,
   Monitor,
   Moon,
   Play,
@@ -49,6 +48,7 @@ import { shortcuts, workspaceKeydown } from "@/features/keymap";
 import { useWorkspace } from "@/features/use-workspace";
 import type { Cell, Connection, RunMode } from "@/ipc/bindings/protocol";
 import { browserMode, dispatch, errorMessage } from "@/ipc/client";
+import strataLogo from "../../../dev/strata-logo.png";
 
 const themes = ["system", "light", "dark"] as const;
 const themeIcons = { system: Monitor, light: Sun, dark: Moon };
@@ -418,7 +418,7 @@ export function App() {
       />
       <header className="toolbar">
         <div className="brand">
-          <Layers3 aria-hidden="true" />
+          <img src={strataLogo} alt="" width={24} height={24} />
           <span>Strata</span>
         </div>
         <div className="toolbar-actions">

@@ -4,6 +4,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      windows_artifact_run:
+        description: "Run ID of a Windows bundle to retest"
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -16,6 +21,7 @@ env:
 
 jobs:
   linux-and-windows-bundles:
+    if: ${{ !inputs.windows_artifact_run }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -51,11 +57,70 @@ jobs:
           if-no-files-found: error
 
   windows-native:
+    if: ${{ !cancelled() && (needs.linux-and-windows-bundles.result == 'success' || inputs.windows_artifact_run) }}
     runs-on: windows-latest
     timeout-minutes: 45
     needs: linux-and-windows-bundles
+    permissions:
+      actions: read
+      contents: read
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: strata-windows-x64
+          path: artifacts
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.windows_artifact_run || github.run_id }}
+      - name: Install and open the Windows bundle
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem artifacts -Filter '*.exe' | Select-Object -First 1
+          $destination = Join-Path $env:RUNNER_TEMP "Strata"
+          $setup = Start-Process $installer.FullName -ArgumentList "/S", "/D=$destination" -PassThru -Wait
+          if ($setup.ExitCode -ne 0) { throw "The installer returned $($setup.ExitCode)." }
+          $binary = Join-Path $destination "strata.exe"
+          $bridge = Join-Path $destination "oracle-bridge.exe"
+          if (!(Test-Path $bridge)) { throw "The Oracle sidecar is missing from the installation." }
+          $env:STRATA_HOME = Join-Path $env:RUNNER_TEMP "strata-smoke-home"
+          $clock = [System.Diagnostics.Stopwatch]::StartNew()
+          $process = Start-Process $binary -PassThru
+          $opened = $false
+          try {
+            for ($attempt = 0; $attempt -lt 300; $attempt++) {
+              Start-Sleep -Milliseconds 100
+              $process.Refresh()
+              if ($process.HasExited) { throw "Strata exited during startup." }
+              if ($process.MainWindowTitle -eq "Strata") {
+                $clock.Stop()
+                $opened = $true
+                break
+              }
+            }
+            if (!$opened) { throw "The Strata window did not open." }
+          } finally {
+            if (!$process.HasExited) { Stop-Process -Id $process.Id }
+          }
+          "Windows installer bytes $($installer.Length)" >> $env:GITHUB_STEP_SUMMARY
+          "Windows startup to window title $($clock.ElapsedMilliseconds) ms" >> $env:GITHUB_STEP_SUMMARY
+          Write-Host "Windows startup to window title $($clock.ElapsedMilliseconds) ms"
+          $start = [System.Diagnostics.ProcessStartInfo]::new()
+          $start.FileName = $binary
+          $start.Arguments = "mcp"
+          $start.UseShellExecute = $false
+          $start.RedirectStandardInput = $true
+          $start.RedirectStandardOutput = $true
+          $mcp = [System.Diagnostics.Process]::Start($start)
+          try {
+            $mcp.StandardInput.WriteLine('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"bundle-smoke","version":"1.0"}}}')
+            $read = $mcp.StandardOutput.ReadLineAsync()
+            if (!$read.Wait(15000)) { throw "The installed MCP server did not initialize." }
+            $reply = $read.Result | ConvertFrom-Json
+            if ($reply.result.serverInfo.name -ne "strata") { throw "Unexpected MCP server identity." }
+          } finally {
+            $mcp.StandardInput.Close()
+            if (!$mcp.WaitForExit(5000)) { $mcp.Kill() }
+          }
       - uses: actions/setup-go@v6
         with:
           go-version-file: bridge/oracle/go.mod
@@ -78,60 +143,9 @@ jobs:
       - run: vp build
         working-directory: apps/desktop
       - run: cargo test --locked --workspace
-      - run: cargo build --locked -p strata --features custom-protocol --release
-      - uses: actions/download-artifact@v8
-        with:
-          name: strata-windows-x64
-          path: artifacts
-      - name: Install and open the Windows bundle
-        shell: pwsh
-        run: |
-          $installer = Get-ChildItem artifacts -Filter '*.exe' | Select-Object -First 1
-          $destination = Join-Path $env:RUNNER_TEMP "Strata"
-          $setup = Start-Process $installer.FullName -ArgumentList "/S", "/D=$destination" -PassThru -Wait
-          if ($setup.ExitCode -ne 0) { throw "The installer returned $($setup.ExitCode)." }
-          $binary = Join-Path $destination "strata.exe"
-          $bridge = Join-Path $destination "oracle-bridge.exe"
-          if (!(Test-Path $bridge)) { throw "The Oracle sidecar is missing from the installation." }
-          $env:STRATA_HOME = Join-Path $env:RUNNER_TEMP "strata-smoke-home"
-          $clock = [System.Diagnostics.Stopwatch]::StartNew()
-          $process = Start-Process $binary -PassThru
-          $opened = $false
-          try {
-            for ($attempt = 0; $attempt -lt 300; $attempt++) {
-              Start-Sleep -Milliseconds 100
-              $process.Refresh()
-              if ($process.HasExited) { throw "Strata exited during startup." }
-              if ($process.MainWindowTitle -eq "Strata") {
-                $opened = $true
-                break
-              }
-            }
-            if (!$opened) { throw "The Strata window did not open." }
-          } finally {
-            if (!$process.HasExited) { Stop-Process -Id $process.Id }
-          }
-          "Windows installer bytes $($installer.Length)" >> $env:GITHUB_STEP_SUMMARY
-          "Windows startup to window title $($clock.ElapsedMilliseconds) ms" >> $env:GITHUB_STEP_SUMMARY
-          $start = [System.Diagnostics.ProcessStartInfo]::new()
-          $start.FileName = $binary
-          $start.Arguments = "mcp"
-          $start.UseShellExecute = $false
-          $start.RedirectStandardInput = $true
-          $start.RedirectStandardOutput = $true
-          $mcp = [System.Diagnostics.Process]::Start($start)
-          try {
-            $mcp.StandardInput.WriteLine('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"bundle-smoke","version":"1.0"}}}')
-            $read = $mcp.StandardOutput.ReadLineAsync()
-            if (!$read.Wait(15000)) { throw "The installed MCP server did not initialize." }
-            $reply = $read.Result | ConvertFrom-Json
-            if ($reply.result.serverInfo.name -ne "strata") { throw "Unexpected MCP server identity." }
-          } finally {
-            $mcp.StandardInput.Close()
-            if (!$mcp.WaitForExit(5000)) { $mcp.Kill() }
-          }
 
   macos-arm64:
+    if: ${{ !inputs.windows_artifact_run }}
     runs-on: macos-15
     timeout-minutes: 45
     steps:

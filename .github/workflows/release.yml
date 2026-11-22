@@ -9,6 +9,10 @@ on:
         description: "Run ID of a Windows bundle to retest"
         type: string
         required: false
+      benchmark_windows_artifact:
+        description: "Measure the selected Windows bundle with the performance probe"
+        type: boolean
+        default: false
       macos_artifact_run:
         description: "Run ID of a macOS bundle to benchmark"
         type: string
@@ -89,20 +93,29 @@ jobs:
           "STRATA_BUNDLE_BIN=$binary" >> $env:GITHUB_ENV
           "Windows installer bytes $($installer.Length)" >> $env:GITHUB_STEP_SUMMARY
       - uses: actions/setup-python@v6
-        if: ${{ !inputs.windows_artifact_run }}
+        if: ${{ !inputs.windows_artifact_run || inputs.benchmark_windows_artifact }}
         with:
           python-version: "3.12"
       - name: Measure Windows editor and connected webview
-        if: ${{ !inputs.windows_artifact_run }}
+        if: ${{ !inputs.windows_artifact_run || inputs.benchmark_windows_artifact }}
         shell: pwsh
         run: |
           python -m pip install psutil==7.2.2
-          python dev/benchmark-desktop.py "$env:STRATA_BUNDLE_BIN" --pg-bin "$env:PGBIN" |
-            Tee-Object -FilePath windows-performance.jsonl
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Get-Content windows-performance.jsonl >> $env:GITHUB_STEP_SUMMARY
+          $postgres = Get-Service postgresql-x64-17
+          Set-Service $postgres.Name -StartupType Manual
+          Start-Service $postgres.Name
+          try {
+            # The runner image provides this local PostgreSQL service and its test credential.
+            $env:STRATA_BENCHMARK_PG_PASSWORD = "root"
+            python dev/benchmark-desktop.py "$env:STRATA_BUNDLE_BIN" --port 5432 --database postgres |
+              Tee-Object -FilePath windows-performance.jsonl
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Get-Content windows-performance.jsonl >> $env:GITHUB_STEP_SUMMARY
+          } finally {
+            Stop-Service $postgres.Name
+          }
       - uses: actions/upload-artifact@v7
-        if: ${{ !inputs.windows_artifact_run }}
+        if: ${{ !inputs.windows_artifact_run || inputs.benchmark_windows_artifact }}
         with:
           name: strata-windows-performance
           path: windows-performance.jsonl

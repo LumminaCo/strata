@@ -1,6 +1,7 @@
 """Measure a fresh Strata process using a restored editor and a local PostgreSQL fixture."""
 
 import argparse
+from contextlib import closing
 import ctypes
 import json
 import os
@@ -48,7 +49,7 @@ tls = {{ mode = "disable" }}
         "tabs": [{"id": tab_id, "connectionId": connection_id, "text": QUERY}],
         "activeTab": tab_id,
     }
-    with sqlite3.connect(home / "strata.db") as db:
+    with closing(sqlite3.connect(home / "strata.db")) as db, db:
         db.executescript(MIGRATION.read_text(encoding="utf-8"))
         db.execute("PRAGMA user_version = 1")
         db.execute("INSERT INTO workspace (id, payload) VALUES (1, ?)", (json.dumps(workspace),))
@@ -147,7 +148,7 @@ def measure(binary, home, args):
     prior_webkit = webkit_processes() if sys.platform == "darwin" else set()
     env = dict(os.environ, STRATA_HOME=str(home), STRATA_BENCHMARK_LOG=str(events_file))
     if sys.platform == "win32":
-        env["WEBVIEW2_USER_DATA_FOLDER"] = str(home / "webview")
+        env["WEBVIEW2_USER_DATA_FOLDER"] = str(home.parent / "webview")
     if sys.platform.startswith("linux"):
         env.update(GDK_BACKEND="x11", WEBKIT_DISABLE_DMABUF_RENDERER="1")
 
@@ -167,9 +168,14 @@ def measure(binary, home, args):
             print(log.read(), file=sys.stderr)
             raise
         finally:
+            webview_children = []
             if process.poll() is None:
+                if sys.platform == "win32":
+                    webview_children = psutil.Process(process.pid).children(recursive=True)
                 process.terminate()
             process.wait(timeout=15)
+            if webview_children:
+                psutil.wait_procs(webview_children, timeout=5)
 
     return {
         "platform": sys.platform,

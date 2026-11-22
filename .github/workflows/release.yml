@@ -9,6 +9,10 @@ on:
         description: "Run ID of a Windows bundle to retest"
         type: string
         required: false
+      macos_artifact_run:
+        description: "Run ID of a macOS bundle to benchmark"
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -21,7 +25,7 @@ env:
 
 jobs:
   linux-and-windows-bundles:
-    if: ${{ !inputs.windows_artifact_run }}
+    if: ${{ !inputs.windows_artifact_run && !inputs.macos_artifact_run }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -169,7 +173,7 @@ jobs:
       - run: cargo test --locked --workspace
 
   macos-arm64:
-    if: ${{ !inputs.windows_artifact_run }}
+    if: ${{ !inputs.windows_artifact_run && !inputs.macos_artifact_run }}
     runs-on: macos-15
     timeout-minutes: 45
     steps:
@@ -201,6 +205,28 @@ jobs:
       - run: cargo test --locked --workspace
       - run: cargo tauri build --target aarch64-apple-darwin --bundles dmg -- --locked
         working-directory: apps/desktop
+      - uses: actions/upload-artifact@v7
+        with:
+          name: strata-macos-arm64
+          path: target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+  macos-native:
+    if: ${{ !cancelled() && (needs.macos-arm64.result == 'success' || inputs.macos_artifact_run) }}
+    runs-on: macos-15
+    timeout-minutes: 15
+    needs: macos-arm64
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: strata-macos-arm64
+          path: artifacts
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.macos_artifact_run || github.run_id }}
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -208,14 +234,18 @@ jobs:
         run: |
           HOMEBREW_NO_AUTO_UPDATE=1 brew install postgresql@17
           python -m pip install psutil==7.2.2
-      - name: Verify and measure the mounted DMG
+      - name: Benchmark the installed macOS app
         run: |
-          disk="$(find target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)"
+          disk="$(find artifacts -name '*.dmg' -print -quit)"
           mount="$RUNNER_TEMP/strata-dmg"
+          installed="$RUNNER_TEMP/Strata.app"
           mkdir -p "$mount"
           hdiutil attach -nobrowse -mountpoint "$mount" "$disk"
           trap 'hdiutil detach "$mount"' EXIT
-          binaries="$mount/Strata.app/Contents/MacOS"
+          ditto "$mount/Strata.app" "$installed"
+          hdiutil detach "$mount"
+          trap - EXIT
+          binaries="$installed/Contents/MacOS"
           test -x "$binaries/oracle-bridge"
           "$binaries/strata" --version
           printf 'macOS installer bytes %s\n' "$(stat -f %z "$disk")" >> "$GITHUB_STEP_SUMMARY"
@@ -225,9 +255,4 @@ jobs:
         with:
           name: strata-macos-performance
           path: macos-performance.jsonl
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v7
-        with:
-          name: strata-macos-arm64
-          path: target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error

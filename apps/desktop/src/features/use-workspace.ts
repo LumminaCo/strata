@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { loadResultGrid } from "@/components/load-result-grid";
 import type { ResultSet } from "@/components/result-grid";
 import type { EditorDiagnostic } from "@/components/sql-editor";
 import type {
@@ -66,12 +67,8 @@ export function useWorkspace() {
 
   useEffect(() => {
     let current = true;
-    void Promise.all([
-      dispatch("list_connections"),
-      dispatch("workspace_load"),
-      dispatch("settings_get"),
-    ]).then(
-      ([connections, restored, settings]) => {
+    void dispatch("workspace_bootstrap").then(
+      ({ connections, workspace: restored, settings }) => {
         if (!current) return;
         const activeTab = restored.tabs.some((tab) => tab.id === restored.activeTab)
           ? restored.activeTab
@@ -236,7 +233,7 @@ export function useWorkspace() {
               id: event.cursorId,
               columns: event.columns,
               index: event.resultIndex,
-              rows: [],
+              rows: event.rows,
               more: false,
               capped: false,
             },
@@ -381,6 +378,8 @@ export function useWorkspace() {
           : { ...current, session },
       );
       if (query && job.runId) {
+        await loadResultGrid();
+        if (job.stopped || jobs.current.get(item.id) !== job) return;
         const spans = new Map<number, [number, number]>();
         await runQuery(
           { ...query, runId: job.runId, sessionId: session.id, confirmed },

@@ -23,6 +23,7 @@ import type {
   TransactionState,
   Target,
   Workspace,
+  WorkspaceBootstrap,
 } from "./bindings/protocol";
 import { createDevTransport } from "./transport-dev";
 
@@ -63,6 +64,7 @@ interface Commands {
   audit_list: [{ limit?: number }, AuditEntry[]];
   mcp_config: [undefined, { mcpServers: Record<string, { command: string; args: string[] }> }];
   workspace_load: [undefined, Workspace];
+  workspace_bootstrap: [undefined, WorkspaceBootstrap];
   workspace_save: [{ workspace: Workspace }, null];
 }
 

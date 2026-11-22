@@ -21,13 +21,17 @@
   }
 
   async function benchmark() {
+    const documentReadyMs = performance.now();
     const editor = await until("the restored SQL editor", () =>
       document.querySelector('.cm-content[contenteditable="true"]'),
     );
     editor.focus();
     await frame();
     await frame();
-    await report("editor");
+    await report("editor", {
+      documentReadyMs: Math.round(documentReadyMs),
+      navigationToEditorMs: Math.round(performance.now()),
+    });
 
     (await until("Connect", () => button("Connect"))).click();
     await until("one database session", () => button("Disconnect"));

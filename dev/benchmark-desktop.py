@@ -155,7 +155,7 @@ def measure(binary, home, args):
         start = time.monotonic()
         process = subprocess.Popen([str(binary)], env=env, stdout=log, stderr=subprocess.STDOUT)
         try:
-            wait_for(process, events_file, "editor")
+            editor = wait_for(process, events_file, "editor")
             startup = round((time.monotonic() - start) * 1_000)
             wait_for(process, events_file, "connected")
             time.sleep(2)
@@ -174,6 +174,8 @@ def measure(binary, home, args):
     return {
         "platform": sys.platform,
         "editor_ms": startup,
+        "document_ready_ms": editor.get("documentReadyMs"),
+        "navigation_to_editor_ms": editor.get("navigationToEditorMs"),
         "first_row_ms": first["ms"],
         "memory_metric": metric,
         "memory_bytes": memory,

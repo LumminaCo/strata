@@ -312,12 +312,14 @@ where
         let has_result = !batch.columns.is_empty();
         if has_result {
             let columns = std::mem::take(&mut batch.columns);
+            let rows = wire_rows(std::mem::take(&mut batch.rows));
             send(
                 emit,
                 RunEvent::ResultStart {
                     cursor_id,
                     result_index: *next_result_index,
                     columns,
+                    rows,
                 },
             )
             .await?;

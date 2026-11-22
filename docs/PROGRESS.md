@@ -116,4 +116,24 @@ The native runtime smoke used Linux with WebKitGTK. The next milestone is M3, co
 | Windows x64 NSIS installer | 11.59 MiB |
 | macOS arm64 DMG | 14.88 MiB |
 
-The AppImage opened under Xvfb and exceeds the 35 MB target. The Windows and macOS startup-to-editor and one-connection idle memory budgets still need platform measurements, as does the interactive clean Windows acceptance checklist.
+The original AppImage opened under Xvfb and exceeded the 35 MB target. The follow-up results below use the updated Linux package and measurement procedure.
+
+## V1 performance and Codex MCP acceptance
+
+- The Linux AppImage is 15,620,600 bytes and opened through FUSE under Xvfb. It ships Strata and the Oracle bridge and uses the host GTK 3 and WebKitGTK 4.1 libraries. The build enforces the 35 MB limit.
+- Workspace initialization now loads the connections, tabs, and settings in one request. The grid loads before the first query executes. The first result frame carries the column metadata and first row together.
+- Codex completed `list_connections`, `describe_table` for `public.actor`, and `run_query` for actor ID 1 against the packaged binary and the synthetic Pagila fixture. The query returned one row. The local audit recorded all three calls as allowed with client `codex-mcp-client`. Codex was used for this acceptance pass. Claude Code connected to the server and reached its weekly model limit.
+
+The following ranges use three fresh Strata processes and one local PostgreSQL session. Connected memory is sampled before the first query. First-row latency measures from PostgreSQL's timestamp to the first canvas draw. Scroll intervals cover 100,000 fetched rows.
+
+| Build | Editor ready | First painted row | Connected idle memory | Scroll frame p95 |
+| --- | ---: | ---: | ---: | ---: |
+| Linux Debian under Xvfb | 889–907 ms | 59–79 ms | 418.5–419.7 MB RSS | 7–8 ms |
+| Linux AppImage via FUSE under Xvfb | 956–994 ms | 59–77 ms | 417.8–418.5 MB RSS | 7–8 ms |
+| Windows x64 installed from NSIS on GitHub Actions | 1,094 ms with an existing WebView2 profile, 7,265 ms with a new profile | 74–89 ms | 160.1–166.4 MB unique working set | 15.7–31.2 ms |
+| macOS arm64 installed from the DMG on GitHub Actions | 1,732–3,966 ms | 127–312 ms | 97.2–101.8 MB physical footprint | 18–19 ms |
+
+- Windows passed the 200 MB memory and 100 ms first-row targets. The measured restored editor exceeded 1 s with both WebView2 profile states, and two scroll samples had a frame p95 of 31.2 ms. [Windows measurement](https://github.com/LumminaCo/strata/actions/runs/44985889607)
+- macOS passed the 150 MB memory target. All three launches exceeded the 1 s editor and 100 ms first-row targets. The cost outside the measured navigation-to-editor interval was 1.27–2.99 s, including native startup and delivery of the measurement. [macOS build and measurement](https://github.com/LumminaCo/strata/actions/runs/44983790909)
+
+During a concurrent Windows cross-build, the Linux Debian test measured 971–1,715 ms to the editor and 63–142 ms to the first row. The interactive clean Windows checklist remains deferred.

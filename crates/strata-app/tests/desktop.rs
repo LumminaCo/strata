@@ -90,13 +90,14 @@ async fn desktop_streams_scripts_cancels_and_restores_workspace() {
         let [
             RunEvent::StatementStart { span, .. },
             RunEvent::ResultStart {
-                cursor_id: first, ..
+                cursor_id: first,
+                rows,
+                ..
             },
-            RunEvent::Rows { rows, .. },
             ..,
         ] = frames.as_slice()
         else {
-            panic!("expected first row immediately after the result header");
+            panic!("expected the first row with the result header");
         };
         assert_eq!(rows.len(), 1);
         assert_eq!(span[0], 0);
@@ -199,6 +200,15 @@ async fn desktop_streams_scripts_cancels_and_restores_workspace() {
     drop(app);
 
     let reopened = AppService::at(paths, false).expect("reopen desktop service");
+    let bootstrap = call(
+        &reopened,
+        Command::WorkspaceBootstrap,
+        &CancellationToken::new(),
+    )
+    .await;
+    assert_eq!(bootstrap["workspace"], workspace);
+    assert_eq!(bootstrap["connections"][0]["id"], json!(connection_id));
+    assert_eq!(bootstrap["settings"]["fetch_size"], 500);
     assert_eq!(
         call(&reopened, Command::WorkspaceLoad, &CancellationToken::new()).await,
         workspace

@@ -47,6 +47,13 @@ pub struct Workspace {
     pub active_tab: Option<Uuid>,
 }
 
+#[derive(Serialize, TS)]
+pub struct WorkspaceBootstrap {
+    pub connections: Vec<Connection>,
+    pub workspace: Workspace,
+    pub settings: strata_store::Settings,
+}
+
 #[derive(Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SavedTab {
@@ -161,6 +168,9 @@ pub enum RunEvent {
         result_index: usize,
         #[ts(type = "ColumnMeta[]")]
         columns: Vec<ColumnMeta>,
+        #[serde(default)]
+        #[ts(type = "Cell[][]")]
+        rows: Vec<Vec<WireCell>>,
     },
     Rows {
         cursor_id: Uuid,
@@ -364,6 +374,7 @@ pub enum Command {
     },
     McpConfig,
     WorkspaceLoad,
+    WorkspaceBootstrap,
     WorkspaceSave {
         workspace: Workspace,
     },
@@ -427,6 +438,7 @@ fn typescript_bindings() {
         Connection::decl(&cfg),
         SessionInfo::decl(&cfg),
         Workspace::decl(&cfg),
+        WorkspaceBootstrap::decl(&cfg),
         SavedTab::decl(&cfg),
         ErrorDto::decl(&cfg),
         Target::decl(&cfg),

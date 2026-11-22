@@ -329,13 +329,18 @@ impl AppService {
                     serde_json::json!({ "mcpServers": { "strata": { "command": path, "args": ["mcp"] } } }),
                 )
             }
-            Command::WorkspaceLoad => {
-                let workspace = self.engine.workspace().await?;
-                let saved: Workspace = match workspace {
-                    Some(value) => decode(&value)?,
-                    None => Workspace::default(),
-                };
-                json(saved)
+            Command::WorkspaceLoad => json(self.load_workspace().await?),
+            Command::WorkspaceBootstrap => {
+                let config = self.engine.config();
+                json(protocol::WorkspaceBootstrap {
+                    connections: config
+                        .connections
+                        .into_iter()
+                        .map(Connection::from)
+                        .collect(),
+                    workspace: self.load_workspace().await?,
+                    settings: config.settings,
+                })
             }
             Command::WorkspaceSave { workspace } => {
                 let content = serde_json::to_string(&workspace)
@@ -348,6 +353,13 @@ impl AppService {
                 self.engine.save_workspace(content).await?;
                 Ok(Value::Null)
             }
+        }
+    }
+
+    async fn load_workspace(&self) -> Result<Workspace> {
+        match self.engine.workspace().await? {
+            Some(value) => decode(&value),
+            None => Ok(Workspace::default()),
         }
     }
 

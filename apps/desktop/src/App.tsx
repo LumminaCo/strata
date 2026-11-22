@@ -24,7 +24,8 @@ import {
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { ResultGrid, type ResultSet } from "@/components/result-grid";
+import { ResultGrid } from "@/components/load-result-grid";
+import type { ResultSet } from "@/components/result-grid";
 import { SqlEditor, type EditorHandle } from "@/components/sql-editor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

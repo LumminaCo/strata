@@ -55,9 +55,9 @@ bindings:
     STRATA_UPDATE_BINDINGS=1 cargo test -p strata-app --lib typescript_bindings
 
 bundle-linux: install
-    cd apps/desktop && cargo tauri build --bundles deb,appimage -- --locked
+    cd apps/desktop && cargo tauri build --bundles deb -- --locked
     mkdir -p artifacts
-    cp target/release/bundle/deb/*.deb target/release/bundle/appimage/*.AppImage artifacts/
+    for deb in target/release/bundle/deb/*.deb; do name="${deb##*/}"; bash dev/build-appimage.sh "$deb" "artifacts/${name%.deb}.AppImage"; cp "$deb" artifacts/; done
 
 bundle-windows: install
     cd apps/desktop && cargo tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis -- --locked

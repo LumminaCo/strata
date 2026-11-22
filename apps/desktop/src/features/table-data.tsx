@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
-import { ResultGrid, type ResultSet } from "@/components/result-grid";
+import { ResultGrid, loadResultGrid } from "@/components/load-result-grid";
+import type { ResultSet } from "@/components/result-grid";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
@@ -67,6 +68,8 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
         const ordering = applied.order ? ` ORDER BY ${quoteName(applied.order, kind)}` : "";
         const text = `SELECT * FROM ${name}${predicate}${ordering}`;
         let cursor: string | undefined;
+        await loadResultGrid();
+        if (lifetime.signal.aborted) return;
         await runQuery(
           {
             runId: crypto.randomUUID(),
@@ -85,7 +88,7 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
                   id: cursor,
                   columns: event.columns,
                   index: 0,
-                  rows: [],
+                  rows: event.rows,
                   more: false,
                   capped: false,
                 });
@@ -178,7 +181,7 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
         },
         (event) => {
           if (lifetime.current?.signal.aborted) return;
-          if (event.type === "rows") setCount(event.rows[0]?.[0]);
+          if (event.type === "resultStart") setCount(event.rows[0]?.[0]);
           if (event.type === "error") setError(event.error.message);
         },
       );

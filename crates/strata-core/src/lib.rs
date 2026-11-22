@@ -152,12 +152,13 @@ pub struct Profile {
     pub options: DriverOptions,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
 #[serde(default, deny_unknown_fields)]
 pub struct DriverOptions {
     pub instance: Option<String>,
     pub auth: Option<String>,
     pub encrypt: Option<bool>,
+    pub encryption: Option<String>,
     pub trust_server_cert: Option<bool>,
     pub service_name: Option<String>,
     pub sid: Option<String>,
@@ -171,7 +172,7 @@ impl Profile {
             || self.host.trim().is_empty()
             || self.port == 0
             || self.database.trim().is_empty()
-            || self.user.trim().is_empty()
+            || (self.user.trim().is_empty() && self.options.auth.as_deref() != Some("windows"))
         {
             return Err(CoreError::config(
                 "Connection name, host, port, database and user are required",
@@ -288,6 +289,11 @@ pub trait DbConnection: Send {
     async fn server_info(&mut self) -> Result<ServerInfo>;
     async fn resolution_path(&mut self) -> Result<Vec<String>> {
         Ok(self.server_info().await?.schema.into_iter().collect())
+    }
+    async fn set_explain(&mut self, _enabled: bool) -> Result<()> {
+        Err(CoreError::config(
+            "This driver does not use a session explain mode",
+        ))
     }
     async fn ping(&mut self) -> Result<()>;
     fn is_closed(&self) -> bool;

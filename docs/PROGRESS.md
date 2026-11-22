@@ -70,3 +70,11 @@ The native runtime smoke used Linux with WebKitGTK. The next milestone is M3, co
 - Ctrl+Click resolves a relation from the SQL text and opens a pinned inspector. Ctrl+Shift+Click and Quick open expose a dedicated Schema tab. The editor underlines the identifier while the modifier is held.
 - Chromium verification used the PostgreSQL fixture. Tested an alias with a highlighted column, qualified and quoted names, incoming and outgoing foreign keys, server-side filtering and counting, DDL, formatting, Explain and JSON clipboard output.
 - Inspection uses its own read-only database session so an open SQL editor keeps its session and cursor.
+
+## M5 · SQL Server
+
+- Connects over TDS using `tiberius-ng` and Rustls. Profiles support a named instance, certificate trust, encryption mode, SQL login, and Windows integrated authentication in the native Windows build.
+- Verified SQL Server 2022 in Compose. The integration tests cover native Unicode, exact decimals and bigint values, datetime offsets, binary and NULL cells, metadata, DDL, foreign keys, and cancellation.
+- Chromium verified repeated `GO` batches, batch-local variables, multiple result sets across a 500-row page boundary, Stop and estimated plans.
+- Stop sends TDS Attention. If the driver cannot reuse the cancelled connection, Strata closes it and reconnects for the next command. Messages reports the session reset.
+- The query stream exposes rows and result metadata. Informational `PRINT` messages and affected row counts from mixed batches are outside the driver's current stream API. Windows integrated authentication is wired and requires interactive acceptance on a Windows host with a suitable SQL Server account.

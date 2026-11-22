@@ -39,6 +39,7 @@ pub struct Batch {
     pub rows: Vec<Vec<Cell>>,
     pub fetched: usize,
     pub exhausted: bool,
+    pub next_result: bool,
     pub capped: bool,
     pub affected: Option<u64>,
     pub messages: Vec<(String, String)>,
@@ -54,6 +55,7 @@ struct Cursor {
     capped: bool,
     affected: Option<u64>,
     changes_context: bool,
+    next_columns: Option<Vec<ColumnMeta>>,
 }
 
 struct SessionState {
@@ -211,6 +213,7 @@ impl Core {
             capped: false,
             affected: None,
             changes_context: statement.kind_hint == StmtClass::Session,
+            next_columns: None,
         });
         let read = self.read(&session, &mut state, cursor, count, cancellation);
         read.await
@@ -268,7 +271,7 @@ impl Core {
             && state
                 .cursor
                 .as_ref()
-                .is_some_and(|cursor| cursor.changes_context)
+                .is_some_and(|cursor| cursor.changes_context && cursor.stream.is_none())
         {
             state.resolution_path = state.connection.resolution_path().await?;
         }
@@ -278,6 +281,45 @@ impl Core {
             state.transaction_failed = true;
         }
         result
+    }
+
+    pub async fn next_result(
+        &self,
+        id: Uuid,
+        cursor_id: Uuid,
+        count: usize,
+        cancellation: Option<&CancellationToken>,
+    ) -> Result<Batch> {
+        let session = self.session(id).await?;
+        let mut state = session.state.lock().await;
+        session.ensure_open(&state)?;
+        let active = state
+            .cursor
+            .as_mut()
+            .filter(|cursor| cursor.id == cursor_id)
+            .ok_or_else(|| CoreError::config("Cursor does not exist"))?;
+        let columns = active
+            .next_columns
+            .take()
+            .ok_or_else(|| CoreError::config("No next result set"))?;
+        let next_id = Uuid::now_v7();
+        let next = Cursor {
+            id: next_id,
+            stream: active.stream.take(),
+            cancel: active.cancel.clone(),
+            columns,
+            rows: Vec::new(),
+            delivered: 0,
+            capped: false,
+            affected: None,
+            changes_context: active.changes_context,
+            next_columns: None,
+        };
+        if let Some(previous) = state.cursor.replace(next) {
+            state.previous.insert(previous.id, previous);
+        }
+        self.read(&session, &mut state, next_id, count.max(1), cancellation)
+            .await
     }
 
     pub async fn set_manual_transactions(&self, session: Uuid, manual: bool) -> Result<()> {
@@ -376,6 +418,14 @@ impl Core {
         state.connection.server_info().await
     }
 
+    pub async fn set_explain(&self, session: Uuid, enabled: bool) -> Result<()> {
+        let session = self.session(session).await?;
+        let mut state = session.state.lock().await;
+        session.ensure_open(&state)?;
+        state.discard().await?;
+        state.connection.set_explain(enabled).await
+    }
+
     pub async fn resolution_path(&self, session: Uuid) -> Result<Vec<String>> {
         let session = self.session(session).await?;
         Ok(session.state.lock().await.resolution_path.clone())
@@ -462,7 +512,7 @@ impl SessionState {
         let from = cursor.delivered;
         let target = from.saturating_add(count).min(cap);
         let mut messages = Vec::new();
-        while cursor.rows.len() < target || cap == 0 {
+        while cursor.next_columns.is_none() && (cursor.rows.len() < target || cap == 0) {
             let Some(stream) = cursor.stream.as_mut() else {
                 break;
             };
@@ -487,7 +537,13 @@ impl SessionState {
                 event = stream.next() => event,
             };
             match next {
-                Some(Ok(ExecEvent::ResultStart(columns))) => cursor.columns = columns,
+                Some(Ok(ExecEvent::ResultStart(columns))) => {
+                    if cursor.columns.is_empty() {
+                        cursor.columns = columns;
+                    } else {
+                        cursor.next_columns = Some(columns);
+                    }
+                }
                 Some(Ok(ExecEvent::Row(_))) if cap == 0 => break,
                 Some(Ok(ExecEvent::Row(row))) => cursor.rows.push(
                     row.into_iter()
@@ -510,6 +566,7 @@ impl SessionState {
         if cursor.rows.len() == cap
             && let Some(stream) = cursor.stream.as_mut()
         {
+            cursor.next_columns = None;
             cursor.cancel.cancel();
             let result = cancel_and_drain(self.connection.cancel_handle(), stream).await;
             cursor.stream = None;
@@ -519,7 +576,8 @@ impl SessionState {
         }
         let delivered = target.min(cursor.rows.len());
         cursor.delivered = delivered;
-        let exhausted = cursor.stream.is_none() && delivered == cursor.rows.len();
+        let next_result = cursor.next_columns.is_some();
+        let exhausted = (cursor.stream.is_none() || next_result) && delivered == cursor.rows.len();
         Ok(Batch {
             cursor: cursor.id,
             columns: cursor.columns.clone(),
@@ -536,6 +594,7 @@ impl SessionState {
                 .collect(),
             fetched: delivered,
             exhausted,
+            next_result,
             capped: cursor.capped && exhausted,
             affected: cursor.affected,
             messages,

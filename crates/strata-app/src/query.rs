@@ -1,6 +1,6 @@
 use std::{future::Future, time::Instant};
 
-use strata_core::{Batch, CoreError, Result};
+use strata_core::{Batch, CoreError, DbKind, Result};
 use strata_sql::{
     Dialect, Span, StmtClass, needs_mutation_confirmation, split, statement_at, utf16_to_byte,
 };
@@ -23,11 +23,11 @@ pub(crate) fn plan(
     mode: RunMode,
     blank_lines: bool,
     production: bool,
+    dialect: Dialect,
 ) -> Result<Plan> {
     if text.len() > 8_000_000 {
         return Err(CoreError::config("SQL exceeds 8 MB"));
     }
-    let dialect = Dialect::Postgres;
     let spans = match target {
         Target::Selection {
             selection: [start, end],
@@ -96,6 +96,7 @@ impl AppService {
             request.mode,
             settings.blank_line_delimiter,
             session.production,
+            crate::inspection::dialect(session.kind),
         )?;
         if plan.confirmation.is_some() && !request.confirmed {
             return Err(CoreError::config("Confirm this query before running it"));
@@ -121,10 +122,19 @@ impl AppService {
         let started_at = crate::metadata::now_ms();
         let mut recorded_sql = Vec::new();
         let mut rows = 0_u32;
+        let mut next_result_index = 0;
         let mut statements = 0;
+        let mut explain_mode = false;
         let run = async {
             check_cancel(&cancel)?;
             self.engine.core().clear_results(request.session_id).await?;
+            if matches!(request.mode, RunMode::Explain) && session.kind == DbKind::SqlServer {
+                self.engine
+                    .core()
+                    .set_explain(request.session_id, true)
+                    .await?;
+                explain_mode = true;
+            }
             for (index, span) in plan.spans.iter().enumerate() {
                 check_cancel(&cancel)?;
                 send(
@@ -137,27 +147,35 @@ impl AppService {
                 .await?;
                 let sql = slice(&request.text, span.start, span.end)?;
                 let explain;
-                let sql = if matches!(request.mode, RunMode::Explain) {
+                let sql = if matches!(request.mode, RunMode::Explain)
+                    && session.kind == DbKind::Postgres
+                {
                     explain = format!("EXPLAIN {sql}");
                     &explain
                 } else {
                     sql
                 };
                 recorded_sql.push(strata_sql::history_sql(sql).to_owned());
-                let fetched = stream_statement(
-                    self.engine.core(),
-                    Statement {
-                        session: request.session_id,
-                        sql,
-                        index,
-                        pause: index + 1 == plan.spans.len(),
-                        fetch_size: settings.fetch_size,
-                        cancel: &cancel,
-                    },
-                    &emit,
-                )
-                .await?;
-                rows = rows.saturating_add(fetched);
+                for _ in 0..span.repeat {
+                    check_cancel(&cancel)?;
+                    let fetched = stream_statement(
+                        self.engine.core(),
+                        Statement {
+                            session: request.session_id,
+                            sql,
+                            index,
+                            pause: !explain_mode
+                                && span.repeat == 1
+                                && index + 1 == plan.spans.len(),
+                            fetch_size: settings.fetch_size,
+                            cancel: &cancel,
+                        },
+                        &mut next_result_index,
+                        &emit,
+                    )
+                    .await?;
+                    rows = rows.saturating_add(fetched);
+                }
                 statements += 1;
                 if span.kind_hint == StmtClass::Ddl && !matches!(request.mode, RunMode::Explain) {
                     self.metadata
@@ -176,6 +194,16 @@ impl AppService {
         }
         .await;
 
+        let run = if explain_mode {
+            let restore = self
+                .engine
+                .core()
+                .set_explain(request.session_id, false)
+                .await;
+            run.and(restore)
+        } else {
+            run
+        };
         if matches!(run, Err(CoreError::Cancelled)) {
             let _ = self.engine.core().stop(request.session_id).await;
         }
@@ -249,6 +277,7 @@ struct Statement<'a> {
 async fn stream_statement<F, Fut>(
     core: &strata_core::Core,
     statement: Statement<'_>,
+    next_result_index: &mut usize,
     emit: &F,
 ) -> Result<u32>
 where
@@ -265,85 +294,99 @@ where
     } = statement;
     // Publish the first row immediately. Subsequent events amortize IPC overhead.
     let mut batch = core.run_batch(session, sql, 1, Some(cancel)).await?;
-    let cursor_id = batch.cursor;
-    let has_result = !batch.columns.is_empty();
-    if has_result {
-        let columns = std::mem::take(&mut batch.columns);
-        send(
-            emit,
-            RunEvent::ResultStart {
-                cursor_id,
-                result_index: index,
-                columns,
-            },
-        )
-        .await?;
-    }
-    loop {
-        let Batch {
-            rows,
-            messages,
-            fetched,
-            capped,
-            exhausted,
-            affected,
-            ..
-        } = batch;
-        if !rows.is_empty() {
+    let mut total = 0_u32;
+    'results: loop {
+        let cursor_id = batch.cursor;
+        let has_result = !batch.columns.is_empty();
+        if has_result {
+            let columns = std::mem::take(&mut batch.columns);
             send(
                 emit,
-                RunEvent::Rows {
+                RunEvent::ResultStart {
                     cursor_id,
-                    rows: wire_rows(rows),
+                    result_index: *next_result_index,
+                    columns,
                 },
             )
             .await?;
+            *next_result_index += 1;
         }
-        for (level, text) in messages {
-            send(emit, RunEvent::Message { level, text }).await?;
-        }
-        if exhausted {
-            if has_result {
-                if !pause {
-                    core.retain_result(session, cursor_id).await?;
-                }
+        loop {
+            let Batch {
+                rows,
+                messages,
+                fetched,
+                capped,
+                exhausted,
+                next_result,
+                affected,
+                ..
+            } = batch;
+            if !rows.is_empty() {
                 send(
                     emit,
-                    RunEvent::ResultEnd {
+                    RunEvent::Rows {
                         cursor_id,
-                        fetched,
-                        capped,
-                    },
-                )
-                .await?;
-            } else if let Some(rows) = affected {
-                send(
-                    emit,
-                    RunEvent::Affected {
-                        statement_index: index,
-                        rows: rows.try_into().unwrap_or(u32::MAX),
+                        rows: wire_rows(rows),
                     },
                 )
                 .await?;
             }
-            return Ok(affected
-                .map_or(fetched, |count| count as usize)
-                .try_into()
-                .unwrap_or(u32::MAX));
+            for (level, text) in messages {
+                send(emit, RunEvent::Message { level, text }).await?;
+            }
+            if exhausted {
+                if has_result {
+                    if !pause && !next_result {
+                        core.retain_result(session, cursor_id).await?;
+                    }
+                    send(
+                        emit,
+                        RunEvent::ResultEnd {
+                            cursor_id,
+                            fetched,
+                            capped,
+                        },
+                    )
+                    .await?;
+                } else if let Some(rows) = affected {
+                    send(
+                        emit,
+                        RunEvent::Affected {
+                            statement_index: index,
+                            rows: rows.try_into().unwrap_or(u32::MAX),
+                        },
+                    )
+                    .await?;
+                }
+                total = total.saturating_add(
+                    affected
+                        .map_or(fetched, |count| count as usize)
+                        .try_into()
+                        .unwrap_or(u32::MAX),
+                );
+                if next_result {
+                    batch = core
+                        .next_result(session, cursor_id, 1, Some(cancel))
+                        .await?;
+                    continue 'results;
+                }
+                return Ok(total);
+            }
+            if pause && fetched >= fetch_size {
+                send(emit, RunEvent::ResultPaused { cursor_id, fetched }).await?;
+                return Ok(total.saturating_add(fetched.try_into().unwrap_or(u32::MAX)));
+            }
+            check_cancel(cancel)?;
+            let count = if pause {
+                (fetch_size - fetched).min(MAX_BATCH)
+            } else {
+                MAX_BATCH
+            };
+            batch = core
+                .fetch_batch(session, cursor_id, count, Some(cancel))
+                .await?;
         }
-        if pause && fetched >= fetch_size {
-            send(emit, RunEvent::ResultPaused { cursor_id, fetched }).await?;
-            return Ok(fetched.try_into().unwrap_or(u32::MAX));
-        }
-        check_cancel(cancel)?;
-        let count = if pause {
-            (fetch_size - fetched).min(MAX_BATCH)
-        } else {
-            MAX_BATCH
-        };
-        batch = core
-            .fetch_batch(session, cursor_id, count, Some(cancel))
-            .await?;
     }
 }
 
@@ -392,6 +435,7 @@ mod tests {
             RunMode::Statement,
             true,
             false,
+            Dialect::Postgres,
         )
         .unwrap();
         assert_eq!((plan.spans[0].start, plan.spans[0].end), (start, end));
@@ -403,6 +447,7 @@ mod tests {
             RunMode::Statement,
             true,
             false,
+            Dialect::Postgres,
         )
         .unwrap();
         assert!(allowed.confirmation.is_none());
@@ -412,6 +457,7 @@ mod tests {
             RunMode::Statement,
             true,
             true,
+            Dialect::Postgres,
         )
         .unwrap();
         assert!(prod.confirmation.is_some());
@@ -424,7 +470,8 @@ mod tests {
                 },
                 RunMode::Script,
                 true,
-                false
+                false,
+                Dialect::Postgres,
             )
             .is_err()
         );

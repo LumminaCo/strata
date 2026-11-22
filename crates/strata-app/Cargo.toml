@@ -13,6 +13,7 @@ serde.workspace = true
 serde_json.workspace = true
 strata-core.workspace = true
 strata-driver-postgres.workspace = true
+strata-driver-mssql.workspace = true
 strata-sql.workspace = true
 strata-store.workspace = true
 tokio-util.workspace = true

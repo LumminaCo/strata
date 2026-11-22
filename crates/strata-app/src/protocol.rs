@@ -20,6 +20,7 @@ pub struct Connection {
     pub user: String,
     pub secret: String,
     pub read_only: bool,
+    pub options: Option<strata_core::DriverOptions>,
     #[ts(type = "'disable' | 'prefer' | 'require' | 'verify-ca' | 'verify-full'")]
     pub tls: TlsMode,
 }
@@ -94,6 +95,15 @@ impl From<CoreError> for ErrorDto {
             line,
         }
     }
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct NextResult {
+    pub cursor_id: Uuid,
+    #[ts(type = "ColumnMeta[]")]
+    pub columns: Vec<ColumnMeta>,
+    pub page: Page,
 }
 
 #[derive(Deserialize, TS)]
@@ -212,6 +222,8 @@ pub struct Page {
     pub rows: Vec<Vec<WireCell>>,
     pub fetched: usize,
     pub exhausted: bool,
+    #[serde(rename = "nextResult")]
+    pub next_result: bool,
     pub capped: bool,
     pub messages: Vec<(String, String)>,
 }
@@ -222,6 +234,7 @@ impl From<Batch> for Page {
             rows: wire_rows(batch.rows),
             fetched: batch.fetched,
             exhausted: batch.exhausted,
+            next_result: batch.next_result,
             capped: batch.capped,
             messages: batch.messages,
         }
@@ -268,6 +281,11 @@ pub enum Command {
         cursor_id: Uuid,
         count: usize,
     },
+    NextResult {
+        session_id: Uuid,
+        cursor_id: Uuid,
+        count: usize,
+    },
     GetCell {
         session_id: Uuid,
         cursor_id: Uuid,
@@ -275,6 +293,7 @@ pub enum Command {
         column: usize,
     },
     PlanQuery {
+        kind: Option<strata_core::DbKind>,
         text: String,
         target: Target,
         mode: RunMode,
@@ -364,6 +383,7 @@ fn typescript_bindings() {
         crate::CatalogScope::decl(&cfg),
         crate::CatalogSnapshot::decl(&cfg),
         HistoryItem::decl(&cfg),
+        strata_core::DriverOptions::decl(&cfg),
         Connection::decl(&cfg),
         SessionInfo::decl(&cfg),
         Workspace::decl(&cfg),
@@ -375,6 +395,7 @@ fn typescript_bindings() {
         QueryPlan::decl(&cfg),
         RunEvent::decl(&cfg),
         Page::decl(&cfg),
+        NextResult::decl(&cfg),
         crate::ParsedUrl::decl(&cfg),
     ] {
         output.push_str("export ");

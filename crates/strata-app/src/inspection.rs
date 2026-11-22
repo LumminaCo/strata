@@ -8,6 +8,7 @@ use crate::{AppService, CatalogScope};
 
 #[derive(Serialize, TS)]
 pub struct ResolvedObject {
+    pub database: String,
     pub object: Object,
     pub column: Option<String>,
 }
@@ -76,7 +77,9 @@ impl AppService {
                 .find(|object| object.name == *name)
                 .cloned();
         }
+        let database = crate::metadata::database(&self.engine, &target)?;
         Ok(object.map(|object| ResolvedObject {
+            database,
             object,
             column: reference.column,
         }))

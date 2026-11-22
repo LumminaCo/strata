@@ -312,7 +312,12 @@ export function useWorkspace() {
     if (!connection.id || jobs.current.has(item.id) || stopping.current.has(item.id)) return;
     const existing = sessions.current.get(item.id);
     const credential = password ?? passwords.current.get(connection.id);
-    if (!existing && connection.secret === "prompt" && credential === undefined) {
+    if (
+      !existing &&
+      connection.secret === "prompt" &&
+      connection.options?.auth !== "windows" &&
+      credential === undefined
+    ) {
       setModal({
         kind: "password",
         name: connection.name,
@@ -470,6 +475,34 @@ export function useWorkspace() {
             ],
           };
         });
+        let nextCursor = page.nextResult ? result.id : undefined;
+        while (nextCursor && !job.stopped) {
+          const next = await dispatch("next_result", {
+            sessionId,
+            cursorId: nextCursor,
+            count: 500,
+          });
+          if (job.stopped) break;
+          update(tab.id, (current) => ({
+            ...current,
+            results: [
+              ...current.results,
+              {
+                id: next.cursorId,
+                index: (current.results.at(-1)?.index ?? -1) + 1,
+                columns: next.columns,
+                rows: next.page.rows,
+                more: !next.page.exhausted,
+                capped: next.page.capped,
+              },
+            ],
+            messages: [
+              ...current.messages,
+              ...next.page.messages.map(([level, text]) => ({ level, text })),
+            ],
+          }));
+          nextCursor = next.page.nextResult ? next.cursorId : undefined;
+        }
         if (page.exhausted) break;
       } while (all && !job.stopped);
     } catch (error) {
@@ -499,7 +532,12 @@ export function useWorkspace() {
     const connectionId = connection.id;
     if (!connectionId) return Promise.reject(new Error("Save the connection first."));
     const credentials = passwords.current.get(connectionId);
-    if (connection.secret !== "prompt" || credentials !== undefined || !prompt) {
+    if (
+      connection.secret !== "prompt" ||
+      connection.options?.auth === "windows" ||
+      credentials !== undefined ||
+      !prompt
+    ) {
       return Promise.resolve({
         connectionId,
         database: database ?? null,

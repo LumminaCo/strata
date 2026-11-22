@@ -1,6 +1,6 @@
 import { autocompletion } from "@codemirror/autocomplete";
 import { history } from "@codemirror/commands";
-import { PostgreSQL, sql, type SQLNamespace } from "@codemirror/lang-sql";
+import { MSSQL, PLSQL, PostgreSQL, sql, type SQLNamespace } from "@codemirror/lang-sql";
 import { bracketMatching, foldGutter, syntaxTree } from "@codemirror/language";
 import { setDiagnostics } from "@codemirror/lint";
 import { Compartment, EditorState, StateEffect, StateField } from "@codemirror/state";
@@ -16,12 +16,13 @@ import {
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, type Ref } from "react";
 
 import { editorKeys } from "@/features/keymap";
-import type { ErrorDto, Target } from "@/ipc/bindings/protocol";
+import type { Connection, ErrorDto, Target } from "@/ipc/bindings/protocol";
 import { dispatch } from "@/ipc/client";
 import { editorTheme } from "@/theme/codemirror";
 
 const listener = new Compartment();
 const language = new Compartment();
+const dialects = { postgres: PostgreSQL, sqlserver: MSSQL, oracle: PLSQL };
 const setNavigation = StateEffect.define<[number, number] | undefined>();
 const navigationMarks = StateField.define<DecorationSet>({
   create: () => Decoration.none,
@@ -72,6 +73,7 @@ interface SqlEditorProps {
   diagnostic?: EditorDiagnostic;
   schema?: SQLNamespace;
   defaultSchema?: string;
+  kind?: Connection["kind"];
   onNavigate?: (offset: number, full: boolean) => void;
   onChange: (text: string) => void;
   savedState: { current: EditorState | null };
@@ -83,16 +85,17 @@ export function SqlEditor({
   diagnostic,
   schema,
   defaultSchema,
+  kind = "postgres",
   onNavigate,
   onChange,
   savedState,
 }: SqlEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
-  const latest = useRef({ text, onChange, onNavigate });
+  const latest = useRef({ text, onChange, onNavigate, kind });
   useLayoutEffect(() => {
-    latest.current = { text, onChange, onNavigate };
-  }, [text, onChange, onNavigate]);
+    latest.current = { text, onChange, onNavigate, kind };
+  }, [text, onChange, onNavigate, kind]);
 
   useImperativeHandle(
     ref,
@@ -134,6 +137,7 @@ export function SqlEditor({
           target: { cursor: editor.state.selection.main.head },
           mode: "statement",
           production: false,
+          kind: latest.current.kind,
         })
           .then((plan) => {
             if (currentRevision === revision && editor === view.current) {
@@ -224,9 +228,9 @@ export function SqlEditor({
 
   useLayoutEffect(() => {
     view.current?.dispatch({
-      effects: language.reconfigure(sql({ dialect: PostgreSQL, schema, defaultSchema })),
+      effects: language.reconfigure(sql({ dialect: dialects[kind], schema, defaultSchema })),
     });
-  }, [schema, defaultSchema]);
+  }, [schema, defaultSchema, kind]);
 
   useEffect(() => {
     const editor = view.current;
@@ -239,7 +243,15 @@ export function SqlEditor({
       error,
       span: [start, end],
     } = diagnostic;
-    const offset = error.position ?? 0;
+    const offset =
+      error.position ??
+      (error.line && error.line > 1
+        ? diagnostic.text
+            .slice(start, end)
+            .split("\n")
+            .slice(0, error.line - 1)
+            .join("\n").length + 1
+        : 0);
     const from = Math.min(end, start + offset);
     editor.dispatch(
       setDiagnostics(editor.state, [

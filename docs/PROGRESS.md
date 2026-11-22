@@ -84,3 +84,9 @@ The native runtime smoke used Linux with WebKitGTK. The next milestone is M3, co
 - The Rust driver supervises a versioned stdio sidecar built with pure-Go go-ora. Tauri builds and ships the sidecar for the target platform. Browser development builds it before starting the backend.
 - Passed `COMPOSE_PROFILES=legacy ./x test-int` against Oracle 23ai Free and Oracle 11g XE. Verified precision, Unicode, catalog columns, synonyms, table DDL, PL/SQL and DBMS_OUTPUT. On 23ai the integration test cancelled a sleeping call within two seconds and restarted a killed bridge after failing the in-flight call.
 - Chromium verified connection setup, running a slash-delimited PL/SQL script, DBMS_OUTPUT, synonym queries and Explain. Oracle wallets, TCPS, and privileged login roles still require environment-specific validation.
+
+## M7 · MCP and agent activity
+
+- The native binary serves `strata mcp` over stdio. Connection visibility defaults to disabled. Profiles can grant read access or enable write access for a non-production connection.
+- The native integration test launched the executable through an rmcp client. It listed connections, described a PostgreSQL table, queried all three engines, denied 11 requests, enforced a row cap, rolled back a dry run, and verified audit and credential redaction.
+- Chromium displayed the allowed and denied calls made by a native MCP subprocess against a shared development workspace. Claude Code returned its weekly usage limit during the optional client smoke.

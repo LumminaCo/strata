@@ -1,7 +1,11 @@
 //! SQL tokenization, statement selection, and conservative classification.
 
+mod agent;
 mod identifier;
 mod lexer;
+pub use agent::{
+    agent_dml, agent_read_allowed, audit_sql, sql_server_dml_without_output, strict_statement,
+};
 
 pub use identifier::{RelationAt, relation_at};
 

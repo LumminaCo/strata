@@ -15,6 +15,7 @@ pub struct Engine {
     pub(crate) paths: Paths,
     config: WatchedConfig,
     core: Core,
+    drivers: Vec<Arc<dyn Driver>>,
 }
 
 impl Engine {
@@ -27,19 +28,49 @@ impl Engine {
             row_cap: settings.row_cap,
             timeout_ms: settings.statement_timeout_ms,
         };
-        let core = Core::new(
-            [
-                Arc::new(Postgres) as Arc<dyn Driver>,
-                Arc::new(SqlServer),
-                Arc::new(Oracle::default()),
-            ],
-            limits,
-        )?;
+        let drivers: Vec<Arc<dyn Driver>> = vec![
+            Arc::new(Postgres),
+            Arc::new(SqlServer),
+            Arc::new(Oracle::default()),
+        ];
+        let core = Core::new(drivers.iter().cloned(), limits)?;
         Ok(Self {
             paths,
             config,
             core,
+            drivers,
         })
+    }
+
+    pub fn core_with_limits(&self, limits: Limits) -> Result<Core> {
+        Core::new(self.drivers.iter().cloned(), limits)
+    }
+
+    pub async fn connection_secret(&self, profile: Profile) -> Result<Secret> {
+        resolve_secret(profile, None)
+            .await
+            .map(|(_, secret)| secret)
+    }
+
+    pub async fn begin_audit(&self, entry: strata_store::AuditEntry) -> Result<i64> {
+        let path = self.paths.database.clone();
+        tokio::task::spawn_blocking(move || Database::open(&path)?.begin_audit(&entry))
+            .await
+            .map_err(background_error)?
+    }
+
+    pub async fn finish_audit(&self, id: i64, outcome: strata_store::AuditOutcome) -> Result<()> {
+        let path = self.paths.database.clone();
+        tokio::task::spawn_blocking(move || Database::open(&path)?.finish_audit(id, &outcome))
+            .await
+            .map_err(background_error)?
+    }
+
+    pub async fn audit(&self, limit: u32) -> Result<Vec<strata_store::AuditEntry>> {
+        let path = self.paths.database.clone();
+        tokio::task::spawn_blocking(move || Database::open(&path)?.audit(limit))
+            .await
+            .map_err(background_error)?
     }
 
     pub fn config_updates(&self) -> watch::Receiver<ConfigUpdate> {

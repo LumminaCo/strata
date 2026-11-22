@@ -37,6 +37,8 @@ export const emptyConnection: Connection = {
   user: "",
   secret: "prompt",
   readOnly: false,
+  agentAccess: "none",
+  allowAgentDdl: false,
   tls: "prefer",
   color: null,
   options: null,
@@ -490,6 +492,34 @@ export function ConnectionDialog({ initial, onSave, onClose }: ConnectionDialogP
                 <NativeSelectOption value="red">Red</NativeSelectOption>
               </NativeSelect>
             </Field>
+            <Field name="connection-agent" label="Agent access">
+              <NativeSelect
+                id="connection-agent"
+                value={profile.agentAccess}
+                onChange={(event) =>
+                  field("agentAccess", event.target.value as Connection["agentAccess"])
+                }
+              >
+                <NativeSelectOption value="none">Disabled</NativeSelectOption>
+                <NativeSelectOption value="read">Read</NativeSelectOption>
+                <NativeSelectOption
+                  value="write"
+                  disabled={profile.env === "prod" || profile.readOnly}
+                >
+                  Read and write
+                </NativeSelectOption>
+              </NativeSelect>
+            </Field>
+            {profile.agentAccess === "write" && profile.env !== "prod" && !profile.readOnly && (
+              <Label className="read-only-field">
+                <input
+                  type="checkbox"
+                  checked={profile.allowAgentDdl}
+                  onChange={(event) => field("allowAgentDdl", event.target.checked)}
+                />
+                Allow agent DDL
+              </Label>
+            )}
             <Label className="read-only-field">
               <input
                 type="checkbox"

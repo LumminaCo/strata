@@ -23,6 +23,14 @@ The base text size is 13 px, with 12 px secondary text. Use the 4 px spacing gri
 
 Use token-backed colors in feature code. Keep primitive imports inside the owned shadcn components. Use the environment color for the connection dot and badge. A production tab also adds an accent strip to the top of the window. Use the Messages tab for errors and database notices so the editor and results remain available.
 
+## M7 agent activity
+
+Each entry shows the tool, decision, client, connection, and duration. When SQL is available, open it in a scratch tab.
+
+![Strata M7 agent activity in light theme](screenshots/m7-light.png)
+
+![Strata M7 agent activity in dark theme](screenshots/m7-dark.png)
+
 ## M6 Oracle workspace
 
 The Oracle query toolbar offers DBMS Output for the current session. The connection form accepts an EZConnect service, SID, or TNS descriptor.

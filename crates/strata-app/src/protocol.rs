@@ -20,6 +20,11 @@ pub struct Connection {
     pub user: String,
     pub secret: String,
     pub read_only: bool,
+    #[serde(default)]
+    #[ts(type = "'none' | 'read' | 'write'")]
+    pub agent_access: strata_core::AgentAccess,
+    #[serde(default)]
+    pub allow_agent_ddl: bool,
     pub options: Option<strata_core::DriverOptions>,
     #[ts(type = "'disable' | 'prefer' | 'require' | 'verify-ca' | 'verify-full'")]
     pub tls: TlsMode,
@@ -338,6 +343,10 @@ pub enum Command {
     OpenInspectionSession {
         scope: crate::CatalogScope,
     },
+    AuditList {
+        limit: Option<u32>,
+    },
+    McpConfig,
     WorkspaceLoad,
     WorkspaceSave {
         workspace: Workspace,
@@ -388,6 +397,7 @@ fn typescript_bindings() {
         crate::CatalogScope::decl(&cfg),
         crate::CatalogSnapshot::decl(&cfg),
         HistoryItem::decl(&cfg),
+        strata_store::AuditEntry::decl(&cfg),
         strata_core::DriverOptions::decl(&cfg),
         Connection::decl(&cfg),
         SessionInfo::decl(&cfg),

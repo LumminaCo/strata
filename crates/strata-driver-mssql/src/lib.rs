@@ -153,6 +153,26 @@ impl DbConnection for Connection {
                 }
             };
             tokio::pin!(timeout);
+            if strata_sql::sql_server_dml_without_output(&sql) {
+                let result = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => Err(CoreError::Cancelled),
+                    _ = &mut timeout => Err(CoreError::Timeout),
+                    result = client.execute(&sql, &[]) => result.map_err(query_error),
+                };
+                match result {
+                    Ok(result) => yield ExecEvent::Affected(result.total()),
+                    Err(reason @ (CoreError::Cancelled | CoreError::Timeout)) => {
+                        if !matches!(tokio::time::timeout(Duration::from_millis(1500), client.cancel_query()).await, Ok(Ok(()))) {
+                            guard.take();
+                            reset.store(true, Ordering::Release);
+                        }
+                        Err(reason)?;
+                    }
+                    Err(error) => Err(error)?,
+                }
+                return;
+            }
             let interrupted = {
                 let initial = tokio::select! {
                     biased;
@@ -217,7 +237,7 @@ impl DbConnection for Connection {
         Ok(())
     }
     async fn begin(&mut self) -> Result<()> {
-        self.command("BEGIN TRANSACTION").await
+        self.command("SET XACT_ABORT ON; BEGIN TRANSACTION").await
     }
     async fn commit(&mut self) -> Result<()> {
         self.command("COMMIT TRANSACTION").await

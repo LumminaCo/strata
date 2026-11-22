@@ -18,6 +18,7 @@ tauri-build = "2.7.6"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tower-http = { version = "0.7.1", features = ["cors"] }
 strata-app = { path = "crates/strata-app" }
+strata-mcp = { path = "crates/strata-mcp" }
 
 
 async-trait = "0.1"

@@ -1,7 +1,9 @@
 //! Local connection profiles, credential references and SQLite persistence.
 
+mod audit;
 mod config;
 mod database;
+pub use audit::{AuditEntry, AuditOutcome};
 
 use std::path::PathBuf;
 

@@ -19,6 +19,8 @@ import type {
   RunMode,
   RunRequest,
   SessionInfo,
+  Settings,
+  TransactionState,
   Target,
   Workspace,
 } from "./bindings/protocol";
@@ -53,6 +55,11 @@ interface Commands {
   resolve_object: [{ scope: CatalogScope; reference: ObjectReference }, CatalogObject | null];
   object_details: [{ scope: CatalogScope; object: CatalogObject }, ObjectDetails];
   open_inspection_session: [{ scope: CatalogScope }, SessionInfo];
+
+  settings_get: [undefined, Settings];
+  settings_save: [{ settings: Settings }, null];
+  set_transaction_mode: [{ sessionId: string; manual: boolean }, TransactionState];
+  finish_transaction: [{ sessionId: string; commit: boolean }, TransactionState];
   audit_list: [{ limit?: number }, AuditEntry[]];
   mcp_config: [undefined, { mcpServers: Record<string, { command: string; args: string[] }> }];
   workspace_load: [undefined, Workspace];

@@ -188,6 +188,10 @@ pub enum RunEvent {
         statement_index: usize,
         error: ErrorDto,
     },
+    TransactionState {
+        manual: bool,
+        open: bool,
+    },
     CatalogChanged {
         connection_id: Uuid,
     },
@@ -343,6 +347,18 @@ pub enum Command {
     OpenInspectionSession {
         scope: crate::CatalogScope,
     },
+    SettingsGet,
+    SettingsSave {
+        settings: strata_store::Settings,
+    },
+    SetTransactionMode {
+        session_id: Uuid,
+        manual: bool,
+    },
+    FinishTransaction {
+        session_id: Uuid,
+        commit: bool,
+    },
     AuditList {
         limit: Option<u32>,
     },
@@ -351,6 +367,12 @@ pub enum Command {
     WorkspaceSave {
         workspace: Workspace,
     },
+}
+
+#[derive(Serialize, TS)]
+pub struct TransactionState {
+    pub manual: bool,
+    pub open: bool,
 }
 
 #[derive(Serialize, TS)]
@@ -398,6 +420,9 @@ fn typescript_bindings() {
         crate::CatalogSnapshot::decl(&cfg),
         HistoryItem::decl(&cfg),
         strata_store::AuditEntry::decl(&cfg),
+        strata_store::Settings::decl(&cfg),
+        strata_store::Theme::decl(&cfg),
+        TransactionState::decl(&cfg),
         strata_core::DriverOptions::decl(&cfg),
         Connection::decl(&cfg),
         SessionInfo::decl(&cfg),

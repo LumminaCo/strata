@@ -23,11 +23,7 @@ impl Engine {
         let config = ConfigStore::new(paths.config.clone()).watch()?;
         let settings = config.updates().borrow().config.settings.clone();
         Database::open(&paths.database)?;
-        let limits = Limits {
-            fetch_size: settings.fetch_size,
-            row_cap: settings.row_cap,
-            timeout_ms: settings.statement_timeout_ms,
-        };
+        let limits = settings.limits();
         let drivers: Vec<Arc<dyn Driver>> = vec![
             Arc::new(Postgres),
             Arc::new(SqlServer),
@@ -50,6 +46,13 @@ impl Engine {
         resolve_secret(profile, None)
             .await
             .map(|(_, secret)| secret)
+    }
+
+    pub async fn save_settings(&self, settings: strata_store::Settings) -> Result<()> {
+        let store = self.config_store();
+        tokio::task::spawn_blocking(move || store.save_settings(&settings))
+            .await
+            .map_err(background_error)?
     }
 
     pub async fn begin_audit(&self, entry: strata_store::AuditEntry) -> Result<i64> {
@@ -100,7 +103,9 @@ impl Engine {
     pub async fn open_session(&self, id: Uuid, prompted: Option<Secret>) -> Result<Uuid> {
         let profile = self.profile(id)?;
         let (profile, secret) = resolve_secret(profile, prompted).await?;
-        self.core.open_session(&profile, &secret).await
+        self.core
+            .open_session_with_limits(&profile, &secret, self.config().settings.limits())
+            .await
     }
 
     pub async fn introspector(
@@ -134,7 +139,9 @@ impl Engine {
             Some(secret) => (profile, secret),
             None => resolve_secret(profile, None).await?,
         };
-        self.core.open_session(&profile, &secret).await
+        self.core
+            .open_session_with_limits(&profile, &secret, self.config().settings.limits())
+            .await
     }
 
     pub(crate) async fn workspace(&self) -> Result<Option<String>> {

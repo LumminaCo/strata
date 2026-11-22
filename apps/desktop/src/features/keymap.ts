@@ -24,6 +24,8 @@ export const shortcuts = {
   navigate: "F4",
   explain: "Ctrl+Shift+E",
   format: "Ctrl+Shift+F",
+  openSql: "Ctrl+O",
+  saveSql: "Ctrl+S",
 };
 
 type Actions = Record<keyof typeof shortcuts | "nextTab" | "previousTab", () => void>;
@@ -38,6 +40,8 @@ export function workspaceKeydown(event: KeyboardEvent, actions: Actions, browser
     if (event.shiftKey && key === "e") action = "explain";
     if (event.shiftKey && key === "f") action = "format";
     if (key === "t") action = "newTab";
+    if (key === "o") action = "openSql";
+    if (key === "s") action = "saveSql";
     if (key === "w") action = "closeTab";
     if (key === "k" || key === "p") action = "palette";
     if (key === "h") action = "history";

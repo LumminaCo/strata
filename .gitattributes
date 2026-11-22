@@ -2,3 +2,6 @@
 docs/SPEC.md -text -whitespace
 dev/seed/postgres/10-pagila-schema.sql -text -whitespace
 dev/seed/oracle/hr/** -text -whitespace
+
+# The bindings check compares the file with the generator's LF output.
+apps/desktop/src/ipc/bindings/protocol.ts text eol=lf

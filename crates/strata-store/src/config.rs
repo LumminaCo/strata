@@ -13,7 +13,7 @@ use toml_edit::{ArrayOfTables, DocumentMut, Item, Table};
 
 use crate::io_error;
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, ts_rs::TS)]
 #[serde(rename_all = "lowercase")]
 pub enum Theme {
     #[default]
@@ -22,7 +22,7 @@ pub enum Theme {
     Dark,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS)]
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
     pub fetch_size: usize,
@@ -30,10 +30,22 @@ pub struct Settings {
     pub theme: Theme,
     pub blank_line_delimiter: bool,
     pub editor_font_size: u16,
+    pub show_system_objects: bool,
+    pub confirm_production: bool,
     pub statement_timeout_ms: u32,
     pub agent_default_row_limit: usize,
     pub agent_max_row_limit: usize,
     pub agent_statement_timeout_s: u32,
+}
+
+impl Settings {
+    pub fn limits(&self) -> strata_core::Limits {
+        strata_core::Limits {
+            fetch_size: self.fetch_size,
+            row_cap: self.row_cap,
+            timeout_ms: self.statement_timeout_ms,
+        }
+    }
 }
 
 impl Default for Settings {
@@ -44,6 +56,8 @@ impl Default for Settings {
             theme: Theme::System,
             blank_line_delimiter: true,
             editor_font_size: 13,
+            show_system_objects: false,
+            confirm_production: true,
             statement_timeout_ms: 0,
             agent_default_row_limit: 200,
             agent_max_row_limit: 10_000,
@@ -86,6 +100,7 @@ impl Config {
             || settings.agent_default_row_limit == 0
             || settings.agent_max_row_limit == 0
             || settings.agent_statement_timeout_s == 0
+            || !(10..=32).contains(&settings.editor_font_size)
         {
             return Err(CoreError::config("Invalid query limits"));
         }

@@ -18,5 +18,8 @@ tiberius-ng = { version = "0.13.1", default-features = false, features = ["tds73
 tokio.workspace = true
 tokio-util = { workspace = true, features = ["compat"] }
 
+[target.'cfg(windows)'.dependencies]
+tiberius-ng = { version = "0.13.1", default-features = false, features = ["winauth"] }
+
 [dev-dependencies]
 uuid.workspace = true

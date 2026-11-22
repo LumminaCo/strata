@@ -23,6 +23,14 @@ The base text size is 13 px, with 12 px secondary text. Use the 4 px spacing gri
 
 Use token-backed colors in feature code. Keep primitive imports inside the owned shadcn components. Use the environment color for the connection dot and badge. A production tab also adds an accent strip to the top of the window. Use the Messages tab for errors and database notices so the editor and results remain available.
 
+## M8 production and transactions
+
+Production tabs show a top border and a badge. In manual mode the status bar marks open transactions and the toolbar offers Commit and Rollback.
+
+![Strata M8 production tab in light theme](screenshots/m8-light.png)
+
+![Strata M8 production tab in dark theme](screenshots/m8-dark.png)
+
 ## M7 agent activity
 
 Each entry shows the tool, decision, client, connection, and duration. When SQL is available, open it in a scratch tab.

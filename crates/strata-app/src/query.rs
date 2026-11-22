@@ -58,7 +58,8 @@ pub(crate) fn plan(
         Some("This SQL can change a production database.".into())
     } else if spans.iter().any(|span| {
         span.kind_hint != StmtClass::Read
-            && slice(text, span.start, span.end).is_ok_and(needs_mutation_confirmation)
+            && slice(text, span.start, span.end)
+                .is_ok_and(|sql| needs_mutation_confirmation(sql, dialect))
     }) {
         Some("An UPDATE or DELETE may affect every row.".into())
     } else {
@@ -95,7 +96,7 @@ impl AppService {
             request.target,
             request.mode,
             settings.blank_line_delimiter,
-            session.production,
+            session.production && settings.confirm_production,
             crate::inspection::dialect(session.kind),
         )?;
         if plan.confirmation.is_some() && !request.confirmed {
@@ -256,6 +257,14 @@ impl AppService {
                 },
             )
             .await?;
+        }
+        if let Ok((true, open)) = self
+            .engine
+            .core()
+            .transaction_state(request.session_id)
+            .await
+        {
+            send(&emit, RunEvent::TransactionState { manual: true, open }).await?;
         }
         send(
             &emit,

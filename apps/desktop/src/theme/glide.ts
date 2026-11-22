@@ -4,6 +4,7 @@ export function gridTheme(): Partial<Theme> {
   const styles = getComputedStyle(document.documentElement);
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d", { willReadFrequently: true });
+  const labelSize = styles.getPropertyValue("--font-size-label").trim();
   function color(token: string) {
     let value = styles.getPropertyValue(token).trim();
     while (value.startsWith("var(")) value = styles.getPropertyValue(value.slice(4, -1)).trim();
@@ -19,8 +20,8 @@ export function gridTheme(): Partial<Theme> {
   const surface = color("--grid-header");
   const selected = color("--grid-selection");
   return {
-    accentColor: color("--workspace-accent"),
-    accentFg: color("--background"),
+    accentColor: color("--primary"),
+    accentFg: color("--primary-foreground"),
     accentLight: selected,
     textDark: color("--foreground"),
     textMedium: muted,
@@ -41,10 +42,10 @@ export function gridTheme(): Partial<Theme> {
     bgSearchResult: selected,
     borderColor: color("--border"),
     linkColor: color("--workspace-accent"),
-    headerFontStyle: "600 12px",
-    baseFontStyle: "12px",
-    fontFamily: styles.getPropertyValue("--editor-font"),
-    editorFontSize: "13px",
+    headerFontStyle: `600 ${labelSize}`,
+    baseFontStyle: labelSize,
+    fontFamily: styles.getPropertyValue("--editor-font").trim(),
+    editorFontSize: styles.getPropertyValue("--font-size-ui").trim(),
     cellHorizontalPadding: 9,
   };
 }

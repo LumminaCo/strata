@@ -8,8 +8,8 @@ export const editorTheme = [
     "&.cm-focused": { outline: "none" },
     ".cm-scroller": {
       fontFamily: "var(--editor-font)",
-      fontSize: "var(--editor-font-size, 13px)",
-      lineHeight: "1.65",
+      fontSize: "var(--editor-font-size, var(--font-size-ui))",
+      lineHeight: "var(--leading-editor)",
     },
     ".cm-content": { paddingBlock: "10px", caretColor: "var(--workspace-accent)" },
     ".cm-line": { paddingInline: "10px" },
@@ -34,7 +34,7 @@ export const editorTheme = [
       background: "var(--background)",
       borderColor: "var(--border)",
     },
-    ".cm-diagnostic-error": { borderColor: "var(--env-prod)" },
+    ".cm-diagnostic-error": { borderColor: "var(--destructive)" },
   }),
   syntaxHighlighting(
     HighlightStyle.define([

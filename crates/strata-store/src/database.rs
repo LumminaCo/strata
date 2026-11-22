@@ -71,6 +71,24 @@ impl Database {
         Ok(Self { connection })
     }
 
+    pub fn load_workspace(&self) -> Result<Option<String>> {
+        use rusqlite::OptionalExtension;
+        self.connection
+            .query_row("SELECT payload FROM workspace WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .optional()
+            .map_err(io_error)
+    }
+
+    pub fn save_workspace(&self, json: &str) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO workspace (id, payload) VALUES (1, ?1) ON CONFLICT (id) DO UPDATE SET payload = excluded.payload",
+            [json],
+        ).map_err(io_error)?;
+        Ok(())
+    }
+
     pub fn record_history(&mut self, entry: &HistoryEntry) -> Result<()> {
         let tx = self
             .connection

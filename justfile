@@ -42,13 +42,14 @@ test-int:
     bash dev/test-int.sh
     STRATA_IT=1 SSL_CERT_FILE=/opt/strata-pg-trust/ca.pem cargo test --locked -p strata-driver-postgres --test postgres -- --ignored
     STRATA_IT=1 cargo test --locked -p strata-app --test engine -- --ignored
+    STRATA_IT=1 cargo test --locked -p strata-app --test desktop -- --ignored
 
 bridge:
     mkdir -p artifacts
     cd bridge/oracle && CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o ../../artifacts/oracle-bridge .
 
 bindings:
-    @echo "IPC binding generation starts with the typed commands in M2."
+    STRATA_UPDATE_BINDINGS=1 cargo test -p strata-app --lib typescript_bindings
 
 bundle-linux: install
     cd apps/desktop && cargo tauri build --bundles deb,appimage -- --locked

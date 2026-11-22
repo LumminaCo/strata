@@ -44,6 +44,17 @@ The milestone passed local acceptance. The Rust engine opens saved PostgreSQL pr
 
 The PostgreSQL fixture generates its TLS identity at build time and shares its public CA with integration tests. The million-row test consumes the driver stream without retaining its rows, then verifies pause and resume through the capped core cursor. The Windows check builds the native credential backend. Native credential access requires an OS keychain session outside Docker.
 
-## Next milestone
+## M2 · Desktop shell
 
-M2 begins after owner review. It connects the desktop shell and browser transport to the Rust engine for connection management, query editing, and result streaming.
+The Tauri window and browser workspace share a Rust service for PostgreSQL profiles, per-tab sessions, queries, and workspace persistence. Run events travel over a Tauri Channel or the authenticated development WebSocket. Scripts execute sequentially. Earlier results retain their fetched values within the row cap, while the final result can pause for paging.
+
+| Acceptance check | State |
+| --- | --- |
+| First visible row under 100 ms | Measured from a PostgreSQL timestamp in the returned row to the first canvas draw. Five local trials on the same host took 31–53 ms in Chromium and 20–66 ms in the Linux Tauri window. |
+| Scroll 100,000 rows | Reached the last row in both environments. The p95 animation frame intervals were 16.9 ms in Chromium and 6 ms in WebKitGTK under Xvfb across 120 scroll samples. |
+| Editor, sessions, and results | Verified connection creation and tests, run at the cursor, sequential scripts with multiple results, Messages, Stop, explicit paging, and Fetch all. |
+| Workspace restore | Verified scratch text and active tabs after a browser reload, a development server restart, and a native application restart. |
+| Automated checks | `./x check` and `./x test-int` passed. The desktop service integration test covers first-row streaming, script results, paging, early cancellation, exact integers, and persistence. |
+| Light and dark themes | Verified in Chromium. [Workspace screenshots](DESIGN.md#m2-postgresql-workspace) |
+
+The native runtime smoke used Linux with WebKitGTK. The next milestone is M3, covering the explorer, metadata, autocomplete, command palette, and history.

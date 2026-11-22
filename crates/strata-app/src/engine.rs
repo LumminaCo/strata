@@ -3,7 +3,7 @@ use std::sync::Arc;
 use strata_core::{Core, CoreError, Driver, Introspector, Limits, Profile, Result, Secret};
 use strata_driver_postgres::Postgres;
 use strata_store::{
-    ConfigStore, ConfigUpdate, Database, HistoryEntry, Keychain, Paths, WatchedConfig,
+    Config, ConfigStore, ConfigUpdate, Database, HistoryEntry, Keychain, Paths, WatchedConfig,
 };
 use tokio::sync::watch;
 use uuid::Uuid;
@@ -43,15 +43,17 @@ impl Engine {
         &self.core
     }
 
-    fn profile(&self, id: Uuid) -> Result<Profile> {
-        self.config
-            .updates()
-            .borrow()
-            .config
+    pub(crate) fn config(&self) -> Config {
+        self.config_store()
+            .load()
+            .unwrap_or_else(|_| self.config.updates().borrow().config.clone())
+    }
+
+    pub(crate) fn profile(&self, id: Uuid) -> Result<Profile> {
+        self.config()
             .connections
-            .iter()
+            .into_iter()
             .find(|profile| profile.id == id)
-            .cloned()
             .ok_or_else(|| CoreError::config("Connection profile does not exist"))
     }
 
@@ -69,6 +71,32 @@ impl Engine {
         let profile = self.profile(id)?;
         let (profile, secret) = resolve_secret(profile, prompted).await?;
         self.core.introspector(&profile, &secret).await
+    }
+
+    pub(crate) async fn open_profile(
+        &self,
+        profile: Profile,
+        supplied: Option<Secret>,
+    ) -> Result<Uuid> {
+        let (profile, secret) = match supplied {
+            Some(secret) => (profile, secret),
+            None => resolve_secret(profile, None).await?,
+        };
+        self.core.open_session(&profile, &secret).await
+    }
+
+    pub(crate) async fn workspace(&self) -> Result<Option<String>> {
+        let path = self.paths.database.clone();
+        tokio::task::spawn_blocking(move || Database::open(&path)?.load_workspace())
+            .await
+            .map_err(background_error)?
+    }
+
+    pub(crate) async fn save_workspace(&self, json: String) -> Result<()> {
+        let path = self.paths.database.clone();
+        tokio::task::spawn_blocking(move || Database::open(&path)?.save_workspace(&json))
+            .await
+            .map_err(background_error)?
     }
 
     pub async fn history(&self, profile: Uuid, limit: u32) -> Result<Vec<HistoryEntry>> {

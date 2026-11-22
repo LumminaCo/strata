@@ -8,7 +8,9 @@ publish.workspace = true
 tauri-build.workspace = true
 
 [dependencies]
+serde_json.workspace = true
 strata-app.workspace = true
+tokio-util.workspace = true
 tauri.workspace = true
 
 [features]

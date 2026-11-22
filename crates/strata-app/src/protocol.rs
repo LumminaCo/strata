@@ -1,0 +1,317 @@
+use serde::{Deserialize, Serialize};
+use strata_core::{Batch, Cell, ColumnMeta, CoreError, Environment, TlsMode};
+use ts_rs::TS;
+use uuid::Uuid;
+
+#[derive(Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Connection {
+    pub id: Option<Uuid>,
+    pub name: String,
+    #[ts(type = "'postgres' | 'sqlserver' | 'oracle'")]
+    pub kind: strata_core::DbKind,
+    #[ts(type = "'dev' | 'staging' | 'prod'")]
+    pub env: Environment,
+    pub color: Option<String>,
+    pub folder: Option<String>,
+    pub host: String,
+    pub port: u16,
+    pub database: String,
+    pub user: String,
+    pub secret: String,
+    pub read_only: bool,
+    #[ts(type = "'disable' | 'prefer' | 'require' | 'verify-ca' | 'verify-full'")]
+    pub tls: TlsMode,
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionInfo {
+    pub id: Uuid,
+    pub version: String,
+    pub database: String,
+    pub schema: Option<String>,
+    pub elapsed_ms: u32,
+}
+
+#[derive(Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Workspace {
+    pub tabs: Vec<SavedTab>,
+    pub active_tab: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedTab {
+    pub id: Uuid,
+    pub connection_id: Uuid,
+    pub text: String,
+}
+
+#[derive(Debug, Serialize, TS)]
+pub struct ErrorDto {
+    pub kind: String,
+    pub message: String,
+    pub code: Option<String>,
+    pub position: Option<u32>,
+    pub line: Option<u32>,
+}
+
+impl From<CoreError> for ErrorDto {
+    fn from(error: CoreError) -> Self {
+        let message = error.to_string();
+        let (code, position, line) = match &error {
+            CoreError::Db {
+                code,
+                position,
+                line,
+                ..
+            } => (Some(code.clone()), *position, *line),
+            _ => (None, None, None),
+        };
+        let kind = match error {
+            CoreError::Connect { .. } => "connect",
+            CoreError::Auth => "auth",
+            CoreError::Tls { .. } => "tls",
+            CoreError::Timeout => "timeout",
+            CoreError::Cancelled => "cancelled",
+            CoreError::Db { .. } => "db",
+            CoreError::ReadOnlyViolation { .. } => "read_only_violation",
+            CoreError::Config { .. } => "config",
+            CoreError::Secret { .. } => "secret",
+            CoreError::Io { .. } => "io",
+        }
+        .into();
+        Self {
+            kind,
+            message,
+            code,
+            position,
+            line,
+        }
+    }
+}
+
+#[derive(Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RunRequest {
+    pub run_id: Uuid,
+    pub session_id: Uuid,
+    pub text: String,
+    pub target: Target,
+    pub mode: RunMode,
+    pub confirmed: bool,
+}
+
+#[derive(Deserialize, TS)]
+#[serde(untagged)]
+pub enum Target {
+    Cursor { cursor: u32 },
+    Selection { selection: [u32; 2] },
+}
+
+#[derive(Clone, Copy, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum RunMode {
+    Statement,
+    Script,
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryPlan {
+    pub statements: Vec<[u32; 2]>,
+    pub confirmation: Option<String>,
+}
+
+#[derive(Serialize, TS)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum RunEvent {
+    StatementStart {
+        index: usize,
+        span: [u32; 2],
+    },
+    ResultStart {
+        cursor_id: Uuid,
+        result_index: usize,
+        #[ts(type = "ColumnMeta[]")]
+        columns: Vec<ColumnMeta>,
+    },
+    Rows {
+        cursor_id: Uuid,
+        #[ts(type = "Cell[][]")]
+        rows: Vec<Vec<WireCell>>,
+    },
+    ResultPaused {
+        cursor_id: Uuid,
+        fetched: usize,
+    },
+    ResultEnd {
+        cursor_id: Uuid,
+        fetched: usize,
+        capped: bool,
+    },
+    Affected {
+        statement_index: usize,
+        rows: u32,
+    },
+    Message {
+        level: String,
+        text: String,
+    },
+    Error {
+        statement_index: usize,
+        error: ErrorDto,
+    },
+    Done {
+        elapsed_ms: u32,
+        statements: usize,
+    },
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum WireCell {
+    Value(Cell),
+    Exact(String),
+}
+
+impl From<Cell> for WireCell {
+    fn from(cell: Cell) -> Self {
+        // JavaScript cannot round-trip bigint values outside its safe integer range.
+        match cell {
+            Cell::Int(value) if value.unsigned_abs() > (1_u64 << 53) - 1 => {
+                Self::Exact(value.to_string())
+            }
+            other => Self::Value(other),
+        }
+    }
+}
+
+pub(crate) fn wire_rows(rows: Vec<Vec<Cell>>) -> Vec<Vec<WireCell>> {
+    rows.into_iter()
+        .map(|row| row.into_iter().map(Into::into).collect())
+        .collect()
+}
+
+#[derive(Serialize, TS)]
+pub struct Page {
+    #[ts(type = "Cell[][]")]
+    pub rows: Vec<Vec<WireCell>>,
+    pub fetched: usize,
+    pub exhausted: bool,
+    pub capped: bool,
+    pub messages: Vec<(String, String)>,
+}
+
+impl From<Batch> for Page {
+    fn from(batch: Batch) -> Self {
+        Self {
+            rows: wire_rows(batch.rows),
+            fetched: batch.fetched,
+            exhausted: batch.exhausted,
+            capped: batch.capped,
+            messages: batch.messages,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(
+    tag = "command",
+    content = "args",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum Command {
+    ListConnections,
+    SaveConnection {
+        profile: Connection,
+        password: Option<String>,
+    },
+    DeleteConnection {
+        id: Uuid,
+    },
+    TestConnection {
+        profile: Connection,
+        password: Option<String>,
+    },
+    ParseConnectionUrl {
+        url: String,
+    },
+    OpenSession {
+        connection_id: Uuid,
+        password: Option<String>,
+    },
+    CloseSession {
+        session_id: Uuid,
+    },
+    Stop {
+        session_id: Uuid,
+        run_id: Option<Uuid>,
+    },
+    FetchMore {
+        session_id: Uuid,
+        cursor_id: Uuid,
+        count: usize,
+    },
+    GetCell {
+        session_id: Uuid,
+        cursor_id: Uuid,
+        row: usize,
+        column: usize,
+    },
+    PlanQuery {
+        text: String,
+        target: Target,
+        mode: RunMode,
+        production: bool,
+    },
+    WorkspaceLoad,
+    WorkspaceSave {
+        workspace: Workspace,
+    },
+}
+
+#[cfg(test)]
+#[test]
+fn typescript_bindings() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../apps/desktop/src/ipc/bindings/protocol.ts");
+    let mut output = String::from("// Generated by ./x bindings.\n\n");
+    output.push_str("export type Cell = null | boolean | number | string;\n");
+    output.push_str("export type ColumnMeta = { name: string; db_type: string; kind: string; nullable: boolean | null; table_oid: number | null; column_id: number | null };\n");
+    let cfg = ts_rs::Config::default();
+    for decl in [
+        Connection::decl(&cfg),
+        SessionInfo::decl(&cfg),
+        Workspace::decl(&cfg),
+        SavedTab::decl(&cfg),
+        ErrorDto::decl(&cfg),
+        Target::decl(&cfg),
+        RunMode::decl(&cfg),
+        RunRequest::decl(&cfg),
+        QueryPlan::decl(&cfg),
+        RunEvent::decl(&cfg),
+        Page::decl(&cfg),
+        crate::ParsedUrl::decl(&cfg),
+    ] {
+        output.push_str("export ");
+        output.push_str(&decl);
+        output.push('\n');
+    }
+    if std::env::var_os("STRATA_UPDATE_BINDINGS").is_some() {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, &output).unwrap();
+    }
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap_or_default(),
+        output,
+        "Run ./x bindings"
+    );
+}

@@ -43,6 +43,22 @@ Windows bundles are unsigned and may show a SmartScreen prompt. `embedBootstrapp
 
 macOS bundles use ad-hoc signing. After verifying that the bundle came from Lummina, users who encounter a Gatekeeper quarantine prompt can remove the quarantine attribute with `xattr -dr com.apple.quarantine /Applications/Strata.app`.
 
+### In-app updates
+
+Signed release builds check for updates at startup and periodically while open. When a release is available, click **Update** in the toolbar to save the workspace, download and verify the release, install it, and reopen Strata. Wait for running queries to finish and commit or roll back any open transactions before updating. Debian may prompt for administrator access.
+
+To enable signed releases, create a Tauri updater key with `cargo tauri signer generate --write-keys /path/to/strata.key`. In the source repository's Actions settings, configure these variables and secrets.
+
+| Name | GitHub Actions setting | Value |
+| --- | --- | --- |
+| `STRATA_RELEASE_REPOSITORY` | Variable | Public GitHub repository for release assets, in `owner/repo` format |
+| `STRATA_UPDATER_PUBLIC_KEY` | Variable | Contents of the Tauri `.pub` file |
+| `TAURI_SIGNING_PRIVATE_KEY` | Secret | Contents of the Tauri private key file |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Secret | Signing key password, if set |
+| `STRATA_RELEASE_TOKEN` | Secret | Token with Contents write access to the release repository |
+
+Set the version in `Cargo.toml` and `apps/desktop/src-tauri/tauri.conf.json`, refresh `Cargo.lock`, and push a matching stable tag such as `v0.1.1`. The Bundles workflow signs the installers and publishes them with `latest.json` after the bundle checks pass. Users with an older unsigned build install the first updater-enabled release manually over their current installation. Strata keeps its saved connections, settings, SQL tabs, and query history in the existing user data directory.
+
 ## MCP setup
 
 Set **Agent access** to **Read** on a connection that an MCP client may use. Use an OS keychain entry or an environment variable for the password. Use a database account with read privileges for production.

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { loadResultGrid } from "@/components/load-result-grid";
 import type { ResultSet } from "@/components/result-grid";
@@ -64,6 +64,19 @@ export function useWorkspace() {
   const passwords = useRef(new Map<string, string>());
   const saved = useRef<Workspace | undefined>(undefined);
   const saves = useRef<Promise<unknown>>(Promise.resolve());
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const queueSave = useCallback((snapshot: Workspace) => {
+    const save = saves.current
+      .catch(() => {})
+      .then(async () => {
+        if (snapshot === saved.current) return;
+        await dispatch("workspace_save", { workspace: snapshot });
+        saved.current = snapshot;
+      });
+    saves.current = save;
+    return save;
+  }, []);
 
   useEffect(() => {
     let current = true;
@@ -92,16 +105,11 @@ export function useWorkspace() {
   useEffect(() => {
     if (!workspace || workspace === saved.current) return;
     const timer = setTimeout(() => {
-      saves.current = saves.current
-        .catch(() => {})
-        .then(async () => {
-          await dispatch("workspace_save", { workspace });
-          saved.current = workspace;
-        })
-        .catch((error: unknown) => setNotice(errorMessage(error)));
+      void queueSave(workspace).catch((error: unknown) => setNotice(errorMessage(error)));
     }, 2_000);
+    saveTimer.current = timer;
     return () => clearTimeout(timer);
-  }, [workspace]);
+  }, [queueSave, workspace]);
 
   const tabs = workspace?.tabs ?? [];
   const tab = tabs.find((value) => value.id === workspace?.activeTab);
@@ -589,15 +597,17 @@ export function useWorkspace() {
     }
   }
 
+  async function saveWorkspace() {
+    clearTimeout(saveTimer.current);
+    if (workspace) await queueSave(workspace);
+  }
+
   async function closeWorkspace() {
     const open = Array.from(sessions.current.values(), ({ id }) =>
       dispatch("close_session", { sessionId: id }),
     );
     await Promise.all(open);
-    if (workspace && workspace !== saved.current) {
-      await saves.current;
-      await dispatch("workspace_save", { workspace });
-    }
+    await saveWorkspace();
   }
 
   async function toggleDbmsOutput() {
@@ -667,6 +677,8 @@ export function useWorkspace() {
     transactionMode,
     finishTransaction,
     closeWorkspace,
+    saveWorkspace,
+    hasRunningJobs: () => jobs.current.size > 0 || stopping.current.size > 0,
     settings,
     applySettings: (settings: Settings) => {
       setSettings(settings);

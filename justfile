@@ -55,13 +55,15 @@ bindings:
     STRATA_UPDATE_BINDINGS=1 cargo test -p strata-app --lib typescript_bindings
 
 bundle-linux: install
-    cd apps/desktop && cargo tauri build --bundles deb -- --locked
+    config=(); if [[ -n "${STRATA_RELEASE_CONFIG:-}" ]]; then config=(--config "$STRATA_RELEASE_CONFIG"); fi; cd apps/desktop && cargo tauri build "${config[@]}" --bundles deb -- --locked
     mkdir -p artifacts
     for deb in target/release/bundle/deb/*.deb; do name="${deb##*/}"; bash dev/build-appimage.sh "$deb" "artifacts/${name%.deb}.AppImage"; cp "$deb" artifacts/; done
+    if [[ -n "${STRATA_RELEASE_CONFIG:-}" ]]; then for file in artifacts/*.AppImage artifacts/*.deb; do cargo tauri signer sign --app-version "$STRATA_RELEASE_VERSION" "$file"; done; fi
 
 bundle-windows: install
-    cd apps/desktop && cargo tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis -- --locked
+    config=(); if [[ -n "${STRATA_RELEASE_CONFIG:-}" ]]; then config=(--config "$STRATA_RELEASE_CONFIG"); fi; cd apps/desktop && cargo tauri build "${config[@]}" --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis -- --locked
     mkdir -p artifacts
     cp target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe artifacts/
+    if [[ -n "${STRATA_RELEASE_CONFIG:-}" ]]; then cp target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe.sig artifacts/; fi
 
 ci: check

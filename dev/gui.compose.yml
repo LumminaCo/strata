@@ -1,0 +1,8 @@
+services:
+  dev:
+    environment:
+      DISPLAY: ${DISPLAY:-}
+      STRATA_XAUTH_SOURCE: /tmp/strata.xauth
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+      - ${STRATA_XAUTH_FILE:-./.local/xauth}:/tmp/strata.xauth:ro,z

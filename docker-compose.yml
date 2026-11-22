@@ -1,0 +1,161 @@
+name: strata
+
+x-dev: &dev
+  image: strata-dev:local
+  pull_policy: never
+  init: true
+  build:
+    context: .
+    dockerfile: dev/Dockerfile
+    args:
+      HOST_UID: ${STRATA_UID:-1000}
+      HOST_GID: ${STRATA_GID:-1000}
+      IMAGE_PREFIX: ${STRATA_DEV_IMAGE_PREFIX:-docker.io/library/}
+  volumes:
+    - .:/workspace:z
+    - cargo:/cache/cargo
+    - target:/workspace/target
+    - bun:/cache/bun
+    - go:/cache/go
+    - xwin:/cache/xwin
+    - node_modules:/workspace/node_modules
+    - desktop_node_modules:/workspace/apps/desktop/node_modules
+  environment: &dev-env
+    STRATA_DEV_TOKEN: ${STRATA_DEV_TOKEN:-}
+    STRATA_WATCH_POLL: ${STRATA_WATCH_POLL:-0}
+    CARGO_WATCH_POLL: ${STRATA_WATCH_POLL:-0}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    SQLCMDPASSWORD: ${MSSQL_SA_PASSWORD:-}
+    ORACLE_APP_PASSWORD: ${ORACLE_APP_PASSWORD:-}
+    VITE_STRATA_DEV_TOKEN: ${STRATA_DEV_TOKEN:-}
+
+services:
+  dev:
+    <<: *dev
+
+  devserver:
+    <<: *dev
+    command: ["just", "devserver"]
+    environment:
+      <<: *dev-env
+      STRATA_DEV: "1"
+    ports:
+      - "127.0.0.1:7420:7420"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -X POST -H \"Authorization: Bearer $$STRATA_DEV_TOKEN\" http://127.0.0.1:7420/invoke/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 120
+
+  web:
+    <<: *dev
+    command: ["just", "web"]
+    environment:
+      STRATA_WATCH_POLL: ${STRATA_WATCH_POLL:-0}
+      VITE_STRATA_DEV_TOKEN: ${STRATA_DEV_TOKEN:-}
+    ports:
+      - "127.0.0.1:5173:5173"
+    depends_on:
+      devserver:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5173/"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  postgres:
+    image: strata-postgres:local
+    pull_policy: never
+    build:
+      context: dev/seed/postgres
+      args:
+        POSTGRES_BASE: ${STRATA_POSTGRES_BASE:-postgres:17}
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: pagila
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${STRATA_PG_PORT:-15432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "PGPASSWORD=\"$$POSTGRES_PASSWORD\" psql -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\" -Atqc 'SELECT 1 FROM strata_demo.type_zoo LIMIT 1' | grep -qx 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  mssql:
+    image: strata-mssql:local
+    pull_policy: never
+    build:
+      context: dev/seed/mssql
+    platform: linux/amd64
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-}
+    volumes:
+      - mssql_data:/var/opt/mssql
+    ports:
+      - "127.0.0.1:${STRATA_MSSQL_PORT:-11433}:1433"
+    healthcheck:
+      test: ["CMD-SHELL", "SQLCMDPASSWORD=\"$$MSSQL_SA_PASSWORD\" /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -b -Q 'SET NOCOUNT ON; SELECT 1' >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  oracle:
+    image: strata-oracle:local
+    pull_policy: never
+    build:
+      context: dev/seed/oracle
+      args:
+        ORACLE_BASE_IMAGE: ${STRATA_ORACLE_BASE:-gvenzl/oracle-free:23-slim}
+    environment:
+      ORACLE_PASSWORD: ${ORACLE_PASSWORD:-}
+      APP_USER: hr
+      APP_USER_PASSWORD: ${ORACLE_APP_PASSWORD:-}
+      STRATA_ORACLE_SERVICE: FREEPDB1
+    volumes:
+      - oracle_data:/opt/oracle/oradata
+    ports:
+      - "127.0.0.1:${STRATA_ORACLE_PORT:-11521}:1521"
+    healthcheck: &oracle-health
+      test: ["CMD", "/opt/strata-fixtures/healthcheck.sh"]
+      interval: 10s
+      timeout: 10s
+      retries: 60
+
+  oracle11:
+    profiles: [legacy]
+    image: strata-oracle11:local
+    pull_policy: never
+    platform: linux/amd64
+    build:
+      context: dev/seed/oracle
+      args:
+        ORACLE_BASE_IMAGE: ${STRATA_ORACLE11_BASE:-gvenzl/oracle-xe:11-slim}
+    environment:
+      ORACLE_PASSWORD: ${ORACLE_PASSWORD:-}
+      APP_USER: hr
+      APP_USER_PASSWORD: ${ORACLE_APP_PASSWORD:-}
+      STRATA_ORACLE_SERVICE: XE
+    volumes:
+      - oracle11_data:/u01/app/oracle/oradata
+    ports:
+      - "127.0.0.1:${STRATA_ORACLE11_PORT:-11522}:1521"
+    healthcheck: *oracle-health
+
+volumes:
+  cargo:
+  target:
+  bun:
+  go:
+  xwin:
+  node_modules:
+  desktop_node_modules:
+  postgres_data:
+  mssql_data:
+  oracle_data:
+  oracle11_data:

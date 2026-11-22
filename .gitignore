@@ -1,0 +1,7 @@
+.env
+.local/
+target/
+artifacts/
+node_modules/
+dist/
+apps/desktop/src-tauri/gen/

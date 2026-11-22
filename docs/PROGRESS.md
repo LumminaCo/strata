@@ -1,0 +1,34 @@
+# Strata progress
+
+## M0 · Scaffold and development environment
+
+Status: implementation complete. Native Windows startup and hosted CI are undergoing verification.
+
+| Acceptance check | State |
+| --- | --- |
+| Browser workspace in light and dark | Passed against Docker-hosted Vite+ and Axum. Keyboard activation, theme persistence, and backend readiness passed. |
+| `./x up` with all default services | Passed with Compose health checks and the browser smoke. |
+| `./x check` | Passed in Docker, including Rust formatting, lint and tests, Go vet and tests, Vite+ type checks, and three transport tests. No OpenSSL or native-tls crates in the workspace. |
+| `./x test-int` | Passed with the default and legacy profiles. PostgreSQL 17, SQL Server 2022, Oracle Free, and Oracle XE 11g each verified with public sample schemas and one million generated records. |
+| Linux AppImage and Debian package build and launch | Passed. Both bundles opened the Strata window under Xvfb on Fedora x64. |
+| Windows x64 NSIS build and launch | Cross-build passed. The 3.55 MiB installer contains the Strata x64 executable and WebView2 bootstrapper. Native startup is pending the Bundles workflow. |
+
+## Packaging notes
+
+- The Linux M0 AppImage is 93.96 MiB and the Debian package is 2.49 MiB. The AppImage is above the 35 MB installer budget measured at M8.
+- Windows cross-compilation uses NSIS 3.13. The Tauri installer template requires headers beyond the NSIS version packaged with Debian Bookworm.
+
+## Decisions
+
+- Use Strata for the project name and store the private repository under LumminaCo.
+- Stop after each milestone for owner review. Use conventional commits and one pull request per milestone.
+- Use Base UI with the shadcn Nova preset and system fonts. Reserve the browser-only tab shortcuts documented in SMOKE.md.
+- Run Linux Docker checks and fixture smoke tests on branch pushes and pull requests. Run the cross-platform Bundles workflow for version tags and manual dispatch.
+- Ship unsigned Windows installers and ad-hoc signed macOS arm64 bundles. The automated Windows smoke runs separately from the owner’s M8 acceptance on a Windows machine.
+- Use Pagila, AdventureWorksLT, and Oracle HR with synthetic data for edge cases and large result sets.
+- Publish fixture ports 15432, 11433, 11521, and 11522 on localhost to avoid collisions with other local projects. Use shared SELinux labels on the repository bind mount.
+- Keep the agreed scope adjustments and development orchestration decisions in the ADRs.
+
+## Next milestone
+
+M1 starts after owner review of M0. Build the core, local storage and PostgreSQL integration. Use the Rust integration suite to verify streaming and cancellation.

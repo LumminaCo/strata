@@ -1,0 +1,4 @@
+# Preserve upstream source and the original specification byte for byte.
+docs/SPEC.md -text -whitespace
+dev/seed/postgres/10-pagila-schema.sql -text -whitespace
+dev/seed/oracle/hr/** -text -whitespace

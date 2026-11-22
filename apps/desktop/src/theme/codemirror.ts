@@ -6,7 +6,11 @@ export const editorTheme = [
   EditorView.theme({
     "&": { height: "100%", color: "var(--foreground)", background: "var(--background)" },
     "&.cm-focused": { outline: "none" },
-    ".cm-scroller": { fontFamily: "var(--editor-font)", fontSize: "13px", lineHeight: "1.65" },
+    ".cm-scroller": {
+      fontFamily: "var(--editor-font)",
+      fontSize: "var(--editor-font-size, 13px)",
+      lineHeight: "1.65",
+    },
     ".cm-content": { paddingBlock: "10px", caretColor: "var(--workspace-accent)" },
     ".cm-line": { paddingInline: "10px" },
     ".cm-gutters": {

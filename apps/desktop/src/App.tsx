@@ -1,3 +1,4 @@
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { EditorState } from "@codemirror/state";
 import {
   Cable,
@@ -8,6 +9,8 @@ import {
   History,
   Command as CommandIcon,
   FileCode2,
+  FolderOpen,
+  Save,
   Layers3,
   Monitor,
   Moon,
@@ -28,6 +31,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import {
   Confirmation,
@@ -38,6 +42,7 @@ import {
 import { AgentActivity } from "@/features/agent-activity";
 import { CatalogExplorer, type CatalogEntry } from "@/features/catalog-explorer";
 import { CatalogPalette, DatabasePicker, QueryHistory } from "@/features/catalog-dialogs";
+import { SettingsDialog } from "@/features/settings";
 import { TableInspector, type Inspection } from "@/features/table-inspector";
 import { useCatalogSchema } from "@/features/use-catalog-schema";
 import { shortcuts, workspaceKeydown } from "@/features/keymap";
@@ -68,6 +73,18 @@ export function App() {
   const [explorerOpen, setExplorerOpen] = useState(true);
   const [palette, setPalette] = useState(false);
   const [history, setHistory] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [closeWarning, setCloseWarning] = useState<{ title: string; confirm: () => void }>();
+  const windowState = useRef({
+    dirty: data.hasOpenTransactions,
+    close: data.closeWorkspace,
+    notice: data.setNotice,
+  });
+  windowState.current = {
+    dirty: data.hasOpenTransactions,
+    close: data.closeWorkspace,
+    notice: data.setNotice,
+  };
   const [agentActivity, setAgentActivity] = useState(false);
   const [schemaTabs, setSchemaTabs] = useState<Inspection[]>([]);
   const [schemaSelected, setSchemaSelected] = useState<string>();
@@ -86,6 +103,7 @@ export function App() {
         : "public");
   const catalog = useCatalogSchema(profile, tab, data.catalogRevision, defaultSchema, data.scope);
   const editor = useRef<EditorHandle>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const editors = useRef(new Map<string, { current: EditorState | null }>());
   const filterInput = useRef<HTMLInputElement>(null);
   const ThemeIcon = themeIcons[theme];
@@ -108,6 +126,43 @@ export function App() {
   useLayoutEffect(() => {
     if (showFilter) filterInput.current?.focus();
   }, [showFilter]);
+
+  useEffect(() => {
+    if (browserMode) {
+      const beforeUnload = (event: BeforeUnloadEvent) => {
+        if (!windowState.current.dirty) return;
+        event.preventDefault();
+        event.returnValue = "";
+      };
+      window.addEventListener("beforeunload", beforeUnload);
+      return () => window.removeEventListener("beforeunload", beforeUnload);
+    }
+    const native = getCurrentWindow();
+    const unlisten = native.onCloseRequested((event) => {
+      event.preventDefault();
+      const close = () => {
+        void windowState.current
+          .close()
+          .then(() => native.destroy())
+          .catch((error: unknown) => windowState.current.notice(errorMessage(error)));
+      };
+      if (windowState.current.dirty) setCloseWarning({ title: "Close Strata?", confirm: close });
+      else close();
+    });
+    void unlisten.catch((error: unknown) => windowState.current.notice(errorMessage(error)));
+    return () => {
+      void unlisten.then((dispose) => dispose()).catch(() => {});
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!data.settings) return;
+    document.documentElement.style.setProperty(
+      "--editor-font-size",
+      `${data.settings.editor_font_size}px`,
+    );
+    if (!localStorage.getItem("strata.theme")) setTheme(data.settings.theme);
+  }, [data.settings]);
 
   function changeTheme() {
     const next = themes[(themes.indexOf(theme) + 1) % themes.length] ?? "system";
@@ -143,7 +198,11 @@ export function App() {
     setPalette(false);
   }
 
-  function closeTab(id: string) {
+  function closeTab(id: string, approved = false) {
+    if (!approved && data.transactionAtRisk(id)) {
+      setCloseWarning({ title: "Close SQL tab?", confirm: () => closeTab(id, true) });
+      return;
+    }
     data.closeTab(id);
     editors.current.delete(id);
     setPinned((current) => {
@@ -226,6 +285,31 @@ export function App() {
     }
   }
 
+  async function openSqlFile(file: File) {
+    if (!profile?.id) return;
+    if (file.size > 8_000_000) {
+      data.setNotice("The SQL file exceeds 8 MB.");
+      return;
+    }
+    try {
+      openTab(profile.id, tab?.database, await file.text());
+    } catch (error) {
+      data.setNotice(errorMessage(error));
+    }
+  }
+
+  function saveSqlFile() {
+    if (!editor.current || schemaActive) return;
+    const url = URL.createObjectURL(
+      new Blob([editor.current.text()], { type: "text/plain;charset=utf-8" }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "query.sql";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  }
+
   function showCell(name: string, value: Cell, kind?: string) {
     let text = value === null ? "NULL" : String(value);
     if (kind === "json" && typeof value === "string") {
@@ -271,6 +355,8 @@ export function App() {
           palette ||
           history ||
           agentActivity ||
+          settingsOpen ||
+          closeWarning ||
           event.defaultPrevented
         )
           return;
@@ -309,18 +395,43 @@ export function App() {
             },
             explain: () => run("explain"),
             format: () => void formatSql(),
+            openSql: () => {
+              if (profile) fileInput.current?.click();
+            },
+            saveSql: saveSqlFile,
           },
           browserMode,
         );
         if (handled) event.stopPropagation();
       }}
     >
+      <input
+        type="file"
+        accept=".sql,text/plain"
+        hidden
+        ref={fileInput}
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (file) void openSqlFile(file);
+        }}
+      />
       <header className="toolbar">
         <div className="brand">
           <Layers3 aria-hidden="true" />
           <span>Strata</span>
         </div>
         <div className="toolbar-actions">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            title="Settings"
+            aria-label="Settings"
+            disabled={!data.settings}
+            onClick={() => setSettingsOpen(true)}
+          >
+            <Settings2 />
+          </Button>
           <Button
             variant="ghost"
             size="icon-sm"
@@ -609,12 +720,67 @@ export function App() {
                     DBMS Output
                   </Button>
                 )}
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Open SQL file"
+                  title="Open SQL file (Ctrl+O)"
+                  disabled={!profile}
+                  onClick={() => fileInput.current?.click()}
+                >
+                  <FolderOpen />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Save SQL file"
+                  title="Save SQL file (Ctrl+S)"
+                  onClick={saveSqlFile}
+                >
+                  <Save />
+                </Button>
                 <div className="query-actions-end">
+                  {active.session && (
+                    <div className="transaction-actions">
+                      <NativeSelect
+                        aria-label="Transaction mode"
+                        size="sm"
+                        value={active.transaction?.manual ? "manual" : "auto"}
+                        disabled={!!active.busy || !!active.transaction?.open}
+                        onChange={(event) =>
+                          void data.transactionMode(event.target.value === "manual")
+                        }
+                      >
+                        <NativeSelectOption value="auto">Auto</NativeSelectOption>
+                        <NativeSelectOption value="manual">Manual</NativeSelectOption>
+                      </NativeSelect>
+                      {active.transaction?.open && (
+                        <>
+                          <Button
+                            variant="outline"
+                            size="xs"
+                            disabled={!!active.busy}
+                            onClick={() => void data.finishTransaction(true)}
+                          >
+                            Commit
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="xs"
+                            disabled={!!active.busy}
+                            onClick={() => void data.finishTransaction(false)}
+                          >
+                            Rollback
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  )}
                   {profile?.id && (
                     <DatabasePicker
                       key={profile.id}
                       selected={tab.database ?? profile.database}
-                      disabled={!!active.busy}
+                      disabled={!!active.busy || !!active.transaction?.open}
                       load={async () =>
                         dispatch("list_databases", { scope: await data.scope(profile) })
                       }
@@ -624,7 +790,15 @@ export function App() {
                   <Button
                     variant="ghost"
                     disabled={!profile || !!active.busy}
-                    onClick={active.session ? data.disconnect : data.connect}
+                    onClick={() => {
+                      if (!active.session) data.connect();
+                      else if (tab && data.transactionAtRisk(tab.id))
+                        setCloseWarning({
+                          title: "Disconnect this tab?",
+                          confirm: data.disconnect,
+                        });
+                      else data.disconnect();
+                    }}
                   >
                     <Cable /> {active.session ? "Disconnect" : "Connect"}
                   </Button>
@@ -865,8 +1039,33 @@ export function App() {
         )}
         {active.elapsed !== undefined && <span>{active.elapsed} ms</span>}
         {profile?.readOnly && <span>Read-only</span>}
+        {active.transaction?.open && <span className="transaction-open">Transaction open</span>}
       </footer>
 
+      {settingsOpen && data.settings && (
+        <SettingsDialog
+          initial={data.settings}
+          onClose={() => setSettingsOpen(false)}
+          onSave={(settings) => {
+            data.applySettings(settings);
+            localStorage.setItem("strata.theme", settings.theme);
+            setTheme(settings.theme);
+            setSettingsOpen(false);
+          }}
+        />
+      )}
+      {closeWarning && (
+        <Confirmation
+          title={closeWarning.title}
+          description="Closing rolls back the open transaction."
+          action="Roll back and close"
+          onCancel={() => setCloseWarning(undefined)}
+          onConfirm={() => {
+            closeWarning.confirm();
+            setCloseWarning(undefined);
+          }}
+        />
+      )}
       {agentActivity && (
         <AgentActivity
           profiles={data.profiles}

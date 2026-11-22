@@ -10,6 +10,8 @@ import type {
   RunMode,
   SavedTab,
   SessionInfo,
+  Settings,
+  TransactionState,
   Target,
   Workspace,
 } from "@/ipc/bindings/protocol";
@@ -24,6 +26,7 @@ interface Activity {
   elapsed?: number;
   diagnostic?: EditorDiagnostic;
   dbmsOutput?: boolean;
+  transaction?: TransactionState;
 }
 
 interface Job {
@@ -51,6 +54,7 @@ export function useWorkspace() {
   const [modal, setModal] = useState<Modal>();
   const [catalogRevision, setCatalogRevision] = useState(0);
   const [historyRevision, setHistoryRevision] = useState(0);
+  const [settings, setSettings] = useState<Settings>();
   const [notice, setNotice] = useState("");
   const [loadAttempt, setLoadAttempt] = useState(0);
   const jobs = useRef(new Map<string, Job>());
@@ -62,8 +66,12 @@ export function useWorkspace() {
 
   useEffect(() => {
     let current = true;
-    void Promise.all([dispatch("list_connections"), dispatch("workspace_load")]).then(
-      ([connections, restored]) => {
+    void Promise.all([
+      dispatch("list_connections"),
+      dispatch("workspace_load"),
+      dispatch("settings_get"),
+    ]).then(
+      ([connections, restored, settings]) => {
         if (!current) return;
         const activeTab = restored.tabs.some((tab) => tab.id === restored.activeTab)
           ? restored.activeTab
@@ -71,6 +79,7 @@ export function useWorkspace() {
         const loaded = { ...restored, activeTab };
         saved.current = loaded;
         setProfiles(connections);
+        setSettings(settings);
         setWorkspace(loaded);
         setNotice("");
       },
@@ -278,6 +287,12 @@ export function useWorkspace() {
         }));
         break;
       }
+      case "transactionState":
+        update(id, (current) => ({
+          ...current,
+          transaction: { manual: event.manual, open: event.open },
+        }));
+        break;
       case "catalogChanged":
         setCatalogRevision((value) => value + 1);
         break;
@@ -356,7 +371,13 @@ export function useWorkspace() {
         passwords.current.set(connection.id, credential);
       update(item.id, (current) =>
         query
-          ? { ...idle, session, busy: "Running", dbmsOutput: current.dbmsOutput }
+          ? {
+              ...idle,
+              session,
+              busy: "Running",
+              dbmsOutput: current.dbmsOutput,
+              transaction: current.transaction,
+            }
           : { ...current, session },
       );
       if (query && job.runId) {
@@ -534,6 +555,52 @@ export function useWorkspace() {
     return dispatch("get_cell", { sessionId: active.session.id, cursorId: result.id, row, column });
   }
 
+  function transactionAtRisk(id: string) {
+    const value = activities[id];
+    return !!value?.transaction?.open || (!!value?.transaction?.manual && !!value.busy);
+  }
+
+  async function transactionMode(manual: boolean) {
+    if (!tab || !active.session || active.busy) return;
+    try {
+      const transaction = await dispatch("set_transaction_mode", {
+        sessionId: active.session.id,
+        manual,
+      });
+      update(tab.id, (current) => ({ ...current, transaction }));
+    } catch (error) {
+      setNotice(errorMessage(error));
+    }
+  }
+
+  async function finishTransaction(commit: boolean) {
+    if (!tab || !active.session || active.busy) return;
+    try {
+      const transaction = await dispatch("finish_transaction", {
+        sessionId: active.session.id,
+        commit,
+      });
+      update(tab.id, (current) => ({
+        ...current,
+        transaction,
+        results: current.results.map((result) => ({ ...result, more: false })),
+      }));
+    } catch (error) {
+      setNotice(errorMessage(error));
+    }
+  }
+
+  async function closeWorkspace() {
+    const open = Array.from(sessions.current.values(), ({ id }) =>
+      dispatch("close_session", { sessionId: id }),
+    );
+    await Promise.all(open);
+    if (workspace && workspace !== saved.current) {
+      await saves.current;
+      await dispatch("workspace_save", { workspace });
+    }
+  }
+
   async function toggleDbmsOutput() {
     if (!tab || !active.session || active.busy) return;
     const enabled = !active.dbmsOutput;
@@ -597,6 +664,16 @@ export function useWorkspace() {
   return {
     profiles,
     toggleDbmsOutput,
+    transactionAtRisk,
+    transactionMode,
+    finishTransaction,
+    closeWorkspace,
+    settings,
+    applySettings: (settings: Settings) => {
+      setSettings(settings);
+      setCatalogRevision((value) => value + 1);
+    },
+    hasOpenTransactions: tabs.some((tab) => transactionAtRisk(tab.id)),
     catalogRevision,
     historyRevision,
     scope,

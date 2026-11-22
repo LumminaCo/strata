@@ -156,7 +156,7 @@ pub fn audit_sql(sql: &str, dialect: Dialect) -> String {
     output
 }
 
-fn parse(sql: &str, dialect: Dialect) -> Option<Vec<Statement>> {
+pub(crate) fn parse(sql: &str, dialect: Dialect) -> Option<Vec<Statement>> {
     let dialect: &dyn sqlparser::dialect::Dialect = match dialect {
         Dialect::Postgres => &PostgreSqlDialect {},
         Dialect::SqlServer => &MsSqlDialect {},

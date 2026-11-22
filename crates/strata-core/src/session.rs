@@ -32,6 +32,17 @@ impl Default for Limits {
     }
 }
 
+impl Limits {
+    fn validate(self) -> Result<Self> {
+        if self.fetch_size == 0 || self.row_cap == 0 || self.row_cap > MAX_ROWS {
+            return Err(CoreError::config(
+                "Fetch size must be positive and row cap must be between 1 and 200,000",
+            ));
+        }
+        Ok(self)
+    }
+}
+
 #[derive(Debug)]
 pub struct Batch {
     pub cursor: Uuid,
@@ -75,6 +86,7 @@ struct Session {
     closed: CancellationToken,
     dialect: Dialect,
     read_only: bool,
+    limits: Limits,
 }
 
 pub struct Core {
@@ -85,11 +97,7 @@ pub struct Core {
 
 impl Core {
     pub fn new(drivers: impl IntoIterator<Item = Arc<dyn Driver>>, limits: Limits) -> Result<Self> {
-        if limits.fetch_size == 0 || limits.row_cap == 0 || limits.row_cap > MAX_ROWS {
-            return Err(CoreError::config(
-                "Fetch size must be positive and row cap must be between 1 and 200,000",
-            ));
-        }
+        let limits = limits.validate()?;
         Ok(Self {
             drivers: drivers
                 .into_iter()
@@ -107,12 +115,21 @@ impl Core {
     }
 
     pub async fn open_session(&self, profile: &Profile, secret: &Secret) -> Result<Uuid> {
+        self.open_session_with_limits(profile, secret, self.limits)
+            .await
+    }
+
+    pub async fn open_session_with_limits(
+        &self,
+        profile: &Profile,
+        secret: &Secret,
+        limits: Limits,
+    ) -> Result<Uuid> {
+        let limits = limits.validate()?;
         profile.validate()?;
         let mut connection = self.driver(profile.kind)?.connect(profile, secret).await?;
         connection.set_read_only(profile.read_only).await?;
-        connection
-            .set_statement_timeout(self.limits.timeout_ms)
-            .await?;
+        connection.set_statement_timeout(limits.timeout_ms).await?;
         let resolution_path = connection.resolution_path().await?;
         let id = Uuid::now_v7();
         let dialect = match profile.kind {
@@ -137,6 +154,7 @@ impl Core {
                 closed: CancellationToken::new(),
                 dialect,
                 read_only: profile.read_only,
+                limits,
             }),
         );
         Ok(id)
@@ -163,8 +181,13 @@ impl Core {
     }
 
     pub async fn run(&self, session: Uuid, sql: &str) -> Result<Batch> {
-        self.run_batch(session, sql, self.limits.fetch_size, None)
-            .await
+        self.run_batch(
+            session,
+            sql,
+            self.session(session).await?.limits.fetch_size,
+            None,
+        )
+        .await
     }
 
     pub async fn run_batch(
@@ -262,7 +285,7 @@ impl Core {
         let result = state
             .read(
                 count,
-                self.limits.row_cap.saturating_sub(retained),
+                session.limits.row_cap.saturating_sub(retained),
                 cancellation,
             )
             .await;
@@ -333,6 +356,12 @@ impl Core {
         }
         state.manual = manual;
         Ok(())
+    }
+
+    pub async fn transaction_state(&self, session: Uuid) -> Result<(bool, bool)> {
+        let session = self.session(session).await?;
+        let state = session.state.lock().await;
+        Ok((state.manual, state.transaction_open))
     }
 
     pub async fn transaction_open(&self, session: Uuid) -> Result<bool> {

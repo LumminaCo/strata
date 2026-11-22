@@ -779,3 +779,22 @@ body {
 .activity-list button {
   justify-self: start;
 }
+
+.settings-dialog {
+  width: min(550px, calc(100vw - 32px));
+  max-width: none;
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+}
+.settings-dialog .read-only-field {
+  grid-column: 1 / -1;
+}
+.status-bar .transaction-open {
+  color: var(--env-staging);
+  font-weight: 600;
+}
+.transaction-actions {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}

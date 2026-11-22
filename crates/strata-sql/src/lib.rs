@@ -254,32 +254,29 @@ pub fn statement_at(text: &str, offset: u32, dialect: Dialect, blank_lines: bool
 }
 
 /// A mutation without a predicate needs explicit confirmation in the editor.
-pub fn needs_mutation_confirmation(sql: &str) -> bool {
-    match Parser::new(&PostgreSqlDialect {})
-        .with_recursion_limit(64)
-        .try_with_sql(sql)
-        .and_then(|mut parser| parser.parse_statements())
-        .as_deref()
-    {
-        Ok([Statement::Update(update)]) => update.selection.is_none(),
-        Ok([Statement::Delete(delete)]) => delete.selection.is_none(),
-        _ => {
-            let mut words = lex(sql, Dialect::Postgres)
-                .into_iter()
-                .filter(|token| token.kind == Kind::Word)
-                .map(|token| token.text(sql));
-            let Some(first) = words.next() else {
-                return false;
+pub fn needs_mutation_confirmation(sql: &str, dialect: Dialect) -> bool {
+    if let Some(statements) = agent::parse(sql, dialect) {
+        let mut found_mutation = false;
+        for statement in statements {
+            let missing_predicate = match statement {
+                Statement::Update(update) => update.selection.is_none(),
+                Statement::Delete(delete) => delete.selection.is_none(),
+                _ => continue,
             };
-            ["UPDATE", "DELETE"]
-                .iter()
-                .any(|word| first.eq_ignore_ascii_case(word))
-                || (first.eq_ignore_ascii_case("WITH")
-                    && words.any(|word| {
-                        word.eq_ignore_ascii_case("UPDATE") || word.eq_ignore_ascii_case("DELETE")
-                    }))
+            found_mutation = true;
+            if missing_predicate {
+                return true;
+            }
+        }
+        if found_mutation {
+            return false;
         }
     }
+    lex(sql, dialect).iter().any(|token| {
+        token.kind == Kind::Word
+            && (token.text(sql).eq_ignore_ascii_case("UPDATE")
+                || token.text(sql).eq_ignore_ascii_case("DELETE"))
+    })
 }
 
 /// Credential statements are usable in the editor but are not durable history.

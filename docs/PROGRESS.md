@@ -90,3 +90,8 @@ The native runtime smoke used Linux with WebKitGTK. The next milestone is M3, co
 - The native binary serves `strata mcp` over stdio. Connection visibility defaults to disabled. Profiles can grant read access or enable write access for a non-production connection.
 - The native integration test launched the executable through an rmcp client. It listed connections, described a PostgreSQL table, queried all three engines, denied 11 requests, enforced a row cap, rolled back a dry run, and verified audit and credential redaction.
 - Chromium displayed the allowed and denied calls made by a native MCP subprocess against a shared development workspace. Claude Code returned its weekly usage limit during the optional client smoke.
+
+## M8 · Safety, settings, and packaging
+
+- Chromium verified production confirmation, manual Commit and Rollback, and the rollback prompt on tab close. Settings persisted and applied a reduced fetch size and row cap when opening a new session.
+- Added SQL file open and download, platform installer smoke steps, and a Linux window-startup and memory probe.

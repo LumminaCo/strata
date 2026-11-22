@@ -205,7 +205,7 @@ impl AppService {
                     target,
                     mode,
                     self.engine.config().settings.blank_line_delimiter,
-                    production,
+                    production && self.engine.config().settings.confirm_production,
                     inspection::dialect(kind.unwrap_or(DbKind::Postgres)),
                 )?;
                 json(QueryPlan {
@@ -228,7 +228,7 @@ impl AppService {
                 self.metadata
                     .catalog(&self.engine, &scope)
                     .await?
-                    .schemas(false)
+                    .schemas(self.engine.config().settings.show_system_objects)
                     .await?,
             ),
             Command::CatalogSnapshot { scope, schema } => json(
@@ -283,6 +283,38 @@ impl AppService {
                     profile.database = database;
                 }
                 json(self.open_session(profile, scope.password, lifetime).await?)
+            }
+            Command::SettingsGet => json(self.engine.config().settings),
+            Command::SettingsSave { settings } => {
+                self.engine.save_settings(settings).await?;
+                Ok(Value::Null)
+            }
+            Command::SetTransactionMode { session_id, manual } => {
+                let session = self.session(session_id).await?;
+                let control = session.control.lock().await;
+                if control.active.is_some() {
+                    return Err(CoreError::config("Wait for the running query to finish"));
+                }
+                self.engine
+                    .core()
+                    .set_manual_transactions(session_id, manual)
+                    .await?;
+                let (manual, open) = self.engine.core().transaction_state(session_id).await?;
+                json(TransactionState { manual, open })
+            }
+            Command::FinishTransaction { session_id, commit } => {
+                let session = self.session(session_id).await?;
+                let control = session.control.lock().await;
+                if control.active.is_some() {
+                    return Err(CoreError::config("Wait for the running query to finish"));
+                }
+                if commit {
+                    self.engine.core().commit(session_id).await?;
+                } else {
+                    self.engine.core().rollback(session_id).await?;
+                }
+                let (manual, open) = self.engine.core().transaction_state(session_id).await?;
+                json(TransactionState { manual, open })
             }
             Command::AuditList { limit } => json(self.engine.audit(limit.unwrap_or(200)).await?),
             Command::McpConfig => {

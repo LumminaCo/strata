@@ -46,6 +46,8 @@ pub enum CoreError {
     Config { message: String },
     #[error("Secret unavailable: {message}")]
     Secret { message: String },
+    #[error("Oracle bridge error: {message}")]
+    Bridge { message: String },
     #[error("Storage error: {message}")]
     Io { message: String },
 }
@@ -164,6 +166,7 @@ pub struct DriverOptions {
     pub sid: Option<String>,
     pub descriptor: Option<String>,
     pub role: Option<String>,
+    pub wallet: Option<String>,
 }
 
 impl Profile {
@@ -290,6 +293,9 @@ pub trait DbConnection: Send {
     async fn resolution_path(&mut self) -> Result<Vec<String>> {
         Ok(self.server_info().await?.schema.into_iter().collect())
     }
+    async fn set_dbms_output(&mut self, _enabled: bool) -> Result<()> {
+        Err(CoreError::config("DBMS_OUTPUT requires Oracle"))
+    }
     async fn set_explain(&mut self, _enabled: bool) -> Result<()> {
         Err(CoreError::config(
             "This driver does not use a session explain mode",
@@ -309,6 +315,7 @@ pub enum ObjectKind {
     Function,
     Procedure,
     Sequence,
+    Synonym,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]

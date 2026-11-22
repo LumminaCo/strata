@@ -78,3 +78,9 @@ The native runtime smoke used Linux with WebKitGTK. The next milestone is M3, co
 - Chromium verified repeated `GO` batches, batch-local variables, multiple result sets across a 500-row page boundary, Stop and estimated plans.
 - Stop sends TDS Attention. If the driver cannot reuse the cancelled connection, Strata closes it and reconnects for the next command. Messages reports the session reset.
 - The query stream exposes rows and result metadata. Informational `PRINT` messages and affected row counts from mixed batches are outside the driver's current stream API. Windows integrated authentication is wired and requires interactive acceptance on a Windows host with a suitable SQL Server account.
+
+## M6 · Oracle bridge
+
+- The Rust driver supervises a versioned stdio sidecar built with pure-Go go-ora. Tauri builds and ships the sidecar for the target platform. Browser development builds it before starting the backend.
+- Passed `COMPOSE_PROFILES=legacy ./x test-int` against Oracle 23ai Free and Oracle 11g XE. Verified precision, Unicode, catalog columns, synonyms, table DDL, PL/SQL and DBMS_OUTPUT. On 23ai the integration test cancelled a sleeping call within two seconds and restarted a killed bridge after failing the in-flight call.
+- Chromium verified connection setup, running a slash-delimited PL/SQL script, DBMS_OUTPUT, synonym queries and Explain. Oracle wallets, TCPS, and privileged login roles still require environment-specific validation.

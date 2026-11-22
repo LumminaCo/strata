@@ -53,6 +53,7 @@ const emptyOptions: DriverOptions = {
   sid: null,
   descriptor: null,
   role: null,
+  wallet: null,
 };
 
 interface ConnectionDialogProps {
@@ -140,6 +141,23 @@ export function ConnectionDialog({ initial, onSave, onClose }: ConnectionDialogP
     });
   }
 
+  function oracleFixture() {
+    setProfile({
+      ...emptyConnection,
+      id: profile.id,
+      name: "Local Oracle",
+      kind: "oracle",
+      host: "oracle",
+      port: 1521,
+      database: "FREEPDB1",
+      user: "hr",
+      secret: "env:ORACLE_APP_PASSWORD",
+    });
+    setEnvVariable("ORACLE_APP_PASSWORD");
+    setPassword(undefined);
+    setFeedback(undefined);
+  }
+
   function sqlServerFixture() {
     setProfile({
       ...emptyConnection,
@@ -191,7 +209,7 @@ export function ConnectionDialog({ initial, onSave, onClose }: ConnectionDialogP
             type="password"
             autoComplete="off"
             spellCheck={false}
-            placeholder="postgresql://… or jdbc:sqlserver://…"
+            placeholder="PostgreSQL, SQL Server, or Oracle URL"
             value={url}
             onChange={(event) => setUrl(event.target.value)}
           />
@@ -219,6 +237,15 @@ export function ConnectionDialog({ initial, onSave, onClose }: ConnectionDialogP
             >
               <Database /> Use local SQL Server
             </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              className="fixture-button"
+              disabled={busy}
+              onClick={oracleFixture}
+            >
+              <Database /> Use local Oracle
+            </Button>
           </div>
         )}
         <form onSubmit={save} className="connection-form">
@@ -234,13 +261,15 @@ export function ConnectionDialog({ initial, onSave, onClose }: ConnectionDialogP
                     ...current,
                     kind,
                     options: null,
-                    port: kind === "sqlserver" ? 1433 : 5432,
-                    database: kind === "sqlserver" ? "master" : "postgres",
+                    port: kind === "sqlserver" ? 1433 : kind === "oracle" ? 1521 : 5432,
+                    database:
+                      kind === "sqlserver" ? "master" : kind === "oracle" ? "FREEPDB1" : "postgres",
                   }));
                 }}
               >
                 <NativeSelectOption value="postgres">PostgreSQL</NativeSelectOption>
                 <NativeSelectOption value="sqlserver">SQL Server</NativeSelectOption>
+                <NativeSelectOption value="oracle">Oracle</NativeSelectOption>
               </NativeSelect>
             </Field>
             <Field name="connection-name" label="Name">
@@ -283,7 +312,10 @@ export function ConnectionDialog({ initial, onSave, onClose }: ConnectionDialogP
                 />
               </Field>
             </div>
-            <Field name="connection-db" label="Database">
+            <Field
+              name="connection-db"
+              label={profile.kind === "oracle" ? "Service name" : "Database"}
+            >
               <Input
                 id="connection-db"
                 required
@@ -401,6 +433,42 @@ export function ConnectionDialog({ initial, onSave, onClose }: ConnectionDialogP
                   <NativeSelectOption value="verify-full">Verify full</NativeSelectOption>
                 </NativeSelect>
               </Field>
+            )}
+            {profile.kind === "oracle" && (
+              <>
+                <Field name="connection-sid" label="SID (optional)">
+                  <Input
+                    id="connection-sid"
+                    value={options.sid ?? ""}
+                    onChange={(event) => option("sid", event.target.value || null)}
+                  />
+                </Field>
+                <Field name="connection-role" label="Oracle role">
+                  <NativeSelect
+                    id="connection-role"
+                    value={options.role ?? ""}
+                    onChange={(event) => option("role", event.target.value || null)}
+                  >
+                    <NativeSelectOption value="">Default</NativeSelectOption>
+                    <NativeSelectOption value="SYSDBA">SYSDBA</NativeSelectOption>
+                    <NativeSelectOption value="SYSOPER">SYSOPER</NativeSelectOption>
+                  </NativeSelect>
+                </Field>
+                <Field name="connection-descriptor" label="TNS descriptor (optional)">
+                  <Input
+                    id="connection-descriptor"
+                    value={options.descriptor ?? ""}
+                    onChange={(event) => option("descriptor", event.target.value || null)}
+                  />
+                </Field>
+                <Field name="connection-wallet" label="Wallet path (optional)">
+                  <Input
+                    id="connection-wallet"
+                    value={options.wallet ?? ""}
+                    onChange={(event) => option("wallet", event.target.value || null)}
+                  />
+                </Field>
+              </>
             )}
             <Field name="connection-folder" label="Folder">
               <Input

@@ -23,6 +23,7 @@ interface Activity {
   messages: { level: string; text: string }[];
   elapsed?: number;
   diagnostic?: EditorDiagnostic;
+  dbmsOutput?: boolean;
 }
 
 interface Job {
@@ -264,6 +265,7 @@ export function useWorkspace() {
       case "error": {
         const span = spans.get(event.statementIndex);
         const error = event.error;
+        if (error.kind === "bridge") closeSession(id);
         update(id, (current) => ({
           ...current,
           selected: error.kind === "cancelled" ? current.selected : "messages",
@@ -271,6 +273,7 @@ export function useWorkspace() {
             ...current.messages,
             { level: error.kind === "cancelled" ? "info" : "error", text: error.message },
           ],
+          session: error.kind === "bridge" ? undefined : current.session,
           diagnostic: span && error.kind === "db" ? { text: query.text, span, error } : undefined,
         }));
         break;
@@ -352,7 +355,9 @@ export function useWorkspace() {
       if (connection.secret === "prompt" && credential !== undefined)
         passwords.current.set(connection.id, credential);
       update(item.id, (current) =>
-        query ? { ...idle, session, busy: "Running" } : { ...current, session },
+        query
+          ? { ...idle, session, busy: "Running", dbmsOutput: current.dbmsOutput }
+          : { ...current, session },
       );
       if (query && job.runId) {
         const spans = new Map<number, [number, number]>();
@@ -370,6 +375,7 @@ export function useWorkspace() {
       if (
         message.includes("Session does not exist") ||
         message.includes("disconnected") ||
+        message.includes("Oracle bridge") ||
         message.includes("connection closed")
       ) {
         closeSession(item.id);
@@ -528,6 +534,17 @@ export function useWorkspace() {
     return dispatch("get_cell", { sessionId: active.session.id, cursorId: result.id, row, column });
   }
 
+  async function toggleDbmsOutput() {
+    if (!tab || !active.session || active.busy) return;
+    const enabled = !active.dbmsOutput;
+    try {
+      await dispatch("set_dbms_output", { sessionId: active.session.id, enabled });
+      update(tab.id, (current) => ({ ...current, dbmsOutput: enabled }));
+    } catch (error) {
+      setNotice(errorMessage(error));
+    }
+  }
+
   function scope(connection: Connection, database?: string, prompt = false): Promise<CatalogScope> {
     const connectionId = connection.id;
     if (!connectionId) return Promise.reject(new Error("Save the connection first."));
@@ -579,6 +596,7 @@ export function useWorkspace() {
 
   return {
     profiles,
+    toggleDbmsOutput,
     catalogRevision,
     historyRevision,
     scope,

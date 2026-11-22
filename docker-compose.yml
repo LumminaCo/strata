@@ -23,6 +23,7 @@ x-dev: &dev
     - node_modules:/workspace/node_modules
     - desktop_node_modules:/workspace/apps/desktop/node_modules
   environment: &dev-env
+    GOMODCACHE: /cache/go/mod
     STRATA_DEV_TOKEN: ${STRATA_DEV_TOKEN:-}
     STRATA_WATCH_POLL: ${STRATA_WATCH_POLL:-0}
     CARGO_WATCH_POLL: ${STRATA_WATCH_POLL:-0}
@@ -41,6 +42,7 @@ services:
     environment:
       <<: *dev-env
       STRATA_DEV: "1"
+      STRATA_ORACLE_BRIDGE: /workspace/artifacts/oracle-bridge
       STRATA_HOME: /cache/strata
     ports:
       - "127.0.0.1:7420:7420"

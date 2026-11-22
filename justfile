@@ -9,10 +9,10 @@ install:
 web:
     cd apps/desktop && vp dev --host 0.0.0.0
 
-devserver:
+devserver: bridge
     poll=(); if [[ "${CARGO_WATCH_POLL:-0}" == 1 ]]; then poll+=(--poll); fi; cargo watch "${poll[@]}" --ignore 'apps/desktop/**' --ignore 'artifacts/**' -x 'run --locked -p strata-devserver'
 
-gui: install
+gui: install bridge
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ -s "${STRATA_XAUTH_SOURCE:-}" ]]; then
@@ -38,16 +38,17 @@ check: frontend
 seed:
     bash dev/seed/mssql/seed.sh
 
-test-int:
+test-int: bridge
     bash dev/test-int.sh
     STRATA_IT=1 SSL_CERT_FILE=/opt/strata-pg-trust/ca.pem cargo test --locked -p strata-driver-postgres --test postgres -- --ignored
     STRATA_IT=1 cargo test --locked -p strata-driver-mssql --test sql_server -- --ignored
+    STRATA_IT=1 STRATA_ORACLE_BRIDGE=/workspace/artifacts/oracle-bridge ORACLE11_TEST="$(getent hosts oracle11 >/dev/null && printf 1 || printf 0)" cargo test --locked -p strata-driver-oracle -- --ignored
     STRATA_IT=1 cargo test --locked -p strata-app --test engine -- --ignored
     STRATA_IT=1 cargo test --locked -p strata-app --test desktop -- --ignored
 
 bridge:
     mkdir -p artifacts
-    cd bridge/oracle && CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o ../../artifacts/oracle-bridge .
+    cd bridge/oracle && CGO_ENABLED=0 go build -mod=readonly -trimpath -ldflags '-s -w' -o ../../artifacts/oracle-bridge .
 
 bindings:
     STRATA_UPDATE_BINDINGS=1 cargo test -p strata-app --lib typescript_bindings

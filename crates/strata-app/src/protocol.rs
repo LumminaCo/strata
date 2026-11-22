@@ -85,6 +85,7 @@ impl From<CoreError> for ErrorDto {
             CoreError::Config { .. } => "config",
             CoreError::Secret { .. } => "secret",
             CoreError::Io { .. } => "io",
+            CoreError::Bridge { .. } => "bridge",
         }
         .into();
         Self {
@@ -280,6 +281,10 @@ pub enum Command {
         session_id: Uuid,
         cursor_id: Uuid,
         count: usize,
+    },
+    SetDbmsOutput {
+        session_id: Uuid,
+        enabled: bool,
     },
     NextResult {
         session_id: Uuid,

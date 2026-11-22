@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use strata_core::{Core, CoreError, Driver, Introspector, Limits, Profile, Result, Secret};
 use strata_driver_mssql::SqlServer;
+use strata_driver_oracle::Oracle;
 use strata_driver_postgres::Postgres;
 use strata_store::{
     Config, ConfigStore, ConfigUpdate, Database, HistoryEntry, Keychain, Paths, WatchedConfig,
@@ -27,7 +28,11 @@ impl Engine {
             timeout_ms: settings.statement_timeout_ms,
         };
         let core = Core::new(
-            [Arc::new(Postgres) as Arc<dyn Driver>, Arc::new(SqlServer)],
+            [
+                Arc::new(Postgres) as Arc<dyn Driver>,
+                Arc::new(SqlServer),
+                Arc::new(Oracle::default()),
+            ],
             limits,
         )?;
         Ok(Self {

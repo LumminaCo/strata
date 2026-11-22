@@ -292,6 +292,33 @@ pub fn history_sql(sql: &str) -> &str {
     }
 }
 
+pub fn oracle_execution(sql: &str) -> (&str, bool) {
+    let words: Vec<_> = lex(sql, Dialect::Oracle)
+        .into_iter()
+        .filter(|token| token.kind == Kind::Word)
+        .take(6)
+        .map(|token| token.text(sql).to_ascii_uppercase())
+        .collect();
+    let first = words.first().map(String::as_str).unwrap_or("");
+    let rows = matches!(first, "SELECT" | "WITH");
+    let procedural = matches!(first, "BEGIN" | "DECLARE")
+        || first == "CREATE"
+            && words.iter().any(|word| {
+                matches!(
+                    word.as_str(),
+                    "PROCEDURE" | "FUNCTION" | "PACKAGE" | "TRIGGER" | "TYPE"
+                )
+            });
+    (
+        if procedural {
+            sql.trim_end()
+        } else {
+            sql.trim_end().trim_end_matches(';')
+        },
+        rows,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

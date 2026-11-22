@@ -4473,6 +4473,7 @@ dependencies = [
  "serde_json",
  "strata-core",
  "strata-driver-mssql",
+ "strata-driver-oracle",
  "strata-driver-postgres",
  "strata-sql",
  "strata-store",
@@ -4533,6 +4534,17 @@ dependencies = [
 [[package]]
 name = "strata-driver-oracle"
 version = "0.1.0"
+dependencies = [
+ "async-stream",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "strata-core",
+ "strata-sql",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
 
 [[package]]
 name = "strata-driver-postgres"
@@ -5186,6 +5198,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

@@ -418,6 +418,22 @@ impl Core {
         state.connection.server_info().await
     }
 
+    pub async fn set_dbms_output(&self, session: Uuid, enabled: bool) -> Result<()> {
+        let session = self.session(session).await?;
+        let mut state = session.state.lock().await;
+        session.ensure_open(&state)?;
+        if state
+            .cursor
+            .as_ref()
+            .is_some_and(|cursor| cursor.stream.is_some())
+        {
+            return Err(CoreError::config(
+                "Finish fetching this result before changing DBMS_OUTPUT",
+            ));
+        }
+        state.connection.set_dbms_output(enabled).await
+    }
+
     pub async fn set_explain(&self, session: Uuid, enabled: bool) -> Result<()> {
         let session = self.session(session).await?;
         let mut state = session.state.lock().await;

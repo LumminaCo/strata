@@ -4,6 +4,7 @@ services:
       DISPLAY: ${DISPLAY:-}
       STRATA_HOME: /cache/strata/native
       STRATA_XAUTH_SOURCE: /tmp/strata.xauth
+      STRATA_ORACLE_BRIDGE: /workspace/artifacts/oracle-bridge
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:ro
       - ${STRATA_XAUTH_FILE:-./.local/xauth}:/tmp/strata.xauth:ro,z

@@ -1,0 +1,104 @@
+use std::sync::Arc;
+
+use strata_core::{Core, CoreError, Driver, Introspector, Limits, Profile, Result, Secret};
+use strata_driver_postgres::Postgres;
+use strata_store::{
+    ConfigStore, ConfigUpdate, Database, HistoryEntry, Keychain, Paths, WatchedConfig,
+};
+use tokio::sync::watch;
+use uuid::Uuid;
+
+/// Common Rust entry point for open profiles, sessions and the persistent store.
+pub struct Engine {
+    paths: Paths,
+    config: WatchedConfig,
+    core: Core,
+}
+
+impl Engine {
+    pub fn open(paths: Paths) -> Result<Self> {
+        let config = ConfigStore::new(paths.config.clone()).watch()?;
+        let settings = config.updates().borrow().config.settings.clone();
+        Database::open(&paths.database)?;
+        let limits = Limits {
+            fetch_size: settings.fetch_size,
+            row_cap: settings.row_cap,
+            timeout_ms: settings.statement_timeout_ms,
+        };
+        let core = Core::new([Arc::new(Postgres) as Arc<dyn Driver>], limits)?;
+        Ok(Self {
+            paths,
+            config,
+            core,
+        })
+    }
+
+    pub fn config_updates(&self) -> watch::Receiver<ConfigUpdate> {
+        self.config.updates()
+    }
+    pub fn config_store(&self) -> ConfigStore {
+        ConfigStore::new(self.paths.config.clone())
+    }
+    pub fn core(&self) -> &Core {
+        &self.core
+    }
+
+    fn profile(&self, id: Uuid) -> Result<Profile> {
+        self.config
+            .updates()
+            .borrow()
+            .config
+            .connections
+            .iter()
+            .find(|profile| profile.id == id)
+            .cloned()
+            .ok_or_else(|| CoreError::config("Connection profile does not exist"))
+    }
+
+    pub async fn open_session(&self, id: Uuid, prompted: Option<Secret>) -> Result<Uuid> {
+        let profile = self.profile(id)?;
+        let (profile, secret) = resolve_secret(profile, prompted).await?;
+        self.core.open_session(&profile, &secret).await
+    }
+
+    pub async fn introspector(
+        &self,
+        id: Uuid,
+        prompted: Option<Secret>,
+    ) -> Result<Box<dyn Introspector>> {
+        let profile = self.profile(id)?;
+        let (profile, secret) = resolve_secret(profile, prompted).await?;
+        self.core.introspector(&profile, &secret).await
+    }
+
+    pub async fn history(&self, profile: Uuid, limit: u32) -> Result<Vec<HistoryEntry>> {
+        let path = self.paths.database.clone();
+        tokio::task::spawn_blocking(move || {
+            Database::open(&path)?.history(&profile.to_string(), limit)
+        })
+        .await
+        .map_err(background_error)?
+    }
+
+    pub async fn record_history(&self, entry: HistoryEntry) -> Result<()> {
+        let path = self.paths.database.clone();
+        tokio::task::spawn_blocking(move || Database::open(&path)?.record_history(&entry))
+            .await
+            .map_err(background_error)?
+    }
+}
+
+async fn resolve_secret(profile: Profile, prompted: Option<Secret>) -> Result<(Profile, Secret)> {
+    tokio::task::spawn_blocking(move || {
+        let secret = Keychain::resolve(&profile, prompted)?;
+        Ok((profile, secret))
+    })
+    .await
+    .map_err(background_error)?
+}
+
+fn background_error(_: tokio::task::JoinError) -> CoreError {
+    CoreError::Io {
+        message: "Local storage task failed".into(),
+    }
+}

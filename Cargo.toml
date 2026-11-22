@@ -12,9 +12,35 @@ axum = { version = "0.8.9", features = ["ws"] }
 serde = { version = "1", features = ["derive"] }
 tauri = "2.12.7"
 tauri-build = "2.7.6"
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tower-http = { version = "0.7.1", features = ["cors"] }
 strata-app = { path = "crates/strata-app" }
+
+
+async-trait = "0.1"
+async-stream = "0.3"
+deadpool-postgres = "0.14"
+directories = "6"
+futures-util = "0.3"
+notify = "8"
+keyring = { version = "3.6", features = ["windows-native", "apple-native", "sync-secret-service", "crypto-rust", "vendored"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8"
+sqlparser = { version = "0.64", default-features = false, features = ["std"] }
+tempfile = "3"
+thiserror = "2"
+tokio-postgres = "0.7.18"
+tokio-postgres-rustls = "0.14"
+tokio-util = "0.7"
+toml = "1"
+toml_edit = { version = "0.25", features = ["serde"] }
+uuid = { version = "1", features = ["serde", "v7"] }
+zeroize = "1"
+strata-sql = { path = "crates/strata-sql" }
+strata-core = { path = "crates/strata-core" }
+strata-store = { path = "crates/strata-store" }
+strata-driver-postgres = { path = "crates/strata-driver-postgres" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

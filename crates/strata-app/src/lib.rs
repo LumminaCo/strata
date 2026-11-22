@@ -72,6 +72,16 @@ impl AppService {
         }
     }
 
+    pub async fn has_open_transactions(&self) -> std::result::Result<bool, ErrorDto> {
+        let sessions = self.sessions.read().await;
+        for &id in sessions.keys() {
+            if self.engine.core().transaction_open(id).await? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     pub async fn dispatch(
         &self,
         command: Command,

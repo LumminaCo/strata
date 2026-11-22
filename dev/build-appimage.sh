@@ -17,6 +17,11 @@ printf '%s  %s\n' "$checksum" "$tool" | sha256sum -c -
 chmod +x "$tool"
 
 dpkg-deb --extract "$deb" "$appdir"
+# Match Tauri's AppImage bundle marker so the updater selects the AppImage asset
+# even though this executable was originally packaged for Debian.
+binary="$appdir/usr/bin/strata"
+grep -aFq '__TAURI_BUNDLE_TYPE_VAR_DEB' "$binary"
+LC_ALL=C sed -i 's/__TAURI_BUNDLE_TYPE_VAR_DEB/__TAURI_BUNDLE_TYPE_VAR_APP/g' "$binary"
 ln -s usr/share/applications/Strata.desktop "$appdir/Strata.desktop"
 ln -s usr/share/icons/hicolor/128x128/apps/strata.png "$appdir/strata.png"
 cat > "$appdir/AppRun" <<'RUN'

@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Copy,
   Database,
+  Download,
   ShieldCheck,
   History,
   Command as CommandIcon,
@@ -29,7 +30,13 @@ import type { ResultSet } from "@/components/result-grid";
 import { SqlEditor, type EditorHandle } from "@/components/sql-editor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
@@ -47,6 +54,7 @@ import { TableInspector, type Inspection } from "@/features/table-inspector";
 import { useCatalogSchema } from "@/features/use-catalog-schema";
 import { shortcuts, workspaceKeydown } from "@/features/keymap";
 import { useWorkspace } from "@/features/use-workspace";
+import { useAppUpdate } from "@/features/use-app-update";
 import type { Cell, Connection, RunMode } from "@/ipc/bindings/protocol";
 import { browserMode, dispatch, errorMessage } from "@/ipc/client";
 import strataLogo from "../../../dev/strata-logo.png";
@@ -62,6 +70,7 @@ function readTheme() {
 
 export function App() {
   const data = useWorkspace();
+  const update = useAppUpdate(data.saveWorkspace, data.setNotice);
   const { tab, profile, active } = data;
   const [theme, setTheme] = useState(readTheme);
   const [systemDark, setSystemDark] = useState(
@@ -141,6 +150,7 @@ export function App() {
     const native = getCurrentWindow();
     const unlisten = native.onCloseRequested((event) => {
       event.preventDefault();
+      if (update.installing.current) return;
       const close = () => {
         void windowState.current
           .close()
@@ -154,7 +164,7 @@ export function App() {
     return () => {
       void unlisten.then((dispose) => dispose()).catch(() => {});
     };
-  }, []);
+  }, [update.installing]);
 
   useLayoutEffect(() => {
     if (!data.settings) return;
@@ -358,6 +368,7 @@ export function App() {
           agentActivity ||
           settingsOpen ||
           closeWarning ||
+          update.status ||
           event.defaultPrevented
         )
           return;
@@ -423,6 +434,30 @@ export function App() {
           <span>Strata</span>
         </div>
         <div className="toolbar-actions">
+          {update.version ? (
+            <Button
+              variant="outline"
+              disabled={!data.workspace || !!update.status}
+              title={`Update to Strata ${update.version}`}
+              onClick={() => {
+                if (data.hasRunningJobs()) {
+                  data.setNotice(
+                    "A query is still running. Wait for it to finish, then click Update again.",
+                  );
+                } else if (data.hasOpenTransactions) {
+                  data.setNotice("Commit or roll back open transactions before updating Strata.");
+                } else {
+                  void update.install();
+                }
+              }}
+            >
+              <Download /> Update
+            </Button>
+          ) : update.checkFailed ? (
+            <Button variant="ghost" onClick={() => void update.retryCheck()}>
+              Check for updates
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             size="icon-sm"
@@ -1043,6 +1078,16 @@ export function App() {
         {active.transaction?.open && <span className="transaction-open">Transaction open</span>}
       </footer>
 
+      {update.status && (
+        <Dialog open>
+          <DialogContent showCloseButton={false}>
+            <DialogHeader>
+              <DialogTitle>Updating Strata</DialogTitle>
+              <DialogDescription role="status">{update.status}</DialogDescription>
+            </DialogHeader>
+          </DialogContent>
+        </Dialog>
+      )}
       {settingsOpen && data.settings && (
         <SettingsDialog
           initial={data.settings}

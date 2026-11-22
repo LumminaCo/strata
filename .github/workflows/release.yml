@@ -26,6 +26,8 @@ env:
   NODE_VERSION: 24.22.3
   TAURI_CLI_VERSION: 2.12.6
   VP_VERSION: 1.7.0
+  STRATA_RELEASE_REPOSITORY: ${{ vars.STRATA_RELEASE_REPOSITORY }}
+  STRATA_SIGNED_RELEASE: ${{ github.event_name == 'push' && vars.STRATA_RELEASE_REPOSITORY != '' && !contains(github.ref_name, '-') }}
 
 jobs:
   linux-and-windows-bundles:
@@ -57,7 +59,23 @@ jobs:
             HOST_UID=${{ env.STRATA_UID }}
             HOST_GID=${{ env.STRATA_GID }}
           cache-from: type=gha,scope=strata-dev
-      - run: ./x bundle-${{ matrix.platform }}
+      - name: Build bundle
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          STRATA_UPDATER_PUBLIC_KEY: ${{ vars.STRATA_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [[ "$STRATA_SIGNED_RELEASE" != true ]]; then
+            ./x "bundle-$PLATFORM"
+            exit
+          fi
+          python3 dev/update-release.py configure "$PLATFORM"
+          docker compose run --rm -T --no-deps \
+            -e STRATA_RELEASE_CONFIG=/workspace/.local/tauri-release.json \
+            -e STRATA_RELEASE_VERSION="${GITHUB_REF_NAME#v}" \
+            -e TAURI_SIGNING_PRIVATE_KEY -e TAURI_SIGNING_PRIVATE_KEY_PASSWORD \
+            dev just "bundle-$PLATFORM"
       - uses: actions/upload-artifact@v7
         with:
           name: strata-${{ matrix.platform }}-x64
@@ -216,12 +234,35 @@ jobs:
       - run: vp build
         working-directory: apps/desktop
       - run: cargo test --locked --workspace
-      - run: cargo tauri build --target aarch64-apple-darwin --bundles dmg -- --locked
-        working-directory: apps/desktop
+      - name: Build macOS bundle
+        env:
+          STRATA_UPDATER_PUBLIC_KEY: ${{ vars.STRATA_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          config=()
+          bundles=(dmg)
+          if [[ "$STRATA_SIGNED_RELEASE" == true ]]; then
+            python3 dev/update-release.py configure macos
+            config=(--config "$PWD/.local/tauri-release.json")
+            bundles+=(app)
+          else
+            unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+          fi
+          cd apps/desktop
+          cargo tauri build "${config[@]}" --target aarch64-apple-darwin --bundles "${bundles[@]}" -- --locked
+      - name: Collect macOS bundles
+        run: |
+          mkdir -p artifacts
+          bundle=target/aarch64-apple-darwin/release/bundle
+          cp "$bundle"/dmg/*.dmg artifacts/
+          if [[ "$STRATA_SIGNED_RELEASE" == true ]]; then
+            cp "$bundle"/macos/*.app.tar.gz "$bundle"/macos/*.app.tar.gz.sig artifacts/
+          fi
       - uses: actions/upload-artifact@v7
         with:
           name: strata-macos-arm64
-          path: target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          path: artifacts/
           if-no-files-found: error
 
   macos-native:
@@ -264,6 +305,27 @@ jobs:
           printf 'macOS installer bytes %s\n' "$(stat -f %z "$disk")" >> "$GITHUB_STEP_SUMMARY"
           python dev/benchmark-desktop.py "$binaries/strata" --pg-bin "$(brew --prefix postgresql@17)/bin" | tee macos-performance.jsonl
           cat macos-performance.jsonl >> "$GITHUB_STEP_SUMMARY"
+
+  publish-updates:
+    if: ${{ github.event_name == 'push' && vars.STRATA_RELEASE_REPOSITORY != '' && !contains(github.ref_name, '-') }}
+    needs: [linux-and-windows-bundles, windows-native, macos-native]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: strata-*-*64
+          merge-multiple: true
+          path: artifacts
+      - name: Publish signed bundles and update manifest
+        env:
+          GH_TOKEN: ${{ secrets.STRATA_RELEASE_TOKEN }}
+        run: |
+          visibility="$(gh api "repos/$STRATA_RELEASE_REPOSITORY" --jq .private)"
+          test "$visibility" = false
+          python3 dev/update-release.py manifest artifacts
+          gh release create "$GITHUB_REF_NAME" --repo "$STRATA_RELEASE_REPOSITORY" \
+            --title "Strata ${GITHUB_REF_NAME#v}" --latest artifacts/*
       - uses: actions/upload-artifact@v7
         with:
           name: strata-macos-performance

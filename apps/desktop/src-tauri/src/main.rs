@@ -1,12 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod benchmark;
+mod updater;
 
 use benchmark::{Benchmark, benchmark_sample};
 use serde_json::Value;
 use strata_app::{AppService, Command, ErrorDto, Health, RunEvent, RunRequest};
 use tauri::{State, ipc::Channel};
 use tokio_util::sync::CancellationToken;
+use updater::{AppActivity, PendingUpdate, check_update, install_update};
 
 #[tauri::command]
 fn health(app: State<'_, AppService>) -> Health {
@@ -14,16 +16,23 @@ fn health(app: State<'_, AppService>) -> Health {
 }
 
 #[tauri::command]
-async fn dispatch(app: State<'_, AppService>, request: Command) -> Result<Value, ErrorDto> {
+async fn dispatch(
+    app: State<'_, AppService>,
+    activity: State<'_, AppActivity>,
+    request: Command,
+) -> Result<Value, ErrorDto> {
+    let _operation = activity.begin_operation()?;
     app.dispatch(request, CancellationToken::new()).await
 }
 
 #[tauri::command]
 async fn run_query(
     app: State<'_, AppService>,
+    activity: State<'_, AppActivity>,
     request: RunRequest,
     channel: Channel<RunEvent>,
 ) -> Result<(), ErrorDto> {
+    let _operation = activity.begin_operation()?;
     app.run(request, |event| {
         std::future::ready(channel.send(event).is_ok())
     })
@@ -74,12 +83,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(benchmark)
         .manage(AppService::open(true)?)
+        .manage(AppActivity::default())
+        .manage(PendingUpdate::default())
         .invoke_handler(tauri::generate_handler![
             health,
             dispatch,
             run_query,
+            check_update,
+            install_update,
             benchmark_sample
         ])
         .run(tauri::generate_context!())?;

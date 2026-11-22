@@ -14,6 +14,7 @@ x-dev: &dev
   volumes:
     - .:/workspace:z
     - cargo:/cache/cargo
+    - postgres_trust:/opt/strata-pg-trust:ro
     - target:/workspace/target
     - bun:/cache/bun
     - go:/cache/go
@@ -77,6 +78,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - postgres_trust:/opt/strata-pg-trust
+    networks:
+      default:
+        aliases: [postgres-other-name]
     ports:
       - "127.0.0.1:${STRATA_PG_PORT:-15432}:5432"
     healthcheck:
@@ -148,6 +153,7 @@ services:
     healthcheck: *oracle-health
 
 volumes:
+  postgres_trust:
   cargo:
   target:
   bun:

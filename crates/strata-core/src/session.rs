@@ -53,12 +53,14 @@ struct Cursor {
     delivered: usize,
     capped: bool,
     affected: Option<u64>,
+    changes_context: bool,
 }
 
 struct SessionState {
     connection: Box<dyn DbConnection>,
     cursor: Option<Cursor>,
     previous: HashMap<Uuid, Cursor>,
+    resolution_path: Vec<String>,
     broken: bool,
     manual: bool,
     transaction_open: bool,
@@ -109,6 +111,7 @@ impl Core {
         connection
             .set_statement_timeout(self.limits.timeout_ms)
             .await?;
+        let resolution_path = connection.resolution_path().await?;
         let id = Uuid::now_v7();
         let dialect = match profile.kind {
             DbKind::Postgres => Dialect::Postgres,
@@ -122,6 +125,7 @@ impl Core {
                     connection,
                     cursor: None,
                     previous: HashMap::new(),
+                    resolution_path,
                     broken: false,
                     manual: false,
                     transaction_open: false,
@@ -206,6 +210,7 @@ impl Core {
             delivered: 0,
             capped: false,
             affected: None,
+            changes_context: statement.kind_hint == StmtClass::Session,
         });
         let read = self.read(&session, &mut state, cursor, count, cancellation);
         read.await
@@ -259,6 +264,14 @@ impl Core {
             )
             .await;
         *session.active.lock().await = None;
+        if result.as_ref().is_ok_and(|batch| batch.exhausted)
+            && state
+                .cursor
+                .as_ref()
+                .is_some_and(|cursor| cursor.changes_context)
+        {
+            state.resolution_path = state.connection.resolution_path().await?;
+        }
         if state.transaction_open
             && (result.is_err() || result.as_ref().is_ok_and(|batch| batch.capped))
         {
@@ -361,6 +374,11 @@ impl Core {
             ));
         }
         state.connection.server_info().await
+    }
+
+    pub async fn resolution_path(&self, session: Uuid) -> Result<Vec<String>> {
+        let session = self.session(session).await?;
+        Ok(session.state.lock().await.resolution_path.clone())
     }
 
     pub async fn clear_results(&self, session: Uuid) -> Result<()> {

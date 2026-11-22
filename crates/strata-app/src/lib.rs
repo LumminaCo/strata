@@ -1,6 +1,7 @@
 //! Commands shared by the desktop and browser development transports.
 
 mod engine;
+mod inspection;
 mod metadata;
 mod protocol;
 mod query;
@@ -19,6 +20,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub use engine::Engine;
+pub use inspection::{ObjectDetails, ResolvedObject};
 pub use metadata::{CatalogScope, CatalogSnapshot, Metadata};
 pub use protocol::*;
 
@@ -223,6 +225,36 @@ impl AppService {
                     .map(HistoryItem::from)
                     .collect::<Vec<_>>(),
             ),
+            Command::ResolveAt {
+                scope,
+                session_id,
+                text,
+                offset,
+            } => json(self.resolve_at(&scope, session_id, &text, offset).await?),
+            Command::ObjectDetails { scope, object } => {
+                json(self.object_details(&scope, &object).await?)
+            }
+            Command::ResolveObject { scope, reference } => {
+                let dialect = inspection::dialect(self.engine.profile(scope.connection_id)?.kind);
+                let object = self
+                    .metadata
+                    .catalog(&self.engine, &scope)
+                    .await?
+                    .resolve(&inspection::qualified(
+                        &[reference.schema, reference.name],
+                        dialect,
+                    ))
+                    .await?;
+                json(object)
+            }
+            Command::OpenInspectionSession { scope } => {
+                let mut profile = self.engine.profile(scope.connection_id)?;
+                profile.read_only = true;
+                if let Some(database) = scope.database {
+                    profile.database = database;
+                }
+                json(self.open_session(profile, scope.password, lifetime).await?)
+            }
             Command::WorkspaceLoad => {
                 let workspace = self.engine.workspace().await?;
                 let saved: Workspace = match workspace {

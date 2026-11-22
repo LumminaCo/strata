@@ -23,6 +23,14 @@ The base text size is 13 px, with 12 px secondary text. Use the 4 px spacing gri
 
 Use token-backed colors in feature code. Keep primitive imports inside the owned shadcn components. Use the environment color for the connection dot and badge. A production tab also adds an accent strip to the top of the window. Use the Messages tab for errors and database notices so the editor and results remain available.
 
+## M4 schema tab
+
+Open related tables from the References section or the sidebar. The current tab keeps its navigation history.
+
+![Strata M4 schema tab in light theme](screenshots/m4-light.png)
+
+![Strata M4 schema tab in dark theme](screenshots/m4-dark.png)
+
 ## M3 database explorer
 
 The explorer groups loaded objects by schema and kind. Filter the loaded tree in the sidebar or use Quick open to search across loaded connections.

@@ -36,10 +36,11 @@ import {
 } from "@/features/connections";
 import { CatalogExplorer, type CatalogEntry } from "@/features/catalog-explorer";
 import { CatalogPalette, DatabasePicker, QueryHistory } from "@/features/catalog-dialogs";
+import { TableInspector, type Inspection } from "@/features/table-inspector";
 import { useCatalogSchema } from "@/features/use-catalog-schema";
 import { shortcuts, workspaceKeydown } from "@/features/keymap";
 import { useWorkspace } from "@/features/use-workspace";
-import type { Connection, RunMode } from "@/ipc/bindings/protocol";
+import type { Cell, Connection, RunMode } from "@/ipc/bindings/protocol";
 import { browserMode, dispatch, errorMessage } from "@/ipc/client";
 
 const themes = ["system", "light", "dark"] as const;
@@ -65,6 +66,13 @@ export function App() {
   const [explorerOpen, setExplorerOpen] = useState(true);
   const [palette, setPalette] = useState(false);
   const [history, setHistory] = useState(false);
+  const [schemaTabs, setSchemaTabs] = useState<Inspection[]>([]);
+  const [schemaSelected, setSchemaSelected] = useState<string>();
+  const [pinnedByTab, setPinned] = useState<Record<string, Inspection[]>>({});
+  const [resolveTip, setResolveTip] = useState("");
+  const resolution = useRef(0);
+  const schemaActive = schemaTabs.find((item) => inspectionKey(item) === schemaSelected);
+  const pinned = tab ? (pinnedByTab[tab.id] ?? []) : [];
   const [entries, setEntries] = useState<CatalogEntry[]>([]);
   const defaultSchema = active.session?.schema ?? "public";
   const catalog = useCatalogSchema(profile, tab, data.catalogRevision, defaultSchema, data.scope);
@@ -75,6 +83,7 @@ export function App() {
   const dark = theme === "dark" || (theme === "system" && systemDark);
   const editorState = tab ? editors.current.get(tab.id) : undefined;
   const selected = active.selected ?? (active.messages.length ? "messages" : null);
+  const selectedInspection = pinned.find((item) => inspectionKey(item) === selected);
   const result = active.results.find((entry) => entry.id === selected);
   const showFilter = !!result && filterResult?.cursor === result.id;
 
@@ -98,11 +107,12 @@ export function App() {
   }
 
   function run(mode: RunMode) {
-    if (!editor.current || active.busy) return;
+    if (!editor.current || active.busy || schemaActive) return;
     void data.run({ text: editor.current.text(), target: editor.current.target(), mode });
   }
 
   function openTab(id: string, database?: string, text?: string) {
+    setSchemaSelected(undefined);
     const profile = data.profiles.find((entry) => entry.id === id);
     const existing = data.tabs.find(
       (item) =>
@@ -113,38 +123,123 @@ export function App() {
     else data.addTab(id, database, text);
   }
 
-  function openObject(entry: CatalogEntry) {
-    const identifier = (name: string) => `"${name.replaceAll('"', '""')}"`;
-    if (!entry.connection.id) return;
-    openTab(
-      entry.connection.id,
-      entry.database,
-      `SELECT * FROM ${identifier(entry.object.schema)}.${identifier(entry.object.name)};`,
+  function openObject(entry: Inspection) {
+    const key = inspectionKey(entry);
+    setSchemaTabs((items) =>
+      items.some((item) => inspectionKey(item) === key)
+        ? items.map((item) => (inspectionKey(item) === key ? entry : item))
+        : [...items, entry],
     );
+    setSchemaSelected(key);
     setPalette(false);
   }
 
   function closeTab(id: string) {
     data.closeTab(id);
     editors.current.delete(id);
+    setPinned((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
   }
 
-  async function openCell(item: ResultSet, row: number, column: number) {
-    const name = item.columns[column]?.name ?? "Value";
+  async function navigate(offset: number, full: boolean) {
+    if (!tab || !profile || !editor.current || schemaActive) return;
+    const request = ++resolution.current;
+    const text = editor.current.text();
+    setResolveTip("");
     try {
-      const value = await data.getCell(item, row, column);
-      let text = value === null ? "NULL" : String(value);
-      if (item.columns[column]?.kind === "json" && typeof value === "string") {
-        try {
-          text = JSON.stringify(JSON.parse(value), null, 2);
-        } catch {
-          /* Render the original value. */
-        }
+      const scope = await data.scope(profile, tab.database, true);
+      const object = await dispatch("resolve_at", {
+        scope,
+        text,
+        offset,
+        sessionId: active.session?.id,
+      });
+      if (resolution.current !== request) return;
+      if (!object) {
+        setResolveTip("No matching object in the search path.");
+        setTimeout(() => {
+          if (resolution.current === request) setResolveTip("");
+        }, 3000);
+        return;
       }
-      setValueView({ name, text });
+      const entry = {
+        connection: profile,
+        database: tab.database ?? profile.database,
+        object: object.object,
+        column: object.column ?? undefined,
+      };
+      if (full || ["function", "procedure"].includes(entry.object.kind)) {
+        openObject(entry);
+      } else {
+        const key = inspectionKey(entry);
+        setPinned((current) => ({
+          ...current,
+          [tab.id]: [
+            ...(current[tab.id] ?? []).filter((item) => inspectionKey(item) !== key),
+            entry,
+          ],
+        }));
+        data.setPanel(tab.id, key);
+      }
+    } catch (error) {
+      if (resolution.current !== request) return;
+      setResolveTip(errorMessage(error));
+      setTimeout(() => {
+        if (resolution.current === request) setResolveTip("");
+      }, 3000);
+    }
+  }
+
+  async function formatSql() {
+    const current = editor.current;
+    if (!current || !profile || schemaActive) return;
+    try {
+      const { format } = await import("sql-formatter");
+      if (editor.current !== current) return;
+      const sql = current.text();
+      const target = current.target();
+      const range = "selection" in target ? target.selection : undefined;
+      const language = {
+        postgres: "postgresql",
+        sqlserver: "transactsql",
+        oracle: "plsql",
+      } as const;
+      const result = format(range ? sql.slice(...range) : sql, {
+        language: language[profile.kind],
+        keywordCase: "upper",
+      });
+      current.replace(result, range);
     } catch (error) {
       data.setNotice(errorMessage(error));
     }
+  }
+
+  function showCell(name: string, value: Cell, kind?: string) {
+    let text = value === null ? "NULL" : String(value);
+    if (kind === "json" && typeof value === "string") {
+      try {
+        text = JSON.stringify(JSON.parse(value), null, 2);
+      } catch {
+        /* Render the original value. */
+      }
+    }
+    setValueView({ name, text });
+  }
+
+  async function openCell(item: ResultSet, row: number, column: number) {
+    try {
+      const meta = item.columns[column];
+      showCell(meta?.name ?? "Value", await data.getCell(item, row, column), meta?.kind);
+    } catch (error) {
+      data.setNotice(errorMessage(error));
+    }
+  }
+
+  function inspectionCredentials(entry: CatalogEntry) {
+    return data.scope(entry.connection, entry.database, true);
   }
 
   // Keep CodeMirror's undo history and selection while switching between tabs.
@@ -179,13 +274,31 @@ export function App() {
               if (profile?.id) data.addTab(profile.id);
             },
             closeTab: () => {
-              if (tab) closeTab(tab.id);
+              if (schemaSelected) {
+                setSchemaTabs((tabs) =>
+                  tabs.filter((item) => inspectionKey(item) !== schemaSelected),
+                );
+                setSchemaSelected(undefined);
+              } else if (tab) closeTab(tab.id);
             },
-            nextTab: () => data.moveTab(1),
-            previousTab: () => data.moveTab(-1),
+            nextTab: () => {
+              setSchemaSelected(undefined);
+              data.moveTab(1);
+            },
+            previousTab: () => {
+              setSchemaSelected(undefined);
+              data.moveTab(-1);
+            },
             palette: () => setPalette(true),
             history: () => setHistory(true),
             explorer: () => setExplorerOpen((open) => !open),
+            navigate: () => {
+              const target = editor.current?.target();
+              if (target)
+                void navigate("cursor" in target ? target.cursor : target.selection[0], false);
+            },
+            explain: () => run("explain"),
+            format: () => void formatSql(),
           },
           browserMode,
         );
@@ -316,12 +429,21 @@ export function App() {
                   .filter((value) => value.connectionId === item.connectionId)
                   .indexOf(item);
                 return (
-                  <div key={item.id} className="query-tab" data-active={tab?.id === item.id}>
+                  <div
+                    key={item.id}
+                    className="query-tab"
+                    data-active={!schemaActive && tab?.id === item.id}
+                  >
                     <Button
                       variant="ghost"
                       role="tab"
-                      aria-selected={tab?.id === item.id}
-                      onClick={() => data.selectTab(item.id)}
+                      aria-selected={!schemaActive && tab?.id === item.id}
+                      onClick={() => {
+                        resolution.current++;
+                        setResolveTip("");
+                        setSchemaSelected(undefined);
+                        data.selectTab(item.id);
+                      }}
                     >
                       <FileCode2 />
                       <span>
@@ -346,6 +468,34 @@ export function App() {
                   </div>
                 );
               })}
+              {schemaTabs.map((item) => {
+                const key = inspectionKey(item);
+                return (
+                  <div key={key} className="query-tab" data-active={schemaSelected === key}>
+                    <Button
+                      variant="ghost"
+                      role="tab"
+                      aria-selected={schemaSelected === key}
+                      onClick={() => setSchemaSelected(key)}
+                    >
+                      <Database /> {item.object.schema}.{item.object.name}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label={`Close schema tab ${item.object.name}`}
+                      onClick={() => {
+                        if (schemaSelected === key) setSchemaSelected(undefined);
+                        setSchemaTabs((tabs) =>
+                          tabs.filter((entry) => inspectionKey(entry) !== key),
+                        );
+                      }}
+                    >
+                      <X />
+                    </Button>
+                  </div>
+                );
+              })}
             </div>
             <Button
               size="icon-sm"
@@ -361,7 +511,18 @@ export function App() {
             </Button>
           </div>
 
-          {tab && state ? (
+          {schemaActive ? (
+            <section className="schema-workspace" aria-label="Schema tab">
+              <TableInspector
+                key={inspectionKey(schemaActive)}
+                subject={schemaActive}
+                theme={String(dark)}
+                full
+                credentials={inspectionCredentials}
+                onValue={showCell}
+              />
+            </section>
+          ) : tab && state ? (
             <>
               <div className="query-actions">
                 <Button
@@ -389,6 +550,22 @@ export function App() {
                   }
                 >
                   <Square /> Stop
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => run("explain")}
+                  title={shortcuts.explain}
+                  disabled={!profile || !!active.busy}
+                >
+                  Explain
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => void formatSql()}
+                  title={shortcuts.format}
+                  disabled={!profile}
+                >
+                  Format
                 </Button>
                 <div className="query-actions-end">
                   {profile?.id && (
@@ -426,9 +603,15 @@ export function App() {
                       savedState={state}
                       schema={catalog.completion}
                       defaultSchema={defaultSchema}
+                      onNavigate={(offset, full) => void navigate(offset, full)}
                       diagnostic={active.diagnostic}
                       onChange={(text) => data.editText(tab.id, text)}
                     />
+                    {resolveTip && (
+                      <div className="resolve-tip" role="status">
+                        {resolveTip}
+                      </div>
+                    )}
                   </section>
                 </ResizablePanel>
                 <ResizableHandle aria-label="Resize editor and results" />
@@ -461,6 +644,20 @@ export function App() {
                             Result {item.index + 1}
                           </Button>
                         ))}
+                        {pinned.map((item) => {
+                          const key = inspectionKey(item);
+                          return (
+                            <Button
+                              key={key}
+                              variant="ghost"
+                              role="tab"
+                              aria-selected={selected === key}
+                              onClick={() => data.setPanel(tab.id, key)}
+                            >
+                              {item.object.schema}.{item.object.name}
+                            </Button>
+                          );
+                        })}
                         <Button
                           variant="ghost"
                           role="tab"
@@ -526,7 +723,16 @@ export function App() {
                         </div>
                       )}
                     </div>
-                    {result ? (
+                    {selectedInspection ? (
+                      <TableInspector
+                        key={inspectionKey(selectedInspection) + (selectedInspection.column ?? "")}
+                        subject={selectedInspection}
+                        theme={String(dark)}
+                        credentials={inspectionCredentials}
+                        promote={openObject}
+                        onValue={showCell}
+                      />
+                    ) : result ? (
                       <ResultGrid
                         key={result.id}
                         result={result}
@@ -535,6 +741,7 @@ export function App() {
                         filter={showFilter ? filterResult.text : ""}
                         onMore={() => void data.fetchRows(result)}
                         onCell={(row, column) => void openCell(result, row, column)}
+                        readCell={(row, column) => data.getCell(result, row, column)}
                       />
                     ) : active.messages.length ? (
                       <div className="query-messages" role="log" aria-label="Query messages">
@@ -707,4 +914,14 @@ export function App() {
       )}
     </div>
   );
+}
+
+function inspectionKey(item: Inspection) {
+  return JSON.stringify([
+    item.connection.id,
+    item.database,
+    item.object.schema,
+    item.object.oid,
+    item.object.name,
+  ]);
 }

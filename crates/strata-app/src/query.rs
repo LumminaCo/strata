@@ -34,7 +34,7 @@ pub(crate) fn plan(
         } => {
             let sql = slice(text, start, end)?;
             let mut spans = split(sql, dialect, false);
-            if matches!(mode, RunMode::Statement) && spans.len() > 1 {
+            if matches!(mode, RunMode::Statement | RunMode::Explain) && spans.len() > 1 {
                 return Err(CoreError::config(
                     "Use Run script to run a selection containing multiple statements",
                 ));
@@ -45,14 +45,16 @@ pub(crate) fn plan(
             }
             spans
         }
-        Target::Cursor { cursor } if matches!(mode, RunMode::Statement) => {
+        Target::Cursor { cursor } if matches!(mode, RunMode::Statement | RunMode::Explain) => {
             statement_at(text, cursor, dialect, blank_lines)
                 .into_iter()
                 .collect()
         }
         Target::Cursor { .. } => split(text, dialect, false),
     };
-    let confirmation = if production && spans.iter().any(|span| span.kind_hint != StmtClass::Read) {
+    let confirmation = if matches!(mode, RunMode::Explain) {
+        None
+    } else if production && spans.iter().any(|span| span.kind_hint != StmtClass::Read) {
         Some("This SQL can change a production database.".into())
     } else if spans.iter().any(|span| {
         span.kind_hint != StmtClass::Read
@@ -134,7 +136,14 @@ impl AppService {
                 )
                 .await?;
                 let sql = slice(&request.text, span.start, span.end)?;
-                recorded_sql.push(strata_sql::history_sql(sql));
+                let explain;
+                let sql = if matches!(request.mode, RunMode::Explain) {
+                    explain = format!("EXPLAIN {sql}");
+                    &explain
+                } else {
+                    sql
+                };
+                recorded_sql.push(strata_sql::history_sql(sql).to_owned());
                 let fetched = stream_statement(
                     self.engine.core(),
                     Statement {
@@ -150,7 +159,7 @@ impl AppService {
                 .await?;
                 rows = rows.saturating_add(fetched);
                 statements += 1;
-                if span.kind_hint == StmtClass::Ddl {
+                if span.kind_hint == StmtClass::Ddl && !matches!(request.mode, RunMode::Explain) {
                     self.metadata
                         .invalidate(&self.engine, session.connection_id)
                         .await?;

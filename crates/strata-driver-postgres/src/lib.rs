@@ -227,6 +227,15 @@ impl DbConnection for PostgresConnection {
         self.client.is_closed()
     }
 
+    async fn resolution_path(&mut self) -> Result<Vec<String>> {
+        self.client
+            .query_one("SELECT pg_catalog.current_schemas(true)::text[]", &[])
+            .await
+            .map_err(query_error)?
+            .try_get(0)
+            .map_err(query_error)
+    }
+
     async fn server_info(&mut self) -> Result<ServerInfo> {
         let row = self.client.query_one(
             "SELECT version(), current_database()::text, current_schema()::text, current_user::text", &[]

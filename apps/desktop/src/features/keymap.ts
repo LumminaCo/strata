@@ -21,6 +21,9 @@ export const shortcuts = {
   palette: "Ctrl+K",
   history: "Ctrl+H",
   explorer: "Ctrl+B",
+  navigate: "F4",
+  explain: "Ctrl+Shift+E",
+  format: "Ctrl+Shift+F",
 };
 
 type Actions = Record<keyof typeof shortcuts | "nextTab" | "previousTab", () => void>;
@@ -32,6 +35,8 @@ export function workspaceKeydown(event: KeyboardEvent, actions: Actions, browser
   if (modifier) {
     if (key === "enter") action = event.shiftKey ? "script" : "run";
     if (key === ".") action = "stop";
+    if (event.shiftKey && key === "e") action = "explain";
+    if (event.shiftKey && key === "f") action = "format";
     if (key === "t") action = "newTab";
     if (key === "w") action = "closeTab";
     if (key === "k" || key === "p") action = "palette";
@@ -48,6 +53,7 @@ export function workspaceKeydown(event: KeyboardEvent, actions: Actions, browser
       if (key === "[") action = "previousTab";
     }
   }
+  if (key === "f4") action = "navigate";
   if (!action) return false;
   event.preventDefault();
   actions[action]();

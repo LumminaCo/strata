@@ -286,6 +286,9 @@ pub trait DbConnection: Send {
     async fn commit(&mut self) -> Result<()>;
     async fn rollback(&mut self) -> Result<()>;
     async fn server_info(&mut self) -> Result<ServerInfo>;
+    async fn resolution_path(&mut self) -> Result<Vec<String>> {
+        Ok(self.server_info().await?.schema.into_iter().collect())
+    }
     async fn ping(&mut self) -> Result<()>;
     fn is_closed(&self) -> bool;
 }
@@ -313,7 +316,7 @@ pub struct Object {
     pub comment: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize, TS)]
 pub struct TableColumn {
     pub name: String,
     pub db_type: String,
@@ -324,18 +327,26 @@ pub struct TableColumn {
     pub comment: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize, TS)]
 pub struct Definition {
     pub name: String,
     pub sql: String,
+    pub related: Option<ObjectReference>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+pub struct ObjectReference {
+    pub schema: String,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, TS)]
 pub struct TableDetail {
     pub columns: Vec<TableColumn>,
     pub constraints: Vec<Definition>,
     pub indexes: Vec<Definition>,
     pub referenced_by: Vec<Definition>,
+    #[ts(type = "number")]
     pub size_bytes: i64,
 }
 

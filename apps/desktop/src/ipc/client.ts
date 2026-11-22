@@ -2,6 +2,10 @@ import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 
 import type {
   CatalogScope,
+  Object as CatalogObject,
+  ObjectReference,
+  ObjectDetails,
+  ResolvedObject,
   CatalogSnapshot,
   HistoryItem,
   Cell,
@@ -35,6 +39,13 @@ interface Commands {
   catalog_snapshot: [{ scope: CatalogScope; schema: string }, CatalogSnapshot];
   refresh_metadata: [{ connectionId: string }, null];
   history_list: [{ connectionId: string; limit?: number }, HistoryItem[]];
+  resolve_at: [
+    { scope: CatalogScope; text: string; offset: number; sessionId?: string },
+    ResolvedObject | null,
+  ];
+  resolve_object: [{ scope: CatalogScope; reference: ObjectReference }, CatalogObject | null];
+  object_details: [{ scope: CatalogScope; object: CatalogObject }, ObjectDetails];
+  open_inspection_session: [{ scope: CatalogScope }, SessionInfo];
   workspace_load: [undefined, Workspace];
   workspace_save: [{ workspace: Workspace }, null];
 }

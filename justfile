@@ -40,6 +40,8 @@ seed:
 
 test-int:
     bash dev/test-int.sh
+    STRATA_IT=1 SSL_CERT_FILE=/opt/strata-pg-trust/ca.pem cargo test --locked -p strata-driver-postgres --test postgres -- --ignored
+    STRATA_IT=1 cargo test --locked -p strata-app --test engine -- --ignored
 
 bridge:
     mkdir -p artifacts

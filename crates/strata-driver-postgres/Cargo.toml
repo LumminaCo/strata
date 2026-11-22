@@ -6,3 +6,16 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+async-trait.workspace = true
+async-stream.workspace = true
+futures-util.workspace = true
+rustls.workspace = true
+rustls-native-certs.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
+tokio-postgres-rustls.workspace = true
+strata-core.workspace = true
+deadpool-postgres.workspace = true
+tokio-util.workspace = true

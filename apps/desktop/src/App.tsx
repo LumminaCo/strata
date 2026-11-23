@@ -1098,14 +1098,21 @@ export function App() {
       )}
       {settingsOpen && data.settings && (
         <SettingsDialog
-          initial={data.settings}
+          initial={{ ...data.settings, theme }}
+          profiles={data.profiles}
+          activeConnectionId={profile?.id}
           onClose={() => setSettingsOpen(false)}
           onSave={(settings) => {
             data.applySettings(settings);
             localStorage.setItem("strata.theme", settings.theme);
             setTheme(settings.theme);
-            setSettingsOpen(false);
           }}
+          onSaveConnection={(saved, password) => {
+            data.saveProfile(saved, password);
+          }}
+          onDeleteConnection={(id) => data.deleteProfile(id)}
+          onOpenConnection={(id) => openTab(id)}
+          onNotify={data.setNotice}
         />
       )}
       {closeWarning && (

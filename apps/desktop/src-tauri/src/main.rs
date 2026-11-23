@@ -74,6 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None => {}
     }
     let benchmark = Benchmark::open()?;
+    let context = tauri::generate_context!();
     let mut builder = tauri::Builder::default();
     if benchmark.enabled() {
         builder = builder.plugin(
@@ -82,8 +83,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .build(),
         );
     }
+    if updater::is_configured(context.config()) {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
     builder
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(benchmark)
         .manage(AppService::open(true)?)
         .manage(AppActivity::default())
@@ -96,6 +99,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             install_update,
             benchmark_sample
         ])
-        .run(tauri::generate_context!())?;
+        .run(context)?;
     Ok(())
 }

@@ -29,12 +29,17 @@ impl AppActivity {
 #[derive(Default)]
 pub struct PendingUpdate(Mutex<Option<Update>>);
 
+/// Returns whether the signed updater plugin configuration is present in `tauri.conf.json`.
+pub fn is_configured(config: &tauri::Config) -> bool {
+    config.plugins.0.contains_key("updater")
+}
+
 #[tauri::command]
 pub async fn check_update(
     handle: AppHandle,
     pending: State<'_, PendingUpdate>,
 ) -> Result<Option<String>, String> {
-    if !handle.config().plugins.0.contains_key("updater") {
+    if !is_configured(handle.config()) {
         return Ok(None);
     }
 
@@ -132,7 +137,25 @@ fn check_other_processes() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::AppActivity;
+    use serde_json::json;
+
+    use super::{AppActivity, is_configured};
+
+    #[test]
+    fn updater_configuration_tracks_plugin_presence() {
+        let unsigned = tauri::Config::default();
+        assert!(!is_configured(&unsigned));
+
+        let mut signed = tauri::Config::default();
+        signed.plugins.0.insert(
+            "updater".into(),
+            json!({
+                "pubkey": "test-key",
+                "endpoints": ["https://example.com/latest.json"]
+            }),
+        );
+        assert!(is_configured(&signed));
+    }
 
     #[test]
     fn installation_and_database_operations_are_mutually_exclusive() {

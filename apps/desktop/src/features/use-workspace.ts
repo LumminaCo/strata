@@ -20,7 +20,8 @@ import { dispatch, errorMessage, runQuery } from "@/ipc/client";
 
 interface Activity {
   session?: SessionInfo;
-  busy?: "Connecting" | "Running" | "Stopping" | "Fetching";
+  busy?: "Connecting" | "Running" | "Stopping" | "Fetching rows";
+  fetching?: string;
   results: ResultSet[];
   selected: string | null;
   messages: { level: string; text: string }[];
@@ -472,6 +473,7 @@ export function useWorkspace() {
       update(tab.id, (current) => ({
         ...current,
         busy: jobs.current.has(tab.id) ? "Stopping" : undefined,
+        fetching: jobs.current.has(tab.id) ? current.fetching : undefined,
         results: current.results.map((result) => ({ ...result, more: false })),
       }));
     }
@@ -486,15 +488,16 @@ export function useWorkspace() {
       stopping.current.has(tab.id)
     )
       return;
+    const tabId = tab.id;
     const sessionId = active.session.id;
     const job: Job = { sessionId, stopped: false };
-    jobs.current.set(tab.id, job);
-    update(tab.id, (current) => ({ ...current, busy: "Fetching" }));
+    jobs.current.set(tabId, job);
+    update(tabId, (current) => ({ ...current, busy: "Fetching rows", fetching: result.id }));
     try {
       do {
         const page = await dispatch("fetch_more", { sessionId, cursorId: result.id, count: 500 });
         if (job.stopped) break;
-        update(tab.id, (current) => {
+        update(tabId, (current) => {
           const next = withResult(current, result.id, (prior) => ({
             ...prior,
             rows: [...prior.rows, ...page.rows],
@@ -517,7 +520,7 @@ export function useWorkspace() {
             count: 500,
           });
           if (job.stopped) break;
-          update(tab.id, (current) => ({
+          update(tabId, (current) => ({
             ...current,
             results: [
               ...current.results,
@@ -541,17 +544,18 @@ export function useWorkspace() {
       } while (all && !job.stopped);
     } catch (error) {
       if (!job.stopped) {
-        update(tab.id, (current) =>
+        update(tabId, (current) =>
           withResult(current, result.id, (prior) => ({ ...prior, more: false })),
         );
-        appendMessage(tab.id, "error", errorMessage(error), true);
+        appendMessage(tabId, "error", errorMessage(error), true);
       }
     } finally {
-      if (jobs.current.get(tab.id) === job) {
-        jobs.current.delete(tab.id);
-        update(tab.id, (current) => ({
+      if (jobs.current.get(tabId) === job) {
+        jobs.current.delete(tabId);
+        update(tabId, (current) => ({
           ...current,
-          busy: stopping.current.has(tab.id) ? "Stopping" : undefined,
+          busy: stopping.current.has(tabId) ? "Stopping" : undefined,
+          fetching: undefined,
         }));
       }
     }

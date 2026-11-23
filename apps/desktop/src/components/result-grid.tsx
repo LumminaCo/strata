@@ -8,6 +8,7 @@ import {
   type Rectangle,
 } from "@glideapps/glide-data-grid";
 import "@glideapps/glide-data-grid/dist/index.css";
+import { LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
@@ -30,6 +31,7 @@ export function ResultGrid({
   result,
   themeVersion,
   canFetch,
+  fetching = false,
   onMore,
   onCell,
   readCell,
@@ -38,6 +40,7 @@ export function ResultGrid({
   result: ResultSet;
   themeVersion: string;
   canFetch: boolean;
+  fetching?: boolean;
   onMore: () => void;
   onCell: (row: number, column: number) => void;
   readCell?: (row: number, column: number) => Promise<Cell>;
@@ -181,7 +184,9 @@ export function ResultGrid({
       className="grid-container"
       title={nativeType}
       aria-label="Query results"
+      aria-busy={fetching || undefined}
       data-row-count={rows}
+      data-fetching={fetching}
     >
       <DataEditor
         ref={editor}
@@ -235,6 +240,12 @@ export function ResultGrid({
             <NativeSelectOption value="markdown">Markdown</NativeSelectOption>
           </NativeSelect>
           {copyError && <span role="alert">{copyError}</span>}
+        </div>
+      )}
+      {fetching && (
+        <div className="grid-fetching" role="status" aria-live="polite">
+          <LoaderCircle className="grid-fetching-icon" aria-hidden="true" />
+          <span>Fetching rows…</span>
         </div>
       )}
       {sort && <span className="grid-note">Fetched rows sorted locally</span>}

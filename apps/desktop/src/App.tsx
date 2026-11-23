@@ -122,6 +122,7 @@ export function App() {
   const selected = active.selected ?? (active.messages.length ? "messages" : null);
   const selectedInspection = pinned.find((item) => inspectionKey(item) === selected);
   const result = active.results.find((entry) => entry.id === selected);
+  const fetchingResult = !!result && active.fetching === result.id;
   const showFilter = !!result && filterResult?.cursor === result.id;
 
   useEffect(() => {
@@ -991,6 +992,7 @@ export function App() {
                         result={result}
                         themeVersion={String(dark)}
                         canFetch={result.more && !active.busy}
+                        fetching={fetchingResult}
                         filter={showFilter ? filterResult.text : ""}
                         onMore={() => void data.fetchRows(result)}
                         onCell={(row, column) => void openCell(result, row, column)}
@@ -1070,7 +1072,13 @@ export function App() {
         {result && (
           <span data-testid="result-count">
             {result.rows.length.toLocaleString()} rows
-            {result.more ? " · more available" : result.capped ? " · row cap reached" : ""}
+            {fetchingResult
+              ? " · fetching rows…"
+              : result.more
+                ? " · more available"
+                : result.capped
+                  ? " · row cap reached"
+                  : ""}
           </span>
         )}
         {active.elapsed !== undefined && <span>{active.elapsed} ms</span>}

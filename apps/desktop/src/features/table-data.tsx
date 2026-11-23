@@ -35,6 +35,7 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
   const [applied, setApplied] = useState({ filter: "", order: "", version: 0 });
   const [result, setResult] = useState<ResultSet>();
   const [busy, setBusy] = useState(true);
+  const [fetching, setFetching] = useState(false);
   const [error, setError] = useState("");
   const [count, setCount] = useState<Cell>();
   const session = useRef<string | undefined>(undefined);
@@ -50,6 +51,7 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
     session.current = undefined;
     running.current = true;
     setBusy(true);
+    setFetching(false);
     setError("");
     setResult(undefined);
     let id: string | undefined;
@@ -141,6 +143,7 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
     if (running.current || !result?.more || !sessionId) return;
     running.current = true;
     setBusy(true);
+    setFetching(true);
     try {
       const page = await dispatch("fetch_more", { sessionId, cursorId: result.id, count: 500 });
       if (session.current !== sessionId || lifetime.current?.signal.aborted) return;
@@ -154,11 +157,14 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
           },
       );
     } catch (error) {
-      setError(errorMessage(error));
+      if (session.current === sessionId && !lifetime.current?.signal.aborted) {
+        setError(errorMessage(error));
+      }
     } finally {
       if (session.current === sessionId && !lifetime.current?.signal.aborted) {
         running.current = false;
         setBusy(false);
+        setFetching(false);
       }
     }
   }
@@ -249,6 +255,7 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
         <ResultGrid
           result={result}
           canFetch={result.more && !busy && !error}
+          fetching={fetching}
           filter=""
           themeVersion={theme}
           onMore={() => void fetchRows()}
@@ -257,13 +264,16 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
       ) : (
         <div className="results-empty">{busy ? "Loading table data…" : "No data to display."}</div>
       )}
-      <div className="table-data-status">
-        {result?.rows.length ?? 0} loaded
-        {count !== undefined
-          ? ` · ${String(count)} total`
-          : entry.object.rows !== null
-            ? ` · ${entry.object.rows} estimated`
-            : ""}
+      <div className="table-data-status" role="status">
+        <span>
+          {result?.rows.length ?? 0} loaded
+          {count !== undefined
+            ? ` · ${String(count)} total`
+            : entry.object.rows !== null
+              ? ` · ${entry.object.rows} estimated`
+              : ""}
+          {fetching ? " · Fetching rows…" : ""}
+        </span>
         {result?.more && (
           <Button variant="ghost" size="xs" disabled={busy} onClick={() => void fetchRows()}>
             Fetch more

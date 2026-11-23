@@ -4763,7 +4763,7 @@ checksum = "ff7589a1859b09232522bb9edf076ca7fcf14ded96685d3fa629db73023ffbb7"
 
 [[package]]
 name = "strata"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rmcp",
  "serde_json",
@@ -4780,7 +4780,7 @@ dependencies = [
 
 [[package]]
 name = "strata-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "percent-encoding",
  "serde",
@@ -4801,7 +4801,7 @@ dependencies = [
 
 [[package]]
 name = "strata-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -4817,7 +4817,7 @@ dependencies = [
 
 [[package]]
 name = "strata-devserver"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "serde",
@@ -4832,7 +4832,7 @@ dependencies = [
 
 [[package]]
 name = "strata-driver-mssql"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4848,7 +4848,7 @@ dependencies = [
 
 [[package]]
 name = "strata-driver-oracle"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4863,7 +4863,7 @@ dependencies = [
 
 [[package]]
 name = "strata-driver-postgres"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4880,7 +4880,7 @@ dependencies = [
 
 [[package]]
 name = "strata-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rmcp",
  "serde",
@@ -4895,14 +4895,14 @@ dependencies = [
 
 [[package]]
 name = "strata-sql"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "sqlparser",
 ]
 
 [[package]]
 name = "strata-store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "directories",
  "keyring",

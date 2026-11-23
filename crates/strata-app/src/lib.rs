@@ -114,6 +114,11 @@ impl AppService {
             }
             Command::TestConnection { profile, password } => {
                 let profile = self.candidate(profile)?;
+                let password = if profile.secret == "keychain" {
+                    password.filter(|value| !value.is_empty())
+                } else {
+                    password
+                };
                 let started = Instant::now();
                 let id = self
                     .engine
@@ -447,6 +452,8 @@ impl AppService {
         let previous = input.id.map(|id| self.engine.profile(id)).transpose()?;
         let profile = self.candidate(input)?;
         let store = self.engine.config_store();
+        let keychain = self.keychain;
+        let password = password.filter(|value| !value.is_empty());
         tokio::task::spawn_blocking(move || {
             if store
                 .load()?
@@ -475,8 +482,9 @@ impl AppService {
                 }
                 return Err(error);
             }
-            if let Some(previous) =
-                previous.filter(|old| old.secret == "keychain" && profile.secret != "keychain")
+            if keychain
+                && let Some(previous) =
+                    previous.filter(|old| old.secret == "keychain" && profile.secret != "keychain")
             {
                 Keychain::delete(&previous)?;
             }
@@ -890,5 +898,91 @@ fn decode<T: serde::de::DeserializeOwned>(value: &str) -> Result<T> {
 fn join_error(_: tokio::task::JoinError) -> CoreError {
     CoreError::Io {
         message: "Local storage task failed".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_connection(secret: &str) -> Connection {
+        Connection {
+            id: None,
+            name: "Local DB".into(),
+            kind: DbKind::Postgres,
+            env: Environment::Dev,
+            color: None,
+            folder: None,
+            host: "127.0.0.1".into(),
+            port: 5432,
+            database: "postgres".into(),
+            user: "postgres".into(),
+            secret: secret.into(),
+            read_only: false,
+            agent_access: AgentAccess::None,
+            allow_agent_ddl: false,
+            options: None,
+            tls: TlsMode::Prefer,
+        }
+    }
+
+    #[tokio::test]
+    async fn save_connection_requires_non_empty_password_for_new_keychain_profile() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app = AppService::at(Paths::under(dir.path().into()), true).expect("open app");
+
+        let error = app
+            .dispatch(
+                Command::SaveConnection {
+                    profile: sample_connection("keychain"),
+                    password: Some(String::new()),
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("empty password must be rejected for new keychain profile");
+        assert_eq!(error.kind, "config");
+        assert!(error.message.contains("OS keychain"));
+    }
+
+    #[tokio::test]
+    async fn save_connection_in_browser_mode_can_switch_existing_keychain_profile_to_prompt() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::under(dir.path().into());
+        let id = Uuid::now_v7();
+        std::fs::write(
+            &paths.config,
+            format!(
+                r#"
+version = 1
+
+[[connection]]
+id = "{id}"
+name = "Local DB"
+kind = "postgres"
+host = "127.0.0.1"
+port = 5432
+database = "postgres"
+user = "postgres"
+secret = "keychain"
+"#
+            ),
+        )
+        .expect("write config");
+
+        let app = AppService::at(paths, false).expect("open app");
+        let mut updated = sample_connection("prompt");
+        updated.id = Some(id);
+        let saved = app
+            .dispatch(
+                Command::SaveConnection {
+                    profile: updated,
+                    password: None,
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect("switch to prompt without touching OS keychain");
+        assert_eq!(saved["secret"], "prompt");
     }
 }

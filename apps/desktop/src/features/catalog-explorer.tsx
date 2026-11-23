@@ -212,8 +212,8 @@ export function CatalogExplorer({
   latest.current = load;
   useEffect(() => {
     for (const node of loads.current.values()) {
-      if (profiles.some((connection) => connection.id === node.connection.id))
-        void latest.current(node, false);
+      const current = profiles.find((connection) => connection.id === node.connection.id);
+      if (current) void latest.current({ ...node, connection: current }, false);
     }
   }, [revision, profiles]);
 

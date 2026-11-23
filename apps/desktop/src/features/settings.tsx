@@ -3,10 +3,12 @@ import {
   Check,
   Copy,
   Database,
+  Download,
   FileCode2,
   Keyboard,
   Pencil,
   Plus,
+  RefreshCw,
   RotateCcw,
   Search,
   ShieldCheck,
@@ -26,6 +28,7 @@ import { Switch } from "@/components/ui/switch";
 import { ConnectionForm, emptyConnection } from "@/features/connections";
 import { shortcuts } from "@/features/keymap";
 import { playQuerySound, primeQuerySound } from "@/features/query-sound";
+import type { UpdateCheckState } from "@/features/use-app-update";
 import type { Connection, Settings } from "@/ipc/bindings/protocol";
 import { browserMode, dispatch, errorMessage } from "@/ipc/client";
 
@@ -422,6 +425,41 @@ export function formatEndpoint(connection: Connection): string {
   return `${authPrefix}${connection.host}:${connection.port}/${connection.database}`;
 }
 
+export interface SettingsUpdateProps {
+  version: string | null;
+  checking: boolean;
+  checkState: UpdateCheckState;
+  checkError: string;
+  status: string;
+  canInstall: boolean;
+  onCheck: () => Promise<void>;
+  onInstall: () => string | null;
+}
+
+export function describeUpdateStatus(
+  update: Pick<SettingsUpdateProps, "version" | "checking" | "checkState" | "status">,
+): string {
+  if (update.status) return update.status;
+  if (update.version) return `Strata ${update.version} is ready to install.`;
+  if (update.checking) return "Checking for a newer version of Strata…";
+  if (update.checkState === "up-to-date") return "Strata is up to date.";
+  return "Check for newer signed releases of Strata.";
+}
+
+export function matchesUpdateQuery(query: string): boolean {
+  return matchesQuery(
+    query,
+    "Updates",
+    "Application updates",
+    "Check for updates",
+    "Check for newer signed releases of Strata",
+    "version",
+    "release",
+    "upgrade",
+    "install",
+  );
+}
+
 export interface SettingsDialogProps {
   initial: Settings;
   profiles: Connection[];
@@ -432,6 +470,7 @@ export interface SettingsDialogProps {
   onDeleteConnection: (id: string) => Promise<void>;
   onOpenConnection: (id: string) => void;
   onNotify?: (message: string) => void;
+  update?: SettingsUpdateProps;
 }
 
 export function SettingsDialog({
@@ -444,6 +483,7 @@ export function SettingsDialog({
   onDeleteConnection,
   onOpenConnection,
   onNotify,
+  update,
 }: SettingsDialogProps) {
   const [section, setSection] = useState<SectionId>("general");
   const [query, setQuery] = useState("");
@@ -919,9 +959,63 @@ export function SettingsDialog({
     ));
   }
 
+  function renderUpdatesSection() {
+    if (browserMode || !update) return null;
+    return (
+      <section className="settings-section">
+        <h3>Updates</h3>
+        <div className="settings-card">
+          <div className="settings-row">
+            <div className="settings-row-info">
+              <span className="settings-row-title">Application updates</span>
+              <p className="settings-row-desc" role="status" aria-live="polite">
+                {describeUpdateStatus(update)}
+              </p>
+              {update.checkState === "error" && update.checkError && (
+                <p className="settings-row-error" role="alert">
+                  {update.checkError}
+                </p>
+              )}
+            </div>
+            <div className="settings-row-control">
+              {update.version ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={!update.canInstall || !!update.status}
+                  onClick={() => {
+                    const blocked = update.onInstall();
+                    if (blocked) setSaveError(blocked);
+                  }}
+                >
+                  <Download /> Update to {update.version}
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={update.checking || !!update.status}
+                  onClick={() => {
+                    setSaveError("");
+                    void update.onCheck();
+                  }}
+                >
+                  <RefreshCw className={update.checking ? "update-check-spin" : undefined} />
+                  {update.checking ? "Checking…" : "Check for updates"}
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   function renderSearchResults() {
+    const updateMatches = !browserMode && Boolean(update) && matchesUpdateQuery(query);
     const hasAny =
       matchingSettings.length > 0 ||
+      updateMatches ||
       matchingConnections.length > 0 ||
       matchingKeybindings.length > 0;
 
@@ -944,6 +1038,7 @@ export function SettingsDialog({
     return (
       <>
         {matchingSettings.length > 0 && renderSettingsGroups(matchingSettings)}
+        {updateMatches && renderUpdatesSection()}
         {matchingConnections.length > 0 && (
           <section className="settings-section">
             <div className="settings-section-heading">
@@ -1124,9 +1219,12 @@ export function SettingsDialog({
               {isSearching ? (
                 renderSearchResults()
               ) : section === "general" ? (
-                renderSettingsGroups(
-                  settingDefinitions.filter((item) => item.section === "general"),
-                )
+                <>
+                  {renderSettingsGroups(
+                    settingDefinitions.filter((item) => item.section === "general"),
+                  )}
+                  {renderUpdatesSection()}
+                </>
               ) : section === "query" ? (
                 renderSettingsGroups(settingDefinitions.filter((item) => item.section === "query"))
               ) : section === "agents" ? (

@@ -16,6 +16,7 @@ import {
   Moon,
   Play,
   Plus,
+  RefreshCw,
   Search,
   Settings2,
   Square,
@@ -384,6 +385,22 @@ export function App() {
     return data.scope(entry.connection, entry.database, true);
   }
 
+  function installUpdate(): string | null {
+    if (data.hasRunningJobs()) {
+      const message = "A query is still running. Wait for it to finish, then click Update again.";
+      data.setNotice(message);
+      return message;
+    }
+    if (data.hasOpenTransactions) {
+      const message = "Commit or roll back open transactions before updating Strata.";
+      data.setNotice(message);
+      return message;
+    }
+    setSettingsOpen(false);
+    void update.install();
+    return null;
+  }
+
   // Keep CodeMirror's undo history and selection while switching between tabs.
   let state = editorState;
   if (tab && !state) {
@@ -472,30 +489,28 @@ export function App() {
           <span>Strata</span>
         </div>
         <div className="toolbar-actions">
-          {update.version ? (
-            <Button
-              variant="outline"
-              disabled={!data.workspace || !!update.status}
-              title={`Update to Strata ${update.version}`}
-              onClick={() => {
-                if (data.hasRunningJobs()) {
-                  data.setNotice(
-                    "A query is still running. Wait for it to finish, then click Update again.",
-                  );
-                } else if (data.hasOpenTransactions) {
-                  data.setNotice("Commit or roll back open transactions before updating Strata.");
-                } else {
-                  void update.install();
-                }
-              }}
-            >
-              <Download /> Update
-            </Button>
-          ) : update.checkFailed ? (
-            <Button variant="ghost" onClick={() => void update.retryCheck()}>
-              Check for updates
-            </Button>
-          ) : null}
+          {!browserMode &&
+            (update.version ? (
+              <Button
+                variant="outline"
+                disabled={!data.workspace || !!update.status}
+                title={`Update to Strata ${update.version}`}
+                onClick={installUpdate}
+              >
+                <Download /> Update
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                title={update.checking ? "Checking for updates…" : "Check for updates"}
+                aria-label={update.checking ? "Checking for updates" : "Check for updates"}
+                disabled={update.checking || !!update.status}
+                onClick={() => void update.check()}
+              >
+                <RefreshCw className={update.checking ? "update-check-spin" : undefined} />
+              </Button>
+            ))}
           <Button
             variant="ghost"
             size="icon-sm"
@@ -1173,6 +1188,20 @@ export function App() {
           onDeleteConnection={(id) => data.deleteProfile(id)}
           onOpenConnection={(id) => openTab(id)}
           onNotify={data.setNotice}
+          update={
+            browserMode
+              ? undefined
+              : {
+                  version: update.version,
+                  checking: update.checking,
+                  checkState: update.checkState,
+                  checkError: update.checkError,
+                  status: update.status,
+                  canInstall: !!data.workspace,
+                  onCheck: update.check,
+                  onInstall: installUpdate,
+                }
+          }
         />
       )}
       {closeWarning && (

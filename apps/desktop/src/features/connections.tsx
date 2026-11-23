@@ -28,6 +28,19 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import type { Connection, DriverOptions } from "@/ipc/bindings/protocol";
 import { browserMode, dispatch, errorMessage } from "@/ipc/client";
 
+export function defaultConnectionSecret(isBrowserMode = browserMode): Connection["secret"] {
+  return isBrowserMode ? "prompt" : "keychain";
+}
+
+export function secretAfterUrlPaste(
+  currentSecret: Connection["secret"],
+  parsedPassword: string | null,
+  isBrowserMode = browserMode,
+): Connection["secret"] {
+  if (parsedPassword === null) return currentSecret;
+  return defaultConnectionSecret(isBrowserMode);
+}
+
 export const emptyConnection: Connection = {
   id: null,
   name: "",
@@ -37,7 +50,7 @@ export const emptyConnection: Connection = {
   port: 5432,
   database: "postgres",
   user: "",
-  secret: "prompt",
+  secret: defaultConnectionSecret(),
   readOnly: false,
   agentAccess: "none",
   allowAgentDdl: false,
@@ -133,14 +146,22 @@ export function ConnectionForm({
   function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void action(async () => {
-      const saved = await dispatch("save_connection", { profile: connection(), password });
-      onSave(saved, source === "prompt" ? password : undefined);
+      const submittedPassword = source === "keychain" || source === "prompt" ? password : undefined;
+      const saved = await dispatch("save_connection", {
+        profile: connection(),
+        password: submittedPassword,
+      });
+      onSave(saved, source === "prompt" ? submittedPassword : undefined);
     });
   }
 
   function test() {
     void action(async () => {
-      const result = await dispatch("test_connection", { profile: connection(), password });
+      const submittedPassword = source === "keychain" || source === "prompt" ? password : undefined;
+      const result = await dispatch("test_connection", {
+        profile: connection(),
+        password: submittedPassword,
+      });
       setFeedback({ text: `${result.version} · ${result.elapsedMs} ms` });
     });
   }
@@ -156,9 +177,9 @@ export function ConnectionForm({
         ...current,
         ...details,
         name: current.name || details.database || details.host,
-        ...(parsedPassword === null ? {} : { secret: "prompt" }),
+        secret: secretAfterUrlPaste(current.secret, parsedPassword),
       }));
-      if (parsedPassword !== null) setPassword(parsedPassword);
+      if (parsedPassword !== null) setPassword(parsedPassword || undefined);
       setUrl("");
     });
   }
@@ -377,13 +398,13 @@ export function ConnectionForm({
                       ? { ...options, auth: chosen === "windows" ? "windows" : null }
                       : current.options,
                 }));
-                setPassword(undefined);
+                if (chosen === "env" || chosen === "windows") setPassword(undefined);
               }}
             >
-              <NativeSelectOption value="prompt">Prompt for password</NativeSelectOption>
               {!browserMode && (
                 <NativeSelectOption value="keychain">OS keychain</NativeSelectOption>
               )}
+              <NativeSelectOption value="prompt">Prompt for password</NativeSelectOption>
               <NativeSelectOption value="env">Environment variable</NativeSelectOption>
               {profile.kind === "sqlserver" &&
                 !browserMode &&
@@ -404,18 +425,24 @@ export function ConnectionForm({
             </Field>
           ) : (
             !windowsAuth && (
-              <Field name="connection-password" label="Password">
+              <Field
+                name="connection-password"
+                label={source === "prompt" ? "Password (session only)" : "Password"}
+              >
                 <Input
                   id="connection-password"
                   type="password"
                   autoComplete="off"
+                  required={source === "keychain" && !(initial.secret === "keychain" && initial.id)}
                   value={password ?? ""}
                   placeholder={
-                    initial.secret === "keychain" && initial.id
-                      ? "Keep saved password"
-                      : "Enter to test or open"
+                    source === "keychain"
+                      ? initial.secret === "keychain" && initial.id
+                        ? "Keep saved password"
+                        : "Saved in OS keychain"
+                      : "Not saved — for this session"
                   }
-                  onChange={(event) => setPassword(event.target.value)}
+                  onChange={(event) => setPassword(event.target.value || undefined)}
                 />
               </Field>
             )
@@ -611,14 +638,17 @@ function Field({ name, label, children }: { name: string; label: string; childre
 
 export function PasswordDialog({
   name,
+  canSave = !browserMode,
   onClose,
   onSubmit,
 }: {
   name: string;
+  canSave?: boolean;
   onClose: () => void;
-  onSubmit: (password: string) => void;
+  onSubmit: (password: string, saveToKeychain: boolean) => void;
 }) {
   const [password, setPassword] = useState("");
+  const [saveToKeychain, setSaveToKeychain] = useState(false);
   return (
     <Dialog
       open
@@ -629,13 +659,17 @@ export function PasswordDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Connect to {name}</DialogTitle>
-          <DialogDescription>Enter the database password for this session.</DialogDescription>
+          <DialogDescription>
+            {saveToKeychain
+              ? "Enter the database password to connect and save it in the OS keychain."
+              : "Enter the database password for this session."}
+          </DialogDescription>
         </DialogHeader>
         <form
           className="connection-form"
           onSubmit={(event) => {
             event.preventDefault();
-            onSubmit(password);
+            onSubmit(password, canSave && saveToKeychain);
           }}
         >
           <Field name="session-password" label="Password">
@@ -643,10 +677,21 @@ export function PasswordDialog({
               id="session-password"
               type="password"
               autoComplete="off"
+              required={canSave && saveToKeychain}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
             />
           </Field>
+          {canSave && (
+            <Label className="read-only-field">
+              <input
+                type="checkbox"
+                checked={saveToKeychain}
+                onChange={(event) => setSaveToKeychain(event.target.checked)}
+              />
+              Save password in OS keychain
+            </Label>
+          )}
           <DialogFooter>
             <Button type="submit">Connect</Button>
           </DialogFooter>

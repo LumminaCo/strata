@@ -44,7 +44,12 @@ interface Query {
 }
 
 type Modal =
-  | { kind: "password"; name: string; submit: (password: string) => void; cancel?: () => void }
+  | {
+      kind: "password";
+      name: string;
+      submit: (password: string, saveToKeychain: boolean) => void;
+      cancel?: () => void;
+    }
   | { kind: "query"; name: string; reason: string; sql: string; submit: () => void };
 
 const idle: Activity = { results: [], selected: null, messages: [] };
@@ -362,12 +367,32 @@ export function useWorkspace() {
     }));
   }
 
+  async function persistPromptPassword(connection: Connection, password: string) {
+    if (!connection.id || !password) return false;
+    try {
+      const saved = await dispatch("save_connection", {
+        profile: { ...connection, secret: "keychain" },
+        password,
+      });
+      if (!saved.id) return false;
+      passwords.current.delete(saved.id);
+      setProfiles((current) =>
+        current.map((existing) => (existing.id === saved.id ? saved : existing)),
+      );
+      return true;
+    } catch (error) {
+      setNotice(errorMessage(error));
+      return false;
+    }
+  }
+
   async function execute(
     item: SavedTab,
     connection: Connection,
     query?: Query,
     confirmed = false,
     password?: string,
+    savePassword = false,
   ) {
     if (!connection.id || jobs.current.has(item.id) || stopping.current.has(item.id)) return;
     const existing = sessions.current.get(item.id);
@@ -381,9 +406,9 @@ export function useWorkspace() {
       setModal({
         kind: "password",
         name: connection.name,
-        submit: (value) => {
+        submit: (value, saveToKeychain) => {
           setModal(undefined);
-          void execute(item, connection, query, confirmed, value);
+          void execute(item, connection, query, confirmed, value, saveToKeychain);
         },
       });
       return;
@@ -410,8 +435,10 @@ export function useWorkspace() {
       }
       job.sessionId = session.id;
       sessions.current.set(item.id, session);
-      if (connection.secret === "prompt" && credential !== undefined)
+      if (connection.secret === "prompt" && credential !== undefined) {
         passwords.current.set(connection.id, credential);
+        if (savePassword) void persistPromptPassword(connection, credential);
+      }
       update(item.id, (current) =>
         query
           ? {
@@ -684,10 +711,31 @@ export function useWorkspace() {
         kind: "password",
         name: connection.name,
         cancel: () => reject(new Error("Enter a password to browse this connection.")),
-        submit(value) {
+        submit(value, saveToKeychain) {
           setModal(undefined);
-          passwords.current.set(connectionId, value);
-          resolve({ connectionId, database: database ?? null, password: value });
+          if (!saveToKeychain || !value) {
+            passwords.current.set(connectionId, value);
+            resolve({ connectionId, database: database ?? null, password: value });
+            return;
+          }
+          void (async () => {
+            try {
+              await dispatch("test_connection", {
+                profile: { ...connection, database: database ?? connection.database },
+                password: value,
+              });
+            } catch (error) {
+              reject(error);
+              return;
+            }
+            passwords.current.set(connectionId, value);
+            const saved = await persistPromptPassword(connection, value);
+            resolve({
+              connectionId,
+              database: database ?? null,
+              password: saved ? null : value,
+            });
+          })();
         },
       });
     });

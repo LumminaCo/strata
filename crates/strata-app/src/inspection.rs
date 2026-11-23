@@ -24,6 +24,7 @@ impl AppService {
         &self,
         scope: &CatalogScope,
         session_id: Option<Uuid>,
+        schema: Option<&str>,
         text: &str,
         offset: u32,
     ) -> Result<Option<ResolvedObject>> {
@@ -39,26 +40,31 @@ impl AppService {
         }
         let catalog = self.metadata.catalog(&self.engine, &target).await?;
         let mut object = None;
-        if let [name] = parts.as_slice()
-            && let Some(id) = session_id
-            && self
-                .session(id)
-                .await
-                .is_ok_and(|session| session.connection_id == target.connection_id)
-        {
-            for schema in self
-                .engine
-                .core()
-                .resolution_path(id)
-                .await
-                .unwrap_or_default()
+        if let [name] = parts.as_slice() {
+            if let Some(id) = session_id
+                && self
+                    .session(id)
+                    .await
+                    .is_ok_and(|session| session.connection_id == target.connection_id)
             {
-                object = catalog
-                    .resolve(&qualified(&[&schema, name], dialect))
-                    .await?;
-                if object.is_some() {
-                    break;
+                for schema in self
+                    .engine
+                    .core()
+                    .resolution_path(id)
+                    .await
+                    .unwrap_or_default()
+                {
+                    object = catalog
+                        .resolve(&qualified(&[&schema, name], dialect))
+                        .await?;
+                    if object.is_some() {
+                        break;
+                    }
                 }
+            } else if let Some(schema) = schema.map(str::trim).filter(|value| !value.is_empty()) {
+                object = catalog
+                    .resolve(&qualified(&[schema, name], dialect))
+                    .await?;
             }
         }
         if object.is_none() {

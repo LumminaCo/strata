@@ -62,6 +62,9 @@ pub struct SavedTab {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub database: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub schema: Option<String>,
     pub text: String,
 }
 
@@ -202,6 +205,10 @@ pub enum RunEvent {
         manual: bool,
         open: bool,
     },
+    SessionContext {
+        database: String,
+        schema: Option<String>,
+    },
     CatalogChanged {
         connection_id: Uuid,
     },
@@ -287,6 +294,8 @@ pub enum Command {
     OpenSession {
         connection_id: Uuid,
         database: Option<String>,
+        #[serde(default)]
+        schema: Option<String>,
         password: Option<String>,
     },
     CloseSession {
@@ -304,6 +313,10 @@ pub enum Command {
     SetDbmsOutput {
         session_id: Uuid,
         enabled: bool,
+    },
+    SetSchema {
+        session_id: Uuid,
+        schema: String,
     },
     NextResult {
         session_id: Uuid,
@@ -343,6 +356,8 @@ pub enum Command {
     ResolveAt {
         scope: crate::CatalogScope,
         session_id: Option<Uuid>,
+        #[serde(default)]
+        schema: Option<String>,
         text: String,
         offset: u32,
     },

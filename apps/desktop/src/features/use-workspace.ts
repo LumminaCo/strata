@@ -121,12 +121,12 @@ export function useWorkspace() {
     setWorkspace((current) => current && { ...current, activeTab: id });
   }
 
-  function addTab(connectionId: string, database?: string, text = "") {
+  function addTab(connectionId: string, database?: string, text = "", schema?: string) {
     if (!workspace || workspace.tabs.length >= 100) {
       setNotice("Close a tab before opening another.");
       return;
     }
-    const newTab = { id: crypto.randomUUID(), connectionId, database, text };
+    const newTab: SavedTab = { id: crypto.randomUUID(), connectionId, database, schema, text };
     setWorkspace((current) => current && { tabs: [...current.tabs, newTab], activeTab: newTab.id });
   }
 
@@ -186,7 +186,8 @@ export function useWorkspace() {
   function saveProfile(value: Connection, password?: string) {
     if (!value.id) return;
     const id = value.id;
-    const alreadyExists = profiles.some((existing) => existing.id === id);
+    const previous = profiles.find((existing) => existing.id === id);
+    const alreadyExists = !!previous;
     passwords.current.delete(id);
     setCatalogRevision((value) => value + 1);
     if (password !== undefined) passwords.current.set(id, password);
@@ -196,6 +197,17 @@ export function useWorkspace() {
         : [...current, value],
     );
     if (alreadyExists) {
+      if (previous.kind !== value.kind || previous.database !== value.database) {
+        setWorkspace(
+          (current) =>
+            current && {
+              ...current,
+              tabs: current.tabs.map((item) =>
+                item.connectionId === id ? { ...item, schema: undefined } : item,
+              ),
+            },
+        );
+      }
       for (const item of tabs.filter((item) => item.connectionId === id)) {
         closeSession(item.id);
         jobs.current.delete(item.id);
@@ -224,6 +236,7 @@ export function useWorkspace() {
 
   function receive(
     id: string,
+    kind: Connection["kind"],
     query: Query,
     event: RunEvent,
     spans: Map<number, [number, number]>,
@@ -299,6 +312,29 @@ export function useWorkspace() {
           transaction: { manual: event.manual, open: event.open },
         }));
         break;
+      case "sessionContext":
+        update(id, (current) => {
+          if (!current.session) return current;
+          const session = {
+            ...current.session,
+            database: event.database,
+            schema: event.schema,
+          };
+          sessions.current.set(id, session);
+          return { ...current, session };
+        });
+        if (kind !== "sqlserver") {
+          setWorkspace(
+            (current) =>
+              current && {
+                ...current,
+                tabs: current.tabs.map((item) =>
+                  item.id === id ? { ...item, schema: event.schema ?? undefined } : item,
+                ),
+              },
+          );
+        }
+        break;
       case "catalogChanged":
         setCatalogRevision((value) => value + 1);
         break;
@@ -365,6 +401,7 @@ export function useWorkspace() {
         (await dispatch("open_session", {
           connectionId: connection.id,
           database: item.database,
+          schema: connection.kind === "sqlserver" ? undefined : item.schema,
           password: credential,
         }));
       if (job.stopped) {
@@ -393,7 +430,8 @@ export function useWorkspace() {
         await runQuery(
           { ...query, runId: job.runId, sessionId: session.id, confirmed },
           (event) => {
-            if (jobs.current.get(item.id) === job) receive(item.id, query, event, spans);
+            if (jobs.current.get(item.id) === job)
+              receive(item.id, connection.kind, query, event, spans);
           },
         );
       }
@@ -668,10 +706,68 @@ export function useWorkspace() {
       (current) =>
         current && {
           ...current,
-          tabs: current.tabs.map((item) => (item.id === id ? { ...item, database } : item)),
+          tabs: current.tabs.map((item) =>
+            item.id === id ? { ...item, database, schema: undefined } : item,
+          ),
         },
     );
     setCatalogRevision((value) => value + 1);
+  }
+
+  async function setSchema(id: string, schema: string) {
+    if (jobs.current.has(id) || stopping.current.has(id)) return;
+    const currentTab = tabs.find((item) => item.id === id);
+    const currentProfile = profiles.find((item) => item.id === currentTab?.connectionId);
+    if (!currentTab || !currentProfile || currentProfile.kind === "sqlserver") return;
+    const existing = sessions.current.get(id);
+    if (!existing) {
+      setWorkspace(
+        (current) =>
+          current && {
+            ...current,
+            tabs: current.tabs.map((item) => (item.id === id ? { ...item, schema } : item)),
+          },
+      );
+      return;
+    }
+    const job: Job = { stopped: false, sessionId: existing.id };
+    jobs.current.set(id, job);
+    try {
+      const applied = await dispatch("set_schema", { sessionId: existing.id, schema });
+      if (job.stopped || jobs.current.get(id) !== job) return;
+      const nextSchema = applied ?? schema;
+      const nextSession = { ...existing, schema: nextSchema };
+      sessions.current.set(id, nextSession);
+      update(id, (current) => ({
+        ...current,
+        session: current.session?.id === existing.id ? nextSession : current.session,
+        results: current.results.map((result) => ({ ...result, more: false })),
+      }));
+      setWorkspace(
+        (current) =>
+          current && {
+            ...current,
+            tabs: current.tabs.map((item) =>
+              item.id === id ? { ...item, schema: nextSchema } : item,
+            ),
+          },
+      );
+    } catch (error) {
+      if (job.stopped || jobs.current.get(id) !== job) return;
+      const message = errorMessage(error);
+      if (
+        message.includes("Session does not exist") ||
+        message.includes("disconnected") ||
+        message.includes("Oracle bridge") ||
+        message.includes("connection closed")
+      ) {
+        closeSession(id);
+        update(id, (current) => ({ ...current, session: undefined }));
+      }
+      setNotice(message);
+    } finally {
+      if (jobs.current.get(id) === job) jobs.current.delete(id);
+    }
   }
 
   return {
@@ -694,6 +790,7 @@ export function useWorkspace() {
     scope,
     dismissModal,
     setDatabase,
+    setSchema,
     invalidateCatalog: () => setCatalogRevision((value) => value + 1),
     workspace,
     tabs,

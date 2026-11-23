@@ -33,7 +33,10 @@ interface Commands {
   test_connection: [{ profile: Connection; password?: string }, SessionInfo];
   delete_connection: [{ id: string }, null];
   parse_connection_url: [{ url: string }, ParsedUrl];
-  open_session: [{ connectionId: string; database?: string; password?: string }, SessionInfo];
+  open_session: [
+    { connectionId: string; database?: string; schema?: string; password?: string },
+    SessionInfo,
+  ];
   close_session: [{ sessionId: string }, null];
   stop: [{ sessionId: string; runId?: string }, null];
   plan_query: [
@@ -42,6 +45,7 @@ interface Commands {
   ];
   fetch_more: [{ sessionId: string; cursorId: string; count: number }, Page];
   set_dbms_output: [{ sessionId: string; enabled: boolean }, null];
+  set_schema: [{ sessionId: string; schema: string }, string | null];
   next_result: [{ sessionId: string; cursorId: string; count: number }, NextResult];
   get_cell: [{ sessionId: string; cursorId: string; row: number; column: number }, Cell];
   list_databases: [{ scope: CatalogScope }, string[]];
@@ -50,7 +54,7 @@ interface Commands {
   refresh_metadata: [{ connectionId: string }, null];
   history_list: [{ connectionId: string; limit?: number }, HistoryItem[]];
   resolve_at: [
-    { scope: CatalogScope; text: string; offset: number; sessionId?: string },
+    { scope: CatalogScope; text: string; offset: number; sessionId?: string; schema?: string },
     ResolvedObject | null,
   ];
   resolve_object: [{ scope: CatalogScope; reference: ObjectReference }, CatalogObject | null];

@@ -16,6 +16,14 @@ func TestHandshakeAndErrorFrames(t *testing.T) {
 	if reply.ID != 43 || reply.Error == nil || reply.Error.Code != "connect" {
 		t.Fatalf("invalid missing-session error: %+v", reply)
 	}
+	b.connections[7] = &connection{}
+	for _, bad := range []string{"", "   ", `bad"name`, "bad\x00name"} {
+		payload, _ := json.Marshal(map[string]any{"conn_id": 7, "schema": bad})
+		reply = b.handle(request{ID: 44, Method: "set_schema", Params: payload})
+		if reply.Error == nil || reply.Error.Code != "config" {
+			t.Fatalf("expected config error for schema %q: %+v", bad, reply)
+		}
+	}
 }
 
 func TestWireValuesPreservePrecisionAndOffset(t *testing.T) {

@@ -471,6 +471,25 @@ impl Core {
         state.connection.set_explain(enabled).await
     }
 
+    pub async fn set_schema(&self, session: Uuid, schema: &str) -> Result<Option<String>> {
+        let schema = schema.trim();
+        if schema.is_empty() {
+            return Err(CoreError::config("Schema name cannot be empty"));
+        }
+        let session = self.session(session).await?;
+        let mut state = session.state.lock().await;
+        session.ensure_open(&state)?;
+        if state.transaction_open {
+            return Err(CoreError::config(
+                "Commit or roll back the open transaction first",
+            ));
+        }
+        state.discard().await?;
+        state.connection.set_schema(schema).await?;
+        state.resolution_path = state.connection.resolution_path().await?;
+        Ok(state.connection.server_info().await?.schema)
+    }
+
     pub async fn resolution_path(&self, session: Uuid) -> Result<Vec<String>> {
         let session = self.session(session).await?;
         Ok(session.state.lock().await.resolution_path.clone())
@@ -687,5 +706,169 @@ fn preview_cell(cell: &Cell, kind: Option<CellKind>) -> Cell {
             Cell::Text(format!("{}…", &text[..offset]))
         }
         other => other.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{CancelHandle, DriverOptions, Environment, ServerInfo, Tls};
+    use async_trait::async_trait;
+    use futures_util::stream;
+
+    struct FakeDriver {
+        kind: DbKind,
+        supports_schema: bool,
+    }
+
+    struct FakeConnection {
+        schema: String,
+        supports_schema: bool,
+    }
+
+    #[async_trait]
+    impl Driver for FakeDriver {
+        fn kind(&self) -> DbKind {
+            self.kind
+        }
+
+        async fn connect(
+            &self,
+            _profile: &Profile,
+            _secret: &Secret,
+        ) -> Result<Box<dyn DbConnection>> {
+            Ok(Box::new(FakeConnection {
+                schema: "public".into(),
+                supports_schema: self.supports_schema,
+            }))
+        }
+
+        async fn introspector(
+            &self,
+            _profile: &Profile,
+            _secret: &Secret,
+        ) -> Result<Box<dyn Introspector>> {
+            Err(CoreError::config("unused"))
+        }
+    }
+
+    #[async_trait]
+    impl DbConnection for FakeConnection {
+        async fn execute(&mut self, _sql: &str, _cancel: CancellationToken) -> Result<ExecStream> {
+            Ok(Box::pin(stream::empty()))
+        }
+
+        fn cancel_handle(&self) -> CancelHandle {
+            Arc::new(|| Box::pin(async { Ok(()) }))
+        }
+
+        async fn set_read_only(&mut self, _on: bool) -> Result<()> {
+            Ok(())
+        }
+        async fn set_statement_timeout(&mut self, _milliseconds: u32) -> Result<()> {
+            Ok(())
+        }
+        async fn begin(&mut self) -> Result<()> {
+            Ok(())
+        }
+        async fn commit(&mut self) -> Result<()> {
+            Ok(())
+        }
+        async fn rollback(&mut self) -> Result<()> {
+            Ok(())
+        }
+        async fn server_info(&mut self) -> Result<ServerInfo> {
+            Ok(ServerInfo {
+                version: "Fake 1".into(),
+                database: "db".into(),
+                schema: Some(self.schema.clone()),
+                user: "user".into(),
+            })
+        }
+        async fn set_schema(&mut self, schema: &str) -> Result<()> {
+            if !self.supports_schema {
+                return Err(CoreError::config(
+                    "This database does not support changing the session schema",
+                ));
+            }
+            self.schema = schema.into();
+            Ok(())
+        }
+        async fn ping(&mut self) -> Result<()> {
+            Ok(())
+        }
+        fn is_closed(&self) -> bool {
+            false
+        }
+    }
+
+    fn test_profile(kind: DbKind) -> Profile {
+        Profile {
+            id: Uuid::now_v7(),
+            name: "test".into(),
+            kind,
+            env: Environment::Dev,
+            color: None,
+            folder: None,
+            host: "localhost".into(),
+            port: 5432,
+            database: "db".into(),
+            user: "user".into(),
+            secret: "prompt".into(),
+            read_only: true,
+            agent_access: crate::AgentAccess::None,
+            allow_agent_ddl: false,
+            tls: Tls::default(),
+            options: DriverOptions::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn set_schema_updates_resolution_path_and_guards_transactions() {
+        let core = Core::new(
+            [
+                Arc::new(FakeDriver {
+                    kind: DbKind::Postgres,
+                    supports_schema: true,
+                }) as Arc<dyn Driver>,
+                Arc::new(FakeDriver {
+                    kind: DbKind::SqlServer,
+                    supports_schema: false,
+                }) as Arc<dyn Driver>,
+            ],
+            Limits::default(),
+        )
+        .unwrap();
+        let secret = Secret::new("secret".into());
+
+        // Works even on a read-only profile and updates resolution_path.
+        let pg = core
+            .open_session(&test_profile(DbKind::Postgres), &secret)
+            .await
+            .unwrap();
+        assert_eq!(core.resolution_path(pg).await.unwrap(), ["public"]);
+        let applied = core.set_schema(pg, "  analytics  ").await.unwrap();
+        assert_eq!(applied.as_deref(), Some("analytics"));
+        assert_eq!(core.resolution_path(pg).await.unwrap(), ["analytics"]);
+
+        // Rejects empty schema names.
+        assert!(core.set_schema(pg, "   ").await.is_err());
+
+        // Rejects while a manual transaction is open.
+        core.set_manual_transactions(pg, true).await.unwrap();
+        core.run(pg, "SELECT 1").await.unwrap();
+        assert!(core.set_schema(pg, "other").await.is_err());
+        core.rollback(pg).await.unwrap();
+        assert_eq!(
+            core.set_schema(pg, "other").await.unwrap().as_deref(),
+            Some("other")
+        );
+
+        // Unsupported drivers return a config error.
+        let mssql = core
+            .open_session(&test_profile(DbKind::SqlServer), &secret)
+            .await
+            .unwrap();
+        assert!(core.set_schema(mssql, "sales").await.is_err());
     }
 }

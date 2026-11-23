@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { Database, Layers } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -207,23 +208,110 @@ export function DatabasePicker({
   const [databases, setDatabases] = useState<string[]>();
   const [error, setError] = useState("");
   return (
-    <NativeSelect
-      aria-label="Tab database"
-      size="sm"
-      value={selected}
-      disabled={disabled}
-      title={error || "Change database for this tab"}
-      onFocus={() => {
-        if (!databases)
-          void load().then(setDatabases, (error: unknown) => setError(errorMessage(error)));
-      }}
-      onChange={(event) => onChange(event.target.value)}
-    >
-      {[...new Set([selected, ...(databases ?? [])])].map((database) => (
-        <NativeSelectOption key={database} value={database}>
-          {database}
-        </NativeSelectOption>
-      ))}
-    </NativeSelect>
+    <div className="toolbar-picker">
+      <Database aria-hidden="true" />
+      <NativeSelect
+        aria-label="Tab database"
+        size="sm"
+        value={selected}
+        disabled={disabled}
+        title={error || "Change database for this tab"}
+        onFocus={() => {
+          if (!databases)
+            void load().then(setDatabases, (error: unknown) => setError(errorMessage(error)));
+        }}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {[...new Set([selected, ...(databases ?? [])])].map((database) => (
+          <NativeSelectOption key={database} value={database}>
+            {database}
+          </NativeSelectOption>
+        ))}
+      </NativeSelect>
+    </div>
+  );
+}
+
+export function SchemaPicker({
+  selected,
+  load,
+  onChange,
+  disabled,
+}: {
+  selected: string;
+  load: () => Promise<string[]>;
+  onChange: (schema: string) => void;
+  disabled: boolean;
+}) {
+  const [schemas, setSchemas] = useState<string[]>();
+  const [error, setError] = useState("");
+  const loading = useRef(false);
+  const latest = useRef(load);
+  latest.current = load;
+
+  function fetchSchemas() {
+    if (loading.current) return;
+    loading.current = true;
+    void latest
+      .current()
+      .then(
+        (items) => {
+          setSchemas(items);
+          setError("");
+        },
+        (err: unknown) => setError(errorMessage(err)),
+      )
+      .finally(() => {
+        loading.current = false;
+      });
+  }
+
+  useEffect(() => {
+    let current = true;
+    loading.current = true;
+    void latest
+      .current()
+      .then(
+        (items) => {
+          if (current) {
+            setSchemas(items);
+            setError("");
+          }
+        },
+        (err: unknown) => {
+          if (current) setError(errorMessage(err));
+        },
+      )
+      .finally(() => {
+        if (current) loading.current = false;
+      });
+    return () => {
+      current = false;
+      loading.current = false;
+    };
+  }, []);
+
+  const options = [...new Set([selected, ...(schemas ?? [])].filter(Boolean))];
+  return (
+    <div className="toolbar-picker">
+      <Layers aria-hidden="true" />
+      <NativeSelect
+        aria-label="Default schema"
+        size="sm"
+        value={selected}
+        disabled={disabled}
+        title={error || "Change default schema for this tab"}
+        onFocus={() => {
+          if (!schemas) fetchSchemas();
+        }}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {options.map((schema) => (
+          <NativeSelectOption key={schema} value={schema}>
+            {schema}
+          </NativeSelectOption>
+        ))}
+      </NativeSelect>
+    </div>
   );
 }

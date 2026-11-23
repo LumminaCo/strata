@@ -293,6 +293,11 @@ pub trait DbConnection: Send {
     async fn resolution_path(&mut self) -> Result<Vec<String>> {
         Ok(self.server_info().await?.schema.into_iter().collect())
     }
+    async fn set_schema(&mut self, _schema: &str) -> Result<()> {
+        Err(CoreError::config(
+            "This database does not support changing the session schema",
+        ))
+    }
     async fn set_dbms_output(&mut self, _enabled: bool) -> Result<()> {
         Err(CoreError::config("DBMS_OUTPUT requires Oracle"))
     }

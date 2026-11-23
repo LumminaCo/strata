@@ -181,6 +181,19 @@ impl AppService {
                     rows = rows.saturating_add(fetched);
                 }
                 statements += 1;
+                if span.kind_hint == StmtClass::Session
+                    && !matches!(request.mode, RunMode::Explain)
+                    && let Ok(info) = self.engine.core().server_info(request.session_id).await
+                {
+                    send(
+                        &emit,
+                        RunEvent::SessionContext {
+                            database: info.database,
+                            schema: info.schema,
+                        },
+                    )
+                    .await?;
+                }
                 if span.kind_hint == StmtClass::Ddl && !matches!(request.mode, RunMode::Explain) {
                     self.metadata
                         .invalidate(&self.engine, session.connection_id)

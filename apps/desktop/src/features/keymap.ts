@@ -28,6 +28,18 @@ export const shortcuts = {
   saveSql: "Ctrl+S",
 };
 
+// Webview shortcuts that reload the app or open devtools; blocked in production builds.
+export function isBrowserShortcut(event: KeyboardEvent) {
+  const key = event.key.toLowerCase();
+  const modifier = event.ctrlKey || event.metaKey;
+  return (
+    key === "f5" ||
+    key === "f12" ||
+    (modifier && key === "r") ||
+    (modifier && event.shiftKey && (key === "i" || key === "j" || key === "c"))
+  );
+}
+
 type Actions = Record<keyof typeof shortcuts | "nextTab" | "previousTab", () => void>;
 
 export function workspaceKeydown(event: KeyboardEvent, actions: Actions, browserMode: boolean) {

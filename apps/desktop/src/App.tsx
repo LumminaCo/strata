@@ -1,4 +1,4 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, UserAttentionType } from "@tauri-apps/api/window";
 import type { EditorState } from "@codemirror/state";
 import {
   Cable,
@@ -56,6 +56,12 @@ import {
   SchemaPicker,
 } from "@/features/catalog-dialogs";
 import { SettingsDialog } from "@/features/settings";
+import {
+  QueryNotificationStack,
+  appendQueryToast,
+  type QueryCompletion,
+} from "@/features/query-notifications";
+import { playQuerySound, primeQuerySound } from "@/features/query-sound";
 import { TableInspector, type Inspection } from "@/features/table-inspector";
 import { useCatalogSchema } from "@/features/use-catalog-schema";
 import { shortcuts, workspaceKeydown } from "@/features/keymap";
@@ -75,7 +81,28 @@ function readTheme() {
 }
 
 export function App() {
-  const data = useWorkspace();
+  const [queryToasts, setQueryToasts] = useState<QueryCompletion[]>([]);
+  const notificationPrefs = useRef({ toast: true, sound: true });
+  const data = useWorkspace({
+    onQueryComplete(completion) {
+      const { toast, sound } = notificationPrefs.current;
+      if (toast) {
+        setQueryToasts((current) => appendQueryToast(current, completion));
+      }
+      if (sound) {
+        playQuerySound(completion.status);
+      }
+      if ((toast || sound) && !browserMode && !document.hasFocus()) {
+        void getCurrentWindow()
+          .requestUserAttention(UserAttentionType.Informational)
+          .catch(() => {});
+      }
+    },
+  });
+  notificationPrefs.current = {
+    toast: data.settings?.notify_on_query_complete ?? true,
+    sound: data.settings?.notify_sound ?? true,
+  };
   const update = useAppUpdate(data.saveWorkspace, data.setNotice);
   const { tab, profile, active } = data;
   const [theme, setTheme] = useState(readTheme);
@@ -191,6 +218,7 @@ export function App() {
 
   function run(mode: RunMode) {
     if (!editor.current || active.busy || schemaActive) return;
+    if (notificationPrefs.current.sound) primeQuerySound();
     void data.run({ text: editor.current.text(), target: editor.current.target(), mode });
   }
 
@@ -224,6 +252,7 @@ export function App() {
     }
     data.closeTab(id);
     editors.current.delete(id);
+    setQueryToasts((current) => current.filter((item) => item.tabId !== id));
     setPinned((current) => {
       const next = { ...current };
       delete next[id];
@@ -1061,19 +1090,21 @@ export function App() {
         </main>
       </div>
 
-      {data.notice && (
-        <div className="workspace-notice" role="alert">
-          {data.notice}
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label="Dismiss notification"
-            onClick={() => data.setNotice("")}
-          >
-            <X />
-          </Button>
-        </div>
-      )}
+      <QueryNotificationStack
+        notifications={queryToasts}
+        activeTabId={schemaActive ? null : tab?.id}
+        notice={data.notice}
+        onDismissNotice={() => data.setNotice("")}
+        onDismissNotification={(id) =>
+          setQueryToasts((current) => current.filter((item) => item.id !== id))
+        }
+        onViewTab={(tabId) => {
+          resolution.current++;
+          setResolveTip("");
+          setSchemaSelected(undefined);
+          data.selectTab(tabId);
+        }}
+      />
       <footer className="status-bar" role="status">
         <span
           className="status-dot"

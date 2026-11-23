@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { loadResultGrid } from "@/components/load-result-grid";
 import type { ResultSet } from "@/components/result-grid";
 import type { EditorDiagnostic } from "@/components/sql-editor";
+import type { QueryCompletion } from "@/features/query-notifications";
 import type {
   CatalogScope,
   Cell,
@@ -54,7 +55,11 @@ type Modal =
 
 const idle: Activity = { results: [], selected: null, messages: [] };
 
-export function useWorkspace() {
+export interface UseWorkspaceOptions {
+  onQueryComplete?: (completion: QueryCompletion) => void;
+}
+
+export function useWorkspace(options?: UseWorkspaceOptions) {
   const [profiles, setProfiles] = useState<Connection[]>([]);
   const [workspace, setWorkspace] = useState<Workspace>();
   const [activities, setActivities] = useState<Record<string, Activity>>({});
@@ -71,6 +76,9 @@ export function useWorkspace() {
   const saved = useRef<Workspace | undefined>(undefined);
   const saves = useRef<Promise<unknown>>(Promise.resolve());
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const tabsRef = useRef<SavedTab[]>([]);
+  const onQueryCompleteRef = useRef(options?.onQueryComplete);
+  onQueryCompleteRef.current = options?.onQueryComplete;
 
   const queueSave = useCallback((snapshot: Workspace) => {
     const save = saves.current
@@ -118,6 +126,7 @@ export function useWorkspace() {
   }, [queueSave, workspace]);
 
   const tabs = workspace?.tabs ?? [];
+  tabsRef.current = tabs;
   const tab = tabs.find((value) => value.id === workspace?.activeTab);
   const profile = profiles.find((value) => value.id === tab?.connectionId);
   const active = tab ? (activities[tab.id] ?? idle) : idle;
@@ -418,6 +427,13 @@ export function useWorkspace() {
       sessionId: existing?.id,
       runId: query ? crypto.randomUUID() : undefined,
     };
+    const startedAt = performance.now();
+    const resolveTabLabel = () => {
+      const siblingIndex = tabsRef.current
+        .filter((value) => value.connectionId === item.connectionId)
+        .findIndex((value) => value.id === item.id);
+      return siblingIndex > 0 ? `${connection.name} ${siblingIndex + 1}` : connection.name;
+    };
     jobs.current.set(item.id, job);
     update(item.id, (current) => ({ ...current, busy: existing ? "Running" : "Connecting" }));
     try {
@@ -454,13 +470,70 @@ export function useWorkspace() {
         await loadResultGrid();
         if (job.stopped || jobs.current.get(item.id) !== job) return;
         const spans = new Map<number, [number, number]>();
+        const summary = {
+          rows: 0,
+          affectedRows: 0,
+          resultSets: 0,
+          statements: 0,
+          elapsedMs: 0,
+          errorMessage: undefined as string | undefined,
+          cancelled: false,
+          completed: false,
+        };
         await runQuery(
           { ...query, runId: job.runId, sessionId: session.id, confirmed },
           (event) => {
-            if (jobs.current.get(item.id) === job)
-              receive(item.id, connection.kind, query, event, spans);
+            if (jobs.current.get(item.id) !== job) return;
+            switch (event.type) {
+              case "resultStart":
+                summary.resultSets += 1;
+                summary.rows += event.rows.length;
+                break;
+              case "rows":
+                summary.rows += event.rows.length;
+                break;
+              case "affected":
+                summary.affectedRows += event.rows;
+                break;
+              case "error":
+                if (event.error.kind === "cancelled") summary.cancelled = true;
+                else summary.errorMessage = event.error.message;
+                break;
+              case "done":
+                summary.statements = event.statements;
+                summary.elapsedMs = event.elapsedMs;
+                summary.completed = true;
+                break;
+            }
+            receive(item.id, connection.kind, query, event, spans);
           },
         );
+        if (
+          !job.stopped &&
+          jobs.current.get(item.id) === job &&
+          summary.completed &&
+          !summary.cancelled
+        ) {
+          onQueryCompleteRef.current?.({
+            id: job.runId,
+            tabId: item.id,
+            tabLabel: resolveTabLabel(),
+            connectionName: connection.name,
+            connectionKind: connection.kind,
+            connectionEnv: connection.env,
+            connectionColor: connection.color,
+            database:
+              sessions.current.get(item.id)?.database ?? item.database ?? connection.database,
+            mode: query.mode,
+            status: summary.errorMessage ? "error" : "success",
+            statements: summary.statements,
+            rows: summary.rows,
+            affectedRows: summary.affectedRows,
+            resultSets: summary.resultSets,
+            elapsedMs: summary.elapsedMs,
+            errorMessage: summary.errorMessage,
+          });
+        }
       }
     } catch (error) {
       if (jobs.current.get(item.id) !== job || job.stopped) return;
@@ -476,6 +549,26 @@ export function useWorkspace() {
         update(item.id, (current) => ({ ...current, session: undefined }));
       }
       appendMessage(item.id, "error", message, true);
+      if (query && job.runId) {
+        onQueryCompleteRef.current?.({
+          id: job.runId,
+          tabId: item.id,
+          tabLabel: resolveTabLabel(),
+          connectionName: connection.name,
+          connectionKind: connection.kind,
+          connectionEnv: connection.env,
+          connectionColor: connection.color,
+          database: sessions.current.get(item.id)?.database ?? item.database ?? connection.database,
+          mode: query.mode,
+          status: "error",
+          statements: 0,
+          rows: 0,
+          affectedRows: 0,
+          resultSets: 0,
+          elapsedMs: Math.round(performance.now() - startedAt),
+          errorMessage: message,
+        });
+      }
     } finally {
       if (jobs.current.get(item.id) === job) {
         jobs.current.delete(item.id);

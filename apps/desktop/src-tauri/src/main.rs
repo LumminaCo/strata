@@ -1,10 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod benchmark;
+mod sql_file;
 mod updater;
 
 use benchmark::{Benchmark, benchmark_sample};
 use serde_json::Value;
+use sql_file::save_sql_file;
 use strata_app::{AppService, Command, ErrorDto, Health, RunEvent, RunRequest};
 use tauri::{State, ipc::Channel};
 use tokio_util::sync::CancellationToken;
@@ -87,6 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     }
     builder
+        .plugin(tauri_plugin_dialog::init())
         .manage(benchmark)
         .manage(AppService::open(true)?)
         .manage(AppActivity::default())
@@ -95,6 +98,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             health,
             dispatch,
             run_query,
+            save_sql_file,
             check_update,
             install_update,
             benchmark_sample

@@ -1,5 +1,5 @@
 import { FlaskConical, Link2 } from "lucide-react";
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { DatabaseIcon } from "@/components/database-icon";
 
@@ -91,9 +91,15 @@ export function ConnectionForm({
       ? "env"
       : profile.secret;
 
+  const onBusyChangeRef = useRef(onBusyChange);
+  onBusyChangeRef.current = onBusyChange;
+
   useEffect(() => {
-    onBusyChange?.(busy);
-  }, [busy, onBusyChange]);
+    onBusyChangeRef.current?.(busy);
+    return () => {
+      if (busy) onBusyChangeRef.current?.(false);
+    };
+  }, [busy]);
 
   function option<K extends keyof DriverOptions>(key: K, value: DriverOptions[K]) {
     field("options", { ...options, [key]: value });

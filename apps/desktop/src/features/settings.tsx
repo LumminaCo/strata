@@ -435,9 +435,12 @@ export function SettingsDialog({
   const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const mcpTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  const saving = pendingSaves > 0;
-  const busy = saving || connectionBusy || deletingId !== null;
   const isSearching = query.trim().length > 0;
+  const editingFormOpen =
+    !isSearching && section === "connections" && editingConnection !== undefined;
+  const connectionLocked = editingFormOpen && connectionBusy;
+  const saving = pendingSaves > 0;
+  const busy = saving || connectionLocked || deletingId !== null;
   const shortcutsList = useMemo(() => keybindingEntries(), []);
 
   useEffect(() => {
@@ -504,11 +507,16 @@ export function SettingsDialog({
     }
   }
 
+  function closeConnectionEditor() {
+    setConnectionBusy(false);
+    setEditingConnection(undefined);
+  }
+
   function selectSection(next: SectionId) {
-    if (connectionBusy) return;
+    if (connectionLocked) return;
     setQuery("");
     setSection(next);
-    setEditingConnection(undefined);
+    closeConnectionEditor();
     setConfirmDeleteId(null);
   }
 
@@ -516,6 +524,7 @@ export function SettingsDialog({
     setQuery("");
     setSection("connections");
     setConfirmDeleteId(null);
+    setConnectionBusy(false);
     setEditingConnection(emptyConnection);
   }
 
@@ -523,6 +532,7 @@ export function SettingsDialog({
     setQuery("");
     setSection("connections");
     setConfirmDeleteId(null);
+    setConnectionBusy(false);
     setEditingConnection(connection);
   }
 
@@ -530,6 +540,7 @@ export function SettingsDialog({
     setQuery("");
     setSection("connections");
     setConfirmDeleteId(null);
+    setConnectionBusy(false);
     setEditingConnection({ ...connection, id: null, name: `${connection.name} copy` });
   }
 
@@ -769,8 +780,8 @@ export function SettingsDialog({
                 type="button"
                 variant="ghost"
                 size="sm"
-                disabled={connectionBusy}
-                onClick={() => setEditingConnection(undefined)}
+                disabled={connectionLocked}
+                onClick={closeConnectionEditor}
               >
                 <ArrowLeft /> Back
               </Button>
@@ -783,10 +794,10 @@ export function SettingsDialog({
               initial={editingConnection}
               footer="inline"
               onBusyChange={setConnectionBusy}
-              onCancel={() => setEditingConnection(undefined)}
+              onCancel={closeConnectionEditor}
               onSave={(saved, password) => {
                 onSaveConnection(saved, password);
-                setEditingConnection(undefined);
+                closeConnectionEditor();
               }}
             />
           </div>
@@ -1015,8 +1026,8 @@ export function SettingsDialog({
                   <button
                     type="button"
                     className="settings-breadcrumb-link"
-                    disabled={connectionBusy}
-                    onClick={() => setEditingConnection(undefined)}
+                    disabled={connectionLocked}
+                    onClick={closeConnectionEditor}
                   >
                     Connections
                   </button>

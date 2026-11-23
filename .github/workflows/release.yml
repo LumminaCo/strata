@@ -303,6 +303,7 @@ jobs:
           test -x "$binaries/oracle-bridge"
           "$binaries/strata" --version
           printf 'macOS installer bytes %s\n' "$(stat -f %z "$disk")" >> "$GITHUB_STEP_SUMMARY"
+          set -o pipefail
           python dev/benchmark-desktop.py "$binaries/strata" --pg-bin "$(brew --prefix postgresql@17)/bin" | tee macos-performance.jsonl
           cat macos-performance.jsonl >> "$GITHUB_STEP_SUMMARY"
 

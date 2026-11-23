@@ -358,13 +358,17 @@ body {
   color: var(--workspace-accent);
   animation: grid-spin 900ms linear infinite;
 }
+.update-check-spin {
+  animation: grid-spin 900ms linear infinite;
+}
 @keyframes grid-spin {
   to {
     transform: rotate(360deg);
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .grid-fetching-icon {
+  .grid-fetching-icon,
+  .update-check-spin {
     animation: none;
   }
 }

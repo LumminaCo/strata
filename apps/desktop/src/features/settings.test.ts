@@ -3,10 +3,12 @@ import { describe, expect, it } from "vitest";
 import { emptyConnection } from "@/features/connections";
 import {
   defaultSettings,
+  describeUpdateStatus,
   formatEndpoint,
   groupConnections,
   isDefaultSettings,
   matchesQuery,
+  matchesUpdateQuery,
   parseSettingNumber,
 } from "@/features/settings";
 
@@ -67,5 +69,59 @@ describe("settings helpers", () => {
         database: "master",
       }),
     ).toBe("mssql:1433/master");
+  });
+
+  it("describes application update states for the General settings card", () => {
+    expect(
+      describeUpdateStatus({
+        version: null,
+        checking: false,
+        checkState: "idle",
+        status: "",
+      }),
+    ).toBe("Check for newer signed releases of Strata.");
+
+    expect(
+      describeUpdateStatus({
+        version: null,
+        checking: true,
+        checkState: "idle",
+        status: "",
+      }),
+    ).toBe("Checking for a newer version of Strata…");
+
+    expect(
+      describeUpdateStatus({
+        version: null,
+        checking: false,
+        checkState: "up-to-date",
+        status: "",
+      }),
+    ).toBe("Strata is up to date.");
+
+    expect(
+      describeUpdateStatus({
+        version: "0.3.0",
+        checking: false,
+        checkState: "idle",
+        status: "",
+      }),
+    ).toBe("Strata 0.3.0 is ready to install.");
+
+    expect(
+      describeUpdateStatus({
+        version: "0.3.0",
+        checking: false,
+        checkState: "idle",
+        status: "Downloading Strata 0.3.0…",
+      }),
+    ).toBe("Downloading Strata 0.3.0…");
+  });
+
+  it("matches update search terms", () => {
+    expect(matchesUpdateQuery("update")).toBe(true);
+    expect(matchesUpdateQuery("check updates")).toBe(true);
+    expect(matchesUpdateQuery("release version")).toBe(true);
+    expect(matchesUpdateQuery("oracle")).toBe(false);
   });
 });

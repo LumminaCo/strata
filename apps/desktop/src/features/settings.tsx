@@ -308,7 +308,7 @@ function keybindingEntries(): KeybindingEntry[] {
     {
       group: "Tabs & files",
       label: "Save SQL file",
-      description: "Download the active editor contents as query.sql.",
+      description: "Save the active editor contents to a SQL file.",
       keys: shortcuts.saveSql,
     },
   ];

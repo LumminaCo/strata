@@ -63,6 +63,7 @@ import {
   type QueryCompletion,
 } from "@/features/query-notifications";
 import { playQuerySound, primeQuerySound } from "@/features/query-sound";
+import { saveSqlFile as persistSqlFile } from "@/features/save-sql-file";
 import { TableInspector, type Inspection } from "@/features/table-inspector";
 import { useCatalogSchema } from "@/features/use-catalog-schema";
 import { shortcuts, workspaceKeydown } from "@/features/keymap";
@@ -150,6 +151,8 @@ export function App() {
   const editor = useRef<EditorHandle>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const editors = useRef(new Map<string, { current: EditorState | null }>());
+  const savedSqlPaths = useRef(new Map<string, string>());
+  const savingSql = useRef(false);
   const filterInput = useRef<HTMLInputElement>(null);
   const ThemeIcon = themeIcons[theme];
   const dark = theme === "dark" || (theme === "system" && systemDark);
@@ -253,6 +256,7 @@ export function App() {
     }
     data.closeTab(id);
     editors.current.delete(id);
+    savedSqlPaths.current.delete(id);
     setQueryToasts((current) => current.filter((item) => item.tabId !== id));
     setPinned((current) => {
       const next = { ...current };
@@ -348,16 +352,22 @@ export function App() {
     }
   }
 
-  function saveSqlFile() {
-    if (!editor.current || schemaActive) return;
-    const url = URL.createObjectURL(
-      new Blob([editor.current.text()], { type: "text/plain;charset=utf-8" }),
-    );
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "query.sql";
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  async function saveSqlFile() {
+    if (!tab || !editor.current || schemaActive || savingSql.current) return;
+    const tabId = tab.id;
+    const content = editor.current.text();
+    const suggestedPath = savedSqlPaths.current.get(tabId);
+    savingSql.current = true;
+    try {
+      const savedPath = await persistSqlFile(content, suggestedPath);
+      if (!savedPath) return;
+      if (editors.current.has(tabId)) savedSqlPaths.current.set(tabId, savedPath);
+      data.setNotice(`Saved SQL to ${savedPath}.`);
+    } catch (error) {
+      data.setNotice(errorMessage(error));
+    } finally {
+      savingSql.current = false;
+    }
   }
 
   function showCell(name: string, value: Cell, kind?: string) {
@@ -465,7 +475,7 @@ export function App() {
             openSql: () => {
               if (profile) fileInput.current?.click();
             },
-            saveSql: saveSqlFile,
+            saveSql: () => void saveSqlFile(),
           },
           browserMode,
         );
@@ -827,7 +837,7 @@ export function App() {
                   size="icon-sm"
                   aria-label="Save SQL file"
                   title="Save SQL file (Ctrl+S)"
-                  onClick={saveSqlFile}
+                  onClick={() => void saveSqlFile()}
                 >
                   <Save />
                 </Button>

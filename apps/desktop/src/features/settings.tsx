@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { DatabaseIcon } from "@/components/database-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -662,13 +663,14 @@ export function SettingsDialog({
       <div className="settings-connection-row" key={id ?? connection.name}>
         <div className="settings-connection-info">
           <div className="settings-connection-title-row">
+            <DatabaseIcon kind={connection.kind} />
+            <span className="settings-connection-name">{connection.name}</span>
             <span
               className="env-dot"
               data-env={connection.env}
               data-color={connection.color}
               aria-hidden="true"
             />
-            <span className="settings-connection-name">{connection.name}</span>
             <Badge variant="outline" className="environment-badge" data-env={connection.env}>
               {envLabels[connection.env]}
             </Badge>

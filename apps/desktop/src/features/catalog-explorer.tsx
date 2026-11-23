@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { DatabaseIcon } from "@/components/database-icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type {
@@ -373,7 +374,9 @@ export function CatalogExplorer({
                     else toggle(node);
                   }}
                 >
-                  {node.kind === "connection" || node.kind === "database" ? (
+                  {node.kind === "connection" ? (
+                    <DatabaseIcon kind={node.connection.kind} />
+                  ) : node.kind === "database" ? (
                     <Database />
                   ) : branch ? (
                     <Folder />

@@ -29,6 +29,10 @@
   --env-prod: #ad273c;
   --destructive: #b12b3b;
 
+  --db-postgres: #336791;
+  --db-sqlserver: #c4531a;
+  --db-oracle: #c73626;
+
   --syntax-keyword: #6441a1;
   --syntax-string: #1d6447;
   --syntax-number: #93501d;
@@ -104,6 +108,10 @@
   --env-staging: #f0c46b;
   --env-prod: #ff9aa9;
   --destructive: #ff9da9;
+
+  --db-postgres: #72aee6;
+  --db-sqlserver: #f29954;
+  --db-oracle: #ff6b5b;
 
   --syntax-keyword: #ccafff;
   --syntax-string: #94d9a9;

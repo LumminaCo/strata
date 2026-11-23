@@ -203,8 +203,21 @@ body {
 .query-tab button[role="tab"] {
   gap: 7px;
 }
-.query-tab button[role="tab"] svg {
+.query-tab button[role="tab"] svg:not(.db-icon) {
   color: var(--workspace-accent);
+}
+
+.db-icon {
+  flex-shrink: 0;
+}
+.db-icon[data-db-kind="postgres"] {
+  color: var(--db-postgres);
+}
+.db-icon[data-db-kind="sqlserver"] {
+  color: var(--db-sqlserver);
+}
+.db-icon[data-db-kind="oracle"] {
+  color: var(--db-oracle);
 }
 
 .query-actions {
@@ -399,6 +412,18 @@ body {
   content: "·";
   margin-right: 7px;
 }
+.status-connection {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.status-bar > .status-connection::before {
+  margin-right: 2px;
+}
+.status-connection .db-icon {
+  width: 13px;
+  height: 13px;
+}
 .status-dot {
   width: 6px;
   height: 6px;
@@ -450,6 +475,31 @@ body {
 }
 .connection-field [data-slot="native-select-wrapper"] {
   width: 100%;
+}
+.driver-select {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.driver-select-icon {
+  position: absolute;
+  left: 9px;
+  z-index: 1;
+  width: 15px;
+  height: 15px;
+  pointer-events: none;
+}
+.driver-select select {
+  padding-left: 30px;
+}
+.inline-connection {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.inline-connection .db-icon {
+  width: 14px;
+  height: 14px;
 }
 .endpoint-fields {
   display: grid;
@@ -634,6 +684,11 @@ body {
 .table-inspector-header strong {
   margin-inline: 5px auto;
 }
+.table-inspector-header > .db-icon {
+  width: 15px;
+  height: 15px;
+  margin-left: 4px;
+}
 .table-inspector-tabs button[aria-selected="true"] {
   background: var(--accent-surface);
   color: var(--workspace-accent);
@@ -787,8 +842,15 @@ body {
   color: var(--muted-foreground);
 }
 .activity-context {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: var(--muted-foreground);
   font-size: var(--font-size-label);
+}
+.activity-context .db-icon {
+  width: 13px;
+  height: 13px;
 }
 .activity-list pre {
   font-family: var(--editor-font);
@@ -1266,6 +1328,11 @@ body {
   min-width: 0;
 }
 
+.settings-connection-title-row > .db-icon {
+  width: 15px;
+  height: 15px;
+}
+
 .settings-connection-name {
   font-size: var(--font-size-ui);
   font-weight: 500;
@@ -1277,7 +1344,7 @@ body {
 
 .settings-connection-meta {
   margin: 0;
-  padding-left: 13px;
+  padding-left: 22px;
   font-family: var(--editor-font);
   font-size: var(--font-size-label);
   color: var(--muted-foreground);

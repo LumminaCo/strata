@@ -1,5 +1,7 @@
-import { Database, FlaskConical, Link2 } from "lucide-react";
+import { FlaskConical, Link2 } from "lucide-react";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+
+import { DatabaseIcon } from "@/components/database-icon";
 
 import {
   AlertDialog,
@@ -246,7 +248,7 @@ export function ConnectionForm({
             disabled={busy}
             onClick={localFixture}
           >
-            <Database /> Use local PostgreSQL
+            <DatabaseIcon kind="postgres" /> Use local PostgreSQL
           </Button>
           <Button
             type="button"
@@ -255,7 +257,7 @@ export function ConnectionForm({
             disabled={busy}
             onClick={sqlServerFixture}
           >
-            <Database /> Use local SQL Server
+            <DatabaseIcon kind="sqlserver" /> Use local SQL Server
           </Button>
           <Button
             type="button"
@@ -264,33 +266,36 @@ export function ConnectionForm({
             disabled={busy}
             onClick={oracleFixture}
           >
-            <Database /> Use local Oracle
+            <DatabaseIcon kind="oracle" /> Use local Oracle
           </Button>
         </div>
       )}
       <form onSubmit={save} className="connection-form">
         <fieldset disabled={busy} className="connection-fields">
           <Field name="connection-kind" label="Driver">
-            <NativeSelect
-              id="connection-kind"
-              value={profile.kind}
-              disabled={!!initial.id}
-              onChange={(event) => {
-                const kind = event.target.value as Connection["kind"];
-                setProfile((current) => ({
-                  ...current,
-                  kind,
-                  options: null,
-                  port: kind === "sqlserver" ? 1433 : kind === "oracle" ? 1521 : 5432,
-                  database:
-                    kind === "sqlserver" ? "master" : kind === "oracle" ? "FREEPDB1" : "postgres",
-                }));
-              }}
-            >
-              <NativeSelectOption value="postgres">PostgreSQL</NativeSelectOption>
-              <NativeSelectOption value="sqlserver">SQL Server</NativeSelectOption>
-              <NativeSelectOption value="oracle">Oracle</NativeSelectOption>
-            </NativeSelect>
+            <div className="driver-select">
+              <DatabaseIcon kind={profile.kind} className="driver-select-icon" />
+              <NativeSelect
+                id="connection-kind"
+                value={profile.kind}
+                disabled={!!initial.id}
+                onChange={(event) => {
+                  const kind = event.target.value as Connection["kind"];
+                  setProfile((current) => ({
+                    ...current,
+                    kind,
+                    options: null,
+                    port: kind === "sqlserver" ? 1433 : kind === "oracle" ? 1521 : 5432,
+                    database:
+                      kind === "sqlserver" ? "master" : kind === "oracle" ? "FREEPDB1" : "postgres",
+                  }));
+                }}
+              >
+                <NativeSelectOption value="postgres">PostgreSQL</NativeSelectOption>
+                <NativeSelectOption value="sqlserver">SQL Server</NativeSelectOption>
+                <NativeSelectOption value="oracle">Oracle</NativeSelectOption>
+              </NativeSelect>
+            </div>
           </Field>
           <Field name="connection-name" label="Name">
             <Input

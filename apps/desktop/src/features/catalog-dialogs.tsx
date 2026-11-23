@@ -1,6 +1,7 @@
 import { Database, Layers } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { DatabaseIcon } from "@/components/database-icon";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -90,6 +91,7 @@ export function CatalogPalette({
               data-active={index === active}
               onClick={() => onOpen(entry)}
             >
+              <DatabaseIcon kind={entry.connection.kind} />
               <span>
                 {entry.object.schema}.{entry.object.name}
               </span>
@@ -164,7 +166,14 @@ export function QueryHistory({
         <DialogHeader>
           <DialogTitle>Query history</DialogTitle>
           <DialogDescription>
-            {connection?.name ?? "Select a connection to see its history."}
+            {connection ? (
+              <span className="inline-connection">
+                <DatabaseIcon kind={connection.kind} />
+                {connection.name}
+              </span>
+            ) : (
+              "Select a connection to see its history."
+            )}
           </DialogDescription>
         </DialogHeader>
         <Input

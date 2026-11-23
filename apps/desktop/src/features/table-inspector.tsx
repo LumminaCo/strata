@@ -1,6 +1,7 @@
 import { ArrowLeft, ArrowRight, ArrowUpRight } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { DatabaseIcon } from "@/components/database-icon";
 import { Button } from "@/components/ui/button";
 import type {
   CatalogScope,
@@ -238,6 +239,7 @@ export function TableInspector({ subject, theme, full, credentials, promote, onV
         >
           <ArrowRight />
         </Button>
+        <DatabaseIcon kind={current.connection.kind} />
         <strong>{name}</strong>
         {promote && (
           <Button size="xs" variant="ghost" onClick={() => promote(current)}>

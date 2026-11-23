@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import { DatabaseIcon } from "@/components/database-icon";
 import { ResultGrid } from "@/components/load-result-grid";
 import type { ResultSet } from "@/components/result-grid";
 import { SqlEditor, type EditorHandle } from "@/components/sql-editor";
@@ -632,7 +633,7 @@ export function App() {
                         data.selectTab(item.id);
                       }}
                     >
-                      <FileCode2 />
+                      {connection ? <DatabaseIcon kind={connection.kind} /> : <FileCode2 />}
                       <span>
                         {title}
                         {number ? ` ${number + 1}` : ""}
@@ -665,7 +666,10 @@ export function App() {
                       aria-selected={schemaSelected === key}
                       onClick={() => setSchemaSelected(key)}
                     >
-                      <Database /> {item.object.schema}.{item.object.name}
+                      <DatabaseIcon kind={item.connection.kind} />
+                      <span>
+                        {item.object.schema}.{item.object.name}
+                      </span>
                     </Button>
                     <Button
                       variant="ghost"
@@ -1079,7 +1083,12 @@ export function App() {
           {active.busy ??
             (active.session ? "Connected" : data.workspace ? "Disconnected" : "Starting…")}
         </span>
-        {profile && <span>{profile.name}</span>}
+        {profile && (
+          <span className="status-connection">
+            <DatabaseIcon kind={profile.kind} />
+            {profile.name}
+          </span>
+        )}
         {active.session && (
           <>
             <span>{active.session.version.split(" ").slice(0, 2).join(" ")}</span>

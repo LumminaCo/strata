@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { DatabaseIcon } from "@/components/database-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -75,9 +76,12 @@ export function AgentActivity({
                   <small>{new Date(item.ts).toLocaleString()}</small>
                 </div>
                 <div className="activity-context">
-                  {item.clientName || "MCP client"} · {item.connectionName}
-                  {item.rows === null ? "" : ` · ${item.rows} rows`}
-                  {item.durationMs === null ? "" : ` · ${item.durationMs} ms`}
+                  {profile && <DatabaseIcon kind={profile.kind} />}
+                  <span>
+                    {item.clientName || "MCP client"} · {item.connectionName}
+                    {item.rows === null ? "" : ` · ${item.rows} rows`}
+                    {item.durationMs === null ? "" : ` · ${item.durationMs} ms`}
+                  </span>
                 </div>
                 {item.sql && <pre>{item.sql}</pre>}
                 {item.reason && <p>{item.reason}</p>}

@@ -127,13 +127,14 @@ impl AppService {
             Command::OpenSession {
                 connection_id,
                 database,
+                schema,
                 password,
             } => {
                 let mut profile = self.engine.profile(connection_id)?;
                 if let Some(database) = database {
                     profile.database = database;
                 }
-                self.open_session(profile, password, lifetime)
+                self.open_session(profile, schema, password, lifetime)
                     .await
                     .and_then(json)
             }
@@ -175,6 +176,14 @@ impl AppService {
                     .set_dbms_output(session_id, enabled)
                     .await?;
                 Ok(Value::Null)
+            }
+            Command::SetSchema { session_id, schema } => {
+                let session = self.session(session_id).await?;
+                let control = session.control.lock().await;
+                if control.active.is_some() {
+                    return Err(CoreError::config("Wait for the running query to finish"));
+                }
+                json(self.engine.core().set_schema(session_id, &schema).await?)
             }
             Command::NextResult {
                 session_id,
@@ -267,9 +276,13 @@ impl AppService {
             Command::ResolveAt {
                 scope,
                 session_id,
+                schema,
                 text,
                 offset,
-            } => json(self.resolve_at(&scope, session_id, &text, offset).await?),
+            } => json(
+                self.resolve_at(&scope, session_id, schema.as_deref(), &text, offset)
+                    .await?,
+            ),
             Command::ObjectDetails { scope, object } => {
                 json(self.object_details(&scope, &object).await?)
             }
@@ -292,7 +305,10 @@ impl AppService {
                 if let Some(database) = scope.database {
                     profile.database = database;
                 }
-                json(self.open_session(profile, scope.password, lifetime).await?)
+                json(
+                    self.open_session(profile, None, scope.password, lifetime)
+                        .await?,
+                )
             }
             Command::SettingsGet => json(self.engine.config().settings),
             Command::SettingsSave { settings } => {
@@ -488,6 +504,7 @@ impl AppService {
     async fn open_session(
         &self,
         profile: Profile,
+        schema: Option<String>,
         password: Option<String>,
         lifetime: CancellationToken,
     ) -> Result<SessionInfo> {
@@ -502,6 +519,15 @@ impl AppService {
             .engine
             .open_profile(profile, password.map(Secret::new))
             .await?;
+        if let Some(schema) = schema
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            && let Err(error) = self.engine.core().set_schema(id, schema).await
+        {
+            let _ = self.engine.core().close_session(id).await;
+            return Err(error);
+        }
         let info = self.session_info(id, started).await;
         let mut sessions = self.sessions.write().await;
         if info.is_err() || lifetime.is_cancelled() {

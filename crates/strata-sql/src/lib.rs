@@ -87,6 +87,7 @@ pub fn classify(sql: &str, dialect: Dialect) -> StmtClass {
         }
         "INSERT" | "UPDATE" | "DELETE" | "MERGE" | "CALL" | "EXEC" | "EXECUTE" => Write,
         "COPY" if words.iter().any(|w| w == "FROM") => Write,
+        "ALTER" if word(1) == "SESSION" => Session,
         "CREATE" | "ALTER" | "DROP" | "TRUNCATE" | "RENAME" | "COMMENT" | "GRANT" | "REVOKE" => Ddl,
         "BEGIN" if dialect == Dialect::Oracle => Procedural,
         "BEGIN" | "START" | "COMMIT" | "ROLLBACK" | "SAVEPOINT" | "RELEASE" | "END" => TxControl,
@@ -509,6 +510,7 @@ mod tests {
             ("SELECT 1; SELECT 2", Unknown),
             ("COPY t FROM STDIN", Write),
             ("ALTER TABLE t ADD COLUMN n int", Ddl),
+            ("ALTER SESSION SET CURRENT_SCHEMA = HR", Session),
             ("SET search_path TO public", Session),
             ("COMMIT", TxControl),
             ("DO $$ BEGIN NULL; END $$", Procedural),

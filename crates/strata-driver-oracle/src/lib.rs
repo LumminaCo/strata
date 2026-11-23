@@ -211,6 +211,16 @@ impl DbConnection for Session {
             .await
             .map(|_| ())
     }
+    async fn set_schema(&mut self, schema: &str) -> Result<()> {
+        let schema = schema.trim();
+        if schema.is_empty() || schema.contains(['"', '\0']) {
+            return Err(CoreError::config("Invalid Oracle schema name"));
+        }
+        self.bridge
+            .rpc::<Value>("set_schema", json!({"conn_id": self.id, "schema": schema}))
+            .await
+            .map(|_| ())
+    }
     async fn begin(&mut self) -> Result<()> {
         self.command("begin").await
     }
@@ -404,6 +414,11 @@ mod tests {
                 .iter()
                 .any(|(_, text)| text == "strata output")
         );
+        assert_eq!(
+            core.set_schema(id, "HR").await.unwrap().as_deref(),
+            Some("HR")
+        );
+        assert!(core.set_schema(id, "MISSING_SCHEMA_XYZ").await.is_err());
         core.close_session(id).await.unwrap();
     }
 

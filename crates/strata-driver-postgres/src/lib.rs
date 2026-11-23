@@ -236,6 +236,29 @@ impl DbConnection for PostgresConnection {
             .map_err(query_error)
     }
 
+    async fn set_schema(&mut self, schema: &str) -> Result<()> {
+        let schema = schema.trim();
+        if schema.is_empty() {
+            return Err(CoreError::config("Schema name cannot be empty"));
+        }
+        let exists = self
+            .client
+            .query_opt(
+                "SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = $1",
+                &[&schema],
+            )
+            .await
+            .map_err(query_error)?
+            .is_some();
+        if !exists {
+            return Err(CoreError::config(format!(
+                "Schema \"{schema}\" does not exist"
+            )));
+        }
+        let sql = format!("SET search_path TO \"{}\"", schema.replace('"', "\"\""));
+        self.client.batch_execute(&sql).await.map_err(query_error)
+    }
+
     async fn server_info(&mut self) -> Result<ServerInfo> {
         let row = self.client.query_one(
             "SELECT version(), current_database()::text, current_schema()::text, current_user::text", &[]

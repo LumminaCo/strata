@@ -450,3 +450,32 @@ async fn rolls_back_manual_transactions_and_retains_full_binary_cells() {
         Cell::Text(format!("0x{}", "ff".repeat(80)))
     );
 }
+
+#[tokio::test]
+#[ignore = "requires the Compose PostgreSQL fixture"]
+async fn sets_default_schema_for_unqualified_queries_including_read_only() {
+    let (mut profile, secret) = fixture();
+    profile.read_only = true;
+    let app = engine(Limits::default());
+    let session = app.open_session(&profile, &secret).await.expect("session");
+    assert_eq!(
+        app.set_schema(session, "strata_demo")
+            .await
+            .expect("set schema")
+            .as_deref(),
+        Some("strata_demo")
+    );
+    assert!(
+        app.resolution_path(session)
+            .await
+            .expect("resolution path")
+            .contains(&"strata_demo".to_owned())
+    );
+    let batch = app
+        .run(session, "SELECT count(*) FROM people")
+        .await
+        .expect("query unqualified table in selected schema");
+    assert_eq!(batch.rows, [vec![Cell::Int(1_000_000)]]);
+    assert!(app.set_schema(session, "missing_schema_xyz").await.is_err());
+    app.close_session(session).await.expect("close");
+}

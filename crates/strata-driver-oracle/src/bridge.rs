@@ -219,6 +219,9 @@ impl From<Failure> for CoreError {
             "connect" => Self::Connect {
                 message: error.message,
             },
+            "config" => Self::Config {
+                message: error.message,
+            },
             code if code.starts_with("ORA-") => Self::Db {
                 code: error.code,
                 message: error.message,

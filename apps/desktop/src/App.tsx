@@ -48,7 +48,12 @@ import {
 } from "@/features/connections";
 import { AgentActivity } from "@/features/agent-activity";
 import { CatalogExplorer, type CatalogEntry } from "@/features/catalog-explorer";
-import { CatalogPalette, DatabasePicker, QueryHistory } from "@/features/catalog-dialogs";
+import {
+  CatalogPalette,
+  DatabasePicker,
+  QueryHistory,
+  SchemaPicker,
+} from "@/features/catalog-dialogs";
 import { SettingsDialog } from "@/features/settings";
 import { TableInspector, type Inspection } from "@/features/table-inspector";
 import { useCatalogSchema } from "@/features/use-catalog-schema";
@@ -106,6 +111,7 @@ export function App() {
   const [entries, setEntries] = useState<CatalogEntry[]>([]);
   const defaultSchema =
     active.session?.schema ??
+    tab?.schema ??
     (profile?.kind === "sqlserver"
       ? "dbo"
       : profile?.kind === "oracle"
@@ -186,7 +192,7 @@ export function App() {
     void data.run({ text: editor.current.text(), target: editor.current.target(), mode });
   }
 
-  function openTab(id: string, database?: string, text?: string) {
+  function openTab(id: string, database?: string, text?: string, schema?: string) {
     setSchemaSelected(undefined);
     const profile = data.profiles.find((entry) => entry.id === id);
     const existing = data.tabs.find(
@@ -195,7 +201,7 @@ export function App() {
         (item.database ?? profile?.database) === (database ?? profile?.database),
     );
     if (existing && text === undefined) data.selectTab(existing.id);
-    else data.addTab(id, database, text);
+    else data.addTab(id, database, text, schema);
   }
 
   function openObject(entry: Inspection) {
@@ -235,6 +241,7 @@ export function App() {
         text,
         offset,
         sessionId: active.session?.id,
+        schema: active.session ? undefined : defaultSchema,
       });
       if (resolution.current !== request) return;
       if (!object) {
@@ -303,7 +310,7 @@ export function App() {
       return;
     }
     try {
-      openTab(profile.id, tab?.database, await file.text());
+      openTab(profile.id, tab?.database, await file.text(), tab?.schema);
     } catch (error) {
       data.setNotice(errorMessage(error));
     }
@@ -823,6 +830,19 @@ export function App() {
                       onChange={(database) => data.setDatabase(tab.id, database)}
                     />
                   )}
+                  {profile?.id && profile.kind !== "sqlserver" && (
+                    <SchemaPicker
+                      key={`${profile.id}:${tab.database ?? profile.database}:${data.catalogRevision}:${active.session ? 1 : 0}`}
+                      selected={defaultSchema}
+                      disabled={!!active.busy || !!active.transaction?.open}
+                      load={async () =>
+                        dispatch("list_schemas", {
+                          scope: await data.scope(profile, tab.database),
+                        })
+                      }
+                      onChange={(schema) => void data.setSchema(tab.id, schema)}
+                    />
+                  )}
                   <Button
                     variant="ghost"
                     disabled={!profile || !!active.busy}
@@ -1139,7 +1159,7 @@ export function App() {
           revision={data.historyRevision}
           onClose={() => setHistory(false)}
           onOpen={(sql) => {
-            if (profile?.id) data.addTab(profile.id, tab?.database, sql);
+            if (profile?.id) data.addTab(profile.id, tab?.database, sql, tab?.schema);
             setHistory(false);
           }}
         />

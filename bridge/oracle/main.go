@@ -62,6 +62,7 @@ type params struct {
 	Count       int    `json:"n"`
 	Timeout     uint32 `json:"timeout_ms"`
 	Enabled     bool   `json:"enabled"`
+	Schema      string `json:"schema"`
 }
 
 type bridge struct {
@@ -103,6 +104,7 @@ type connection struct {
 	query            uint64
 	output           bool
 	readOnly         bool
+	schema           string
 	closed           bool
 	socket           *socketDialer
 	reset            atomic.Bool
@@ -206,6 +208,12 @@ func (s *bridge) call(method string, p params) (any, error) {
 			return nil, failure{Code: "connect", Message: "Could not reopen the Oracle session"}
 		}
 		c.conn = conn
+		if c.schema != "" {
+			_, _ = c.conn.ExecContext(context.Background(), fmt.Sprintf(`ALTER SESSION SET CURRENT_SCHEMA = "%s"`, c.schema))
+		}
+		if c.output {
+			_, _ = c.conn.ExecContext(context.Background(), "BEGIN DBMS_OUTPUT.ENABLE(NULL); END;")
+		}
 	}
 	switch method {
 	case "close":
@@ -273,6 +281,17 @@ func (s *bridge) call(method string, p params) (any, error) {
 		_, err := c.exec(context.Background(), call)
 		if err == nil {
 			c.output = p.Enabled
+		}
+		return true, err
+	case "set_schema":
+		c.closeQuery()
+		schema := strings.TrimSpace(p.Schema)
+		if schema == "" || strings.ContainsAny(schema, "\"\x00") {
+			return nil, failure{Code: "config", Message: "Invalid Oracle schema name"}
+		}
+		_, err := c.exec(context.Background(), fmt.Sprintf(`ALTER SESSION SET CURRENT_SCHEMA = "%s"`, schema))
+		if err == nil {
+			c.schema = schema
 		}
 		return true, err
 	default:

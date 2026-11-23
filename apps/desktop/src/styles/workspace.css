@@ -218,6 +218,25 @@ body {
   margin-left: auto;
   gap: var(--space-2);
 }
+.toolbar-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.toolbar-picker > svg {
+  position: absolute;
+  left: 8px;
+  z-index: 1;
+  width: 14px;
+  height: 14px;
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+.toolbar-picker [data-slot="native-select"] {
+  padding-left: 26px;
+  max-width: 180px;
+  text-overflow: ellipsis;
+}
 .environment-badge {
   color: var(--tag-color);
   font-weight: 500;

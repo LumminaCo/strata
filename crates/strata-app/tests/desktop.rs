@@ -46,6 +46,7 @@ async fn desktop_streams_scripts_cancels_and_restores_workspace() {
         Command::OpenSession {
             connection_id,
             database: None,
+            schema: None,
             password: None,
         },
         &lifetime,
@@ -213,4 +214,72 @@ async fn desktop_streams_scripts_cancels_and_restores_workspace() {
         call(&reopened, Command::WorkspaceLoad, &CancellationToken::new()).await,
         workspace
     );
+
+    let schema_lifetime = CancellationToken::new();
+    let schema_session = call(
+        &reopened,
+        Command::OpenSession {
+            connection_id,
+            database: None,
+            schema: Some("strata_demo".into()),
+            password: None,
+        },
+        &schema_lifetime,
+    )
+    .await;
+    assert_eq!(schema_session["schema"], json!("strata_demo"));
+    let schema_session_id =
+        serde_json::from_value(schema_session["id"].clone()).expect("schema session id");
+    let resolved = call(
+        &reopened,
+        Command::ResolveAt {
+            scope: strata_app::CatalogScope {
+                connection_id,
+                database: None,
+                password: None,
+            },
+            session_id: None,
+            schema: Some("strata_demo".into()),
+            text: "SELECT * FROM people".into(),
+            offset: 15,
+        },
+        &schema_lifetime,
+    )
+    .await;
+    assert_eq!(resolved["object"]["schema"], json!("strata_demo"));
+    assert_eq!(resolved["object"]["name"], json!("people"));
+    let switched = call(
+        &reopened,
+        Command::SetSchema {
+            session_id: schema_session_id,
+            schema: "public".into(),
+        },
+        &schema_lifetime,
+    )
+    .await;
+    assert_eq!(switched, json!("public"));
+    let sql_switch = Mutex::new(Vec::new());
+    reopened
+        .run(
+            RunRequest {
+                run_id: Uuid::now_v7(),
+                session_id: schema_session_id,
+                text: "SET search_path TO strata_demo;".into(),
+                target: Target::Cursor { cursor: 0 },
+                mode: RunMode::Statement,
+                confirmed: false,
+            },
+            |event| {
+                sql_switch.lock().unwrap().push(event);
+                std::future::ready(true)
+            },
+        )
+        .await
+        .expect("run SET search_path");
+    assert!(sql_switch.lock().unwrap().iter().any(|event| matches!(
+        event,
+        RunEvent::SessionContext { schema: Some(schema), .. } if schema == "strata_demo"
+    )));
+    schema_lifetime.cancel();
+    reopened.close_disconnected_sessions().await;
 }

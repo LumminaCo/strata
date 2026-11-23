@@ -25,6 +25,7 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Switch } from "@/components/ui/switch";
 import { ConnectionForm, emptyConnection } from "@/features/connections";
 import { shortcuts } from "@/features/keymap";
+import { playQuerySound, primeQuerySound } from "@/features/query-sound";
 import type { Connection, Settings } from "@/ipc/bindings/protocol";
 import { browserMode, dispatch, errorMessage } from "@/ipc/client";
 
@@ -36,6 +37,8 @@ export const defaultSettings: Settings = {
   editor_font_size: 13,
   show_system_objects: false,
   confirm_production: true,
+  notify_on_query_complete: true,
+  notify_sound: true,
   statement_timeout_ms: 0,
   agent_default_row_limit: 200,
   agent_max_row_limit: 10_000,
@@ -53,7 +56,12 @@ type NumericSettingKey =
   | "agent_max_row_limit"
   | "agent_statement_timeout_s";
 
-type BooleanSettingKey = "blank_line_delimiter" | "show_system_objects" | "confirm_production";
+type BooleanSettingKey =
+  | "blank_line_delimiter"
+  | "show_system_objects"
+  | "confirm_production"
+  | "notify_on_query_complete"
+  | "notify_sound";
 
 interface SettingMeta {
   key: keyof Settings;
@@ -95,6 +103,25 @@ const settingDefinitions: SettingMeta[] = [
     description:
       "Ask for confirmation before running statements that may modify data on a Production connection.",
     keywords: ["safety", "prod", "production", "write", "warning", "guard"],
+    kind: "switch",
+  },
+  {
+    key: "notify_on_query_complete",
+    section: "general",
+    group: "Notifications",
+    label: "Query completion toast",
+    description:
+      "Show a notification toast in the bottom-right corner when a query finishes running.",
+    keywords: ["notification", "toast", "alert", "query", "finish", "complete", "done"],
+    kind: "switch",
+  },
+  {
+    key: "notify_sound",
+    section: "general",
+    group: "Notifications",
+    label: "Query completion sound",
+    description: "Play an audio chime when a query finishes running.",
+    keywords: ["notification", "sound", "audio", "chime", "ding", "bell", "alert", "query"],
     kind: "switch",
   },
   {
@@ -623,6 +650,19 @@ export function SettingsDialog({
             <p className="settings-row-desc">{meta.description}</p>
           </div>
           <div className="settings-row-control">
+            {key === "notify_sound" && (
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={() => {
+                  primeQuerySound();
+                  playQuerySound("success");
+                }}
+              >
+                Test sound
+              </Button>
+            )}
             <Switch
               id={inputId}
               checked={draft[key]}

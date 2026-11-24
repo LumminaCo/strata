@@ -4,6 +4,13 @@ import { loadResultGrid } from "@/components/load-result-grid";
 import type { ResultSet } from "@/components/result-grid";
 import type { EditorDiagnostic } from "@/components/sql-editor";
 import type { QueryCompletion } from "@/features/query-notifications";
+import {
+  moveItemByOffset,
+  normalizeTabTitle,
+  reorderById,
+  scriptTabLabel,
+  type DropPlacement,
+} from "@/features/tab-order";
 import type {
   CatalogScope,
   Cell,
@@ -160,22 +167,162 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
   }
 
   function closeTab(id: string) {
-    closeSession(id);
-    jobs.current.delete(id);
+    closeTabs([id]);
+  }
+
+  function closeTabs(ids: string[]) {
+    const targets = new Set(ids);
+    if (targets.size === 0) return;
+    for (const id of targets) {
+      closeSession(id);
+      jobs.current.delete(id);
+    }
     setActivities((current) => {
+      let changed = false;
       const next = { ...current };
-      delete next[id];
-      return next;
+      for (const id of targets) {
+        if (id in next) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
     });
     setWorkspace((current) => {
       if (!current) return current;
-      const remaining = current.tabs.filter((item) => item.id !== id);
-      const index = current.tabs.findIndex((item) => item.id === id);
-      const activeTab =
-        current.activeTab === id
-          ? ((remaining[index] ?? remaining[index - 1])?.id ?? null)
-          : current.activeTab;
+      const remaining = current.tabs.filter((item) => !targets.has(item.id));
+      if (remaining.length === current.tabs.length) return current;
+      let activeTab = current.activeTab;
+      if (!activeTab || targets.has(activeTab)) {
+        const activeIndex = current.tabs.findIndex((item) => item.id === current.activeTab);
+        const fallbackIndex =
+          activeIndex >= 0
+            ? current.tabs.slice(0, activeIndex).filter((item) => !targets.has(item.id)).length
+            : 0;
+        activeTab =
+          (remaining[fallbackIndex] ?? remaining[fallbackIndex - 1] ?? remaining[0])?.id ?? null;
+      }
       return { tabs: remaining, activeTab };
+    });
+  }
+
+  function renameTab(id: string, title: string | undefined) {
+    const normalized = title === undefined ? undefined : normalizeTabTitle(title);
+    setWorkspace(
+      (current) =>
+        current && {
+          ...current,
+          tabs: current.tabs.map((item) => {
+            if (item.id !== id) return item;
+            if (normalized === undefined) {
+              const { title: _removed, ...rest } = item;
+              return rest;
+            }
+            return { ...item, title: normalized };
+          }),
+        },
+    );
+  }
+
+  function reorderTabs(activeId: string, targetId: string, placement: DropPlacement) {
+    setWorkspace((current) => {
+      if (!current) return current;
+      const nextTabs = reorderById(current.tabs, activeId, targetId, placement, (item) => item.id);
+      return nextTabs === current.tabs ? current : { ...current, tabs: nextTabs };
+    });
+  }
+
+  function shiftTab(id: string, delta: -1 | 1) {
+    setWorkspace((current) => {
+      if (!current) return current;
+      const nextTabs = moveItemByOffset(current.tabs, id, delta, (item) => item.id);
+      return nextTabs === current.tabs ? current : { ...current, tabs: nextTabs };
+    });
+  }
+
+  function duplicateTab(id: string) {
+    if (!workspace || workspace.tabs.length >= 100) {
+      setNotice("Close a tab before opening another.");
+      return;
+    }
+    const source = workspace.tabs.find((item) => item.id === id);
+    if (!source) return;
+    const copyTitle = source.title ? normalizeTabTitle(`${source.title} copy`) : undefined;
+    const duplicated: SavedTab = {
+      id: crypto.randomUUID(),
+      connectionId: source.connectionId,
+      ...(copyTitle !== undefined ? { title: copyTitle } : {}),
+      ...(source.database !== undefined ? { database: source.database } : {}),
+      ...(source.schema !== undefined ? { schema: source.schema } : {}),
+      text: source.text,
+    };
+    setWorkspace((current) => {
+      if (!current || current.tabs.length >= 100) return current;
+      const insertAt = current.tabs.findIndex((item) => item.id === id);
+      const nextTabs = [...current.tabs];
+      nextTabs.splice(insertAt >= 0 ? insertAt + 1 : nextTabs.length, 0, duplicated);
+      return { tabs: nextTabs, activeTab: duplicated.id };
+    });
+  }
+
+  function renameResult(tabId: string, resultId: string, title: string | undefined) {
+    const normalized = title === undefined ? undefined : normalizeTabTitle(title);
+    update(tabId, (current) =>
+      withResult(current, resultId, (result) => {
+        if (normalized === undefined) {
+          const { title: _removed, ...rest } = result;
+          return rest;
+        }
+        return { ...result, title: normalized };
+      }),
+    );
+  }
+
+  function reorderResults(
+    tabId: string,
+    activeId: string,
+    targetId: string,
+    placement: DropPlacement,
+  ) {
+    update(tabId, (current) => {
+      const nextResults = reorderById(
+        current.results,
+        activeId,
+        targetId,
+        placement,
+        (item) => item.id,
+      );
+      return nextResults === current.results ? current : { ...current, results: nextResults };
+    });
+  }
+
+  function shiftResult(tabId: string, resultId: string, delta: -1 | 1) {
+    update(tabId, (current) => {
+      const nextResults = moveItemByOffset(current.results, resultId, delta, (item) => item.id);
+      return nextResults === current.results ? current : { ...current, results: nextResults };
+    });
+  }
+
+  function closeResults(tabId: string, resultIds: string[]) {
+    const targets = new Set(resultIds);
+    if (targets.size === 0) return;
+    update(tabId, (current) => {
+      if (current.fetching) targets.delete(current.fetching);
+      if (targets.size === 0) return current;
+      const remaining = current.results.filter((item) => !targets.has(item.id));
+      if (remaining.length === current.results.length) return current;
+      let selected = current.selected;
+      if (selected && targets.has(selected)) {
+        const removedIndex = current.results.findIndex((item) => item.id === selected);
+        const fallbackIndex =
+          removedIndex >= 0
+            ? current.results.slice(0, removedIndex).filter((item) => !targets.has(item.id)).length
+            : 0;
+        selected =
+          (remaining[fallbackIndex] ?? remaining[fallbackIndex - 1] ?? remaining[0])?.id ??
+          (current.messages.length ? "messages" : null);
+      }
+      return { ...current, results: remaining, selected };
     });
   }
 
@@ -429,10 +576,8 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
     };
     const startedAt = performance.now();
     const resolveTabLabel = () => {
-      const siblingIndex = tabsRef.current
-        .filter((value) => value.connectionId === item.connectionId)
-        .findIndex((value) => value.id === item.id);
-      return siblingIndex > 0 ? `${connection.name} ${siblingIndex + 1}` : connection.name;
+      const currentTab = tabsRef.current.find((value) => value.id === item.id) ?? item;
+      return scriptTabLabel(tabsRef.current, currentTab, connection.name);
     };
     jobs.current.set(item.id, job);
     update(item.id, (current) => ({ ...current, busy: existing ? "Running" : "Connecting" }));
@@ -947,6 +1092,15 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
     addTab,
     moveTab,
     closeTab,
+    closeTabs,
+    renameTab,
+    reorderTabs,
+    shiftTab,
+    duplicateTab,
+    renameResult,
+    reorderResults,
+    shiftResult,
+    closeResults,
     editText,
     setPanel,
     saveProfile,

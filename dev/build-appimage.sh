@@ -27,6 +27,9 @@ ln -s usr/share/icons/hicolor/128x128/apps/strata.png "$appdir/strata.png"
 cat > "$appdir/AppRun" <<'RUN'
 #!/bin/sh
 set -eu
+if [ -n "${XDG_ACTIVATION_TOKEN:-}" ] && [ -z "${DESKTOP_STARTUP_ID:-}" ]; then
+    export DESKTOP_STARTUP_ID="$XDG_ACTIVATION_TOKEN"
+fi
 appdir=$(dirname "$(readlink -f "$0")")
 exec "$appdir/usr/bin/strata" "$@"
 RUN

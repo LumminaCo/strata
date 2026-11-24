@@ -186,11 +186,15 @@ body {
 .query-tab-list,
 .result-tabs {
   display: flex;
+  align-items: center;
   gap: 2px;
   min-width: 0;
+  padding-inline: 2px;
   overflow: auto;
 }
 .query-tab {
+  position: relative;
+  flex-shrink: 0;
   gap: 0;
   padding-right: 2px;
   border: 1px solid transparent;
@@ -203,8 +207,80 @@ body {
 .query-tab button[role="tab"] {
   gap: 7px;
 }
-.query-tab button[role="tab"] svg:not(.db-icon) {
+.query-tab button[role="tab"] svg:not(.db-icon),
+.query-tab-rename svg:not(.db-icon) {
   color: var(--workspace-accent);
+}
+.result-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.tab-label {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.query-tab-rename,
+.result-tab-rename {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding-inline: 6px;
+}
+.query-tab-rename > svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.tab-rename-input {
+  height: 22px;
+  min-width: 72px;
+  max-width: 200px;
+  padding: 0 6px;
+  border: 1px solid var(--ring);
+  border-radius: calc(var(--radius) * 0.7);
+  background: var(--background);
+  color: var(--foreground);
+  font: 500 var(--font-size-ui) / 1 var(--ui-font);
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 25%, transparent);
+}
+.tab-rename-input::placeholder {
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+.query-tab[data-dragging="true"],
+.result-tab[data-dragging="true"] {
+  opacity: 0.45;
+}
+.query-tab[data-drop-position]::after,
+.result-tab[data-drop-position]::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 999px;
+  background: var(--ring);
+  pointer-events: none;
+  z-index: 2;
+}
+.query-tab[data-drop-position="before"]::after,
+.result-tab[data-drop-position="before"]::after {
+  left: -2px;
+}
+.query-tab[data-drop-position="after"]::after,
+.result-tab[data-drop-position="after"]::after {
+  right: -2px;
+}
+body[data-tab-dragging="true"],
+body[data-tab-dragging="true"] * {
+  user-select: none;
+  cursor: grabbing !important;
 }
 
 .db-icon {

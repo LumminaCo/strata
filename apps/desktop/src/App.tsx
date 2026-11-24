@@ -9,7 +9,6 @@ import {
   ShieldCheck,
   History,
   Command as CommandIcon,
-  FileCode2,
   FolderOpen,
   Save,
   Monitor,
@@ -64,9 +63,24 @@ import {
 } from "@/features/query-notifications";
 import { playQuerySound, primeQuerySound } from "@/features/query-sound";
 import { saveSqlFile as persistSqlFile } from "@/features/save-sql-file";
+import {
+  PinnedInspectionTabItem,
+  ResultTabItem,
+  SchemaTabItem,
+  ScriptTabItem,
+} from "@/features/tab-controls";
+import {
+  defaultResultTabLabel,
+  defaultScriptTabLabel,
+  moveItemByOffset,
+  reorderById,
+  resultTabLabel,
+  scriptTabLabel,
+} from "@/features/tab-order";
 import { TableInspector, type Inspection } from "@/features/table-inspector";
 import { useCatalogSchema } from "@/features/use-catalog-schema";
 import { shortcuts, workspaceKeydown } from "@/features/keymap";
+import { useTabDrag } from "@/features/use-tab-drag";
 import { useWorkspace } from "@/features/use-workspace";
 import { useAppUpdate } from "@/features/use-app-update";
 import type { Cell, Connection, RunMode } from "@/ipc/bindings/protocol";
@@ -134,6 +148,11 @@ export function App() {
   const [schemaTabs, setSchemaTabs] = useState<Inspection[]>([]);
   const [schemaSelected, setSchemaSelected] = useState<string>();
   const [pinnedByTab, setPinned] = useState<Record<string, Inspection[]>>({});
+  const [renamingScriptTabId, setRenamingScriptTabId] = useState<string | null>(null);
+  const [renamingResultTab, setRenamingResultTab] = useState<{
+    tabId: string;
+    resultId: string;
+  } | null>(null);
   const [resolveTip, setResolveTip] = useState("");
   const resolution = useRef(0);
   const schemaActive = schemaTabs.find((item) => inspectionKey(item) === schemaSelected);
@@ -162,6 +181,33 @@ export function App() {
   const result = active.results.find((entry) => entry.id === selected);
   const fetchingResult = !!result && active.fetching === result.id;
   const showFilter = !!result && filterResult?.cursor === result.id;
+  const scriptTabDrag = useTabDrag({
+    disabled: renamingScriptTabId !== null,
+    onReorder: (activeId, targetId, placement) => data.reorderTabs(activeId, targetId, placement),
+  });
+  const schemaTabDrag = useTabDrag({
+    onReorder: (activeId, targetId, placement) =>
+      setSchemaTabs((current) =>
+        reorderById(current, activeId, targetId, placement, inspectionKey),
+      ),
+  });
+  const resultTabDrag = useTabDrag({
+    disabled: !tab || renamingResultTab !== null,
+    onReorder: (activeId, targetId, placement) => {
+      if (tab) data.reorderResults(tab.id, activeId, targetId, placement);
+    },
+  });
+  const pinnedTabDrag = useTabDrag({
+    disabled: !tab,
+    onReorder: (activeId, targetId, placement) => {
+      if (!tab) return;
+      setPinned((current) => {
+        const list = current[tab.id] ?? [];
+        const next = reorderById(list, activeId, targetId, placement, inspectionKey);
+        return next === list ? current : { ...current, [tab.id]: next };
+      });
+    },
+  });
 
   useEffect(() => {
     const preference = matchMedia("(prefers-color-scheme: dark)");
@@ -249,20 +295,67 @@ export function App() {
     setPalette(false);
   }
 
-  function closeTab(id: string, approved = false) {
-    if (!approved && data.transactionAtRisk(id)) {
-      setCloseWarning({ title: "Close SQL tab?", confirm: () => closeTab(id, true) });
-      return;
+  function closeManyTabs(ids: string[], approved = false) {
+    if (ids.length === 0) return;
+    if (!approved) {
+      const atRisk = ids.filter((id) => data.transactionAtRisk(id));
+      if (atRisk.length > 0) {
+        setCloseWarning({
+          title: atRisk.length === 1 ? "Close SQL tab?" : `Close ${atRisk.length} SQL tabs?`,
+          confirm: () => closeManyTabs(ids, true),
+        });
+        return;
+      }
     }
-    data.closeTab(id);
-    editors.current.delete(id);
-    savedSqlPaths.current.delete(id);
-    setQueryToasts((current) => current.filter((item) => item.tabId !== id));
+    const closing = new Set(ids);
+    data.closeTabs(ids);
+    for (const id of closing) {
+      editors.current.delete(id);
+      savedSqlPaths.current.delete(id);
+    }
+    setRenamingScriptTabId((current) => (current && closing.has(current) ? null : current));
+    setRenamingResultTab((current) => (current && closing.has(current.tabId) ? null : current));
+    setQueryToasts((current) => current.filter((item) => !closing.has(item.tabId)));
     setPinned((current) => {
+      let changed = false;
       const next = { ...current };
-      delete next[id];
-      return next;
+      for (const id of closing) {
+        if (id in next) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
     });
+  }
+
+  function closeTab(id: string, approved = false) {
+    closeManyTabs([id], approved);
+  }
+
+  function closeResultTabs(tabId: string, resultIds: string[]) {
+    if (resultIds.length === 0) return;
+    const closing = new Set(resultIds);
+    data.closeResults(tabId, resultIds);
+    setFilterResult((current) => (current && closing.has(current.cursor) ? undefined : current));
+    setRenamingResultTab((current) =>
+      current && current.tabId === tabId && closing.has(current.resultId) ? null : current,
+    );
+  }
+
+  function closePinnedInspection(tabId: string, key: string) {
+    const remaining = (pinnedByTab[tabId] ?? []).filter((entry) => inspectionKey(entry) !== key);
+    setPinned((current) => ({
+      ...current,
+      [tabId]: (current[tabId] ?? []).filter((entry) => inspectionKey(entry) !== key),
+    }));
+    if (selected === key) {
+      const fallback =
+        active.results[0]?.id ??
+        (remaining[0] ? inspectionKey(remaining[0]) : null) ??
+        (active.messages.length ? "messages" : null);
+      data.setPanel(tabId, fallback);
+    }
   }
 
   async function navigate(offset: number, full: boolean) {
@@ -434,6 +527,8 @@ export function App() {
           settingsOpen ||
           closeWarning ||
           update.status ||
+          renamingScriptTabId !== null ||
+          renamingResultTab !== null ||
           event.defaultPrevented
         )
           return;
@@ -663,82 +758,93 @@ export function App() {
                 <Database />
               </Button>
             )}
-            <div className="query-tab-list" role="tablist" aria-label="SQL tabs">
-              {data.tabs.map((item) => {
+            <div
+              className="query-tab-list"
+              role="tablist"
+              aria-label="SQL tabs"
+              ref={(element) => {
+                scriptTabDrag.listRef.current = element;
+                schemaTabDrag.listRef.current = element;
+              }}
+            >
+              {data.tabs.map((item, index) => {
                 const connection = data.profiles.find((value) => value.id === item.connectionId);
-                const title = connection?.name ?? "Deleted connection";
-                const number = data.tabs
-                  .filter((value) => value.connectionId === item.connectionId)
-                  .indexOf(item);
+                const defaultLabel = defaultScriptTabLabel(data.tabs, item, connection?.name);
+                const label = scriptTabLabel(data.tabs, item, connection?.name);
+                const closeShortcut = browserMode ? "Alt+W" : shortcuts.closeTab;
                 return (
-                  <div
+                  <ScriptTabItem
                     key={item.id}
-                    className="query-tab"
-                    data-active={!schemaActive && tab?.id === item.id}
-                  >
-                    <Button
-                      variant="ghost"
-                      role="tab"
-                      aria-selected={!schemaActive && tab?.id === item.id}
-                      onClick={() => {
-                        resolution.current++;
-                        setResolveTip("");
-                        setSchemaSelected(undefined);
-                        data.selectTab(item.id);
-                      }}
-                    >
-                      {connection ? <DatabaseIcon kind={connection.kind} /> : <FileCode2 />}
-                      <span>
-                        {title}
-                        {number ? ` ${number + 1}` : ""}
-                      </span>
-                      <span
-                        className="env-dot"
-                        data-env={connection?.env}
-                        data-color={connection?.color}
-                      />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label={`Close ${title} tab ${number + 1}`}
-                      title={`Close tab (${browserMode ? "Alt+W" : shortcuts.closeTab})`}
-                      onClick={() => closeTab(item.id)}
-                    >
-                      <X />
-                    </Button>
-                  </div>
+                    tab={item}
+                    connection={connection}
+                    label={label}
+                    defaultLabel={defaultLabel}
+                    active={!schemaActive && tab?.id === item.id}
+                    renaming={renamingScriptTabId === item.id}
+                    canMoveLeft={index > 0}
+                    canMoveRight={index < data.tabs.length - 1}
+                    canCloseOthers={data.tabs.length > 1}
+                    canCloseRight={index < data.tabs.length - 1}
+                    closeShortcut={closeShortcut}
+                    dragProps={scriptTabDrag.getTabProps(item.id)}
+                    onSelect={() => {
+                      resolution.current++;
+                      setResolveTip("");
+                      setSchemaSelected(undefined);
+                      data.selectTab(item.id);
+                    }}
+                    onStartRename={() => setRenamingScriptTabId(item.id)}
+                    onCommitRename={(value) => {
+                      data.renameTab(item.id, value);
+                      setRenamingScriptTabId(null);
+                    }}
+                    onCancelRename={() => setRenamingScriptTabId(null)}
+                    onResetName={() => data.renameTab(item.id, undefined)}
+                    onMoveLeft={() => data.shiftTab(item.id, -1)}
+                    onMoveRight={() => data.shiftTab(item.id, 1)}
+                    onDuplicate={() => {
+                      setSchemaSelected(undefined);
+                      data.duplicateTab(item.id);
+                    }}
+                    onClose={() => closeTab(item.id)}
+                    onCloseOthers={() =>
+                      closeManyTabs(
+                        data.tabs.filter((entry) => entry.id !== item.id).map((entry) => entry.id),
+                      )
+                    }
+                    onCloseRight={() =>
+                      closeManyTabs(data.tabs.slice(index + 1).map((entry) => entry.id))
+                    }
+                  />
                 );
               })}
-              {schemaTabs.map((item) => {
+              {schemaTabs.map((item, index) => {
                 const key = inspectionKey(item);
                 return (
-                  <div key={key} className="query-tab" data-active={schemaSelected === key}>
-                    <Button
-                      variant="ghost"
-                      role="tab"
-                      aria-selected={schemaSelected === key}
-                      onClick={() => setSchemaSelected(key)}
-                    >
-                      <DatabaseIcon kind={item.connection.kind} />
-                      <span>
-                        {item.object.schema}.{item.object.name}
-                      </span>
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label={`Close schema tab ${item.object.name}`}
-                      onClick={() => {
-                        if (schemaSelected === key) setSchemaSelected(undefined);
-                        setSchemaTabs((tabs) =>
-                          tabs.filter((entry) => inspectionKey(entry) !== key),
-                        );
-                      }}
-                    >
-                      <X />
-                    </Button>
-                  </div>
+                  <SchemaTabItem
+                    key={key}
+                    item={item}
+                    active={schemaSelected === key}
+                    canMoveLeft={index > 0}
+                    canMoveRight={index < schemaTabs.length - 1}
+                    canCloseOthers={schemaTabs.length > 1}
+                    dragProps={schemaTabDrag.getTabProps(key)}
+                    onSelect={() => setSchemaSelected(key)}
+                    onMoveLeft={() =>
+                      setSchemaTabs((current) => moveItemByOffset(current, key, -1, inspectionKey))
+                    }
+                    onMoveRight={() =>
+                      setSchemaTabs((current) => moveItemByOffset(current, key, 1, inspectionKey))
+                    }
+                    onClose={() => {
+                      if (schemaSelected === key) setSchemaSelected(undefined);
+                      setSchemaTabs((tabs) => tabs.filter((entry) => inspectionKey(entry) !== key));
+                    }}
+                    onCloseOthers={() => {
+                      setSchemaSelected(key);
+                      setSchemaTabs((tabs) => tabs.filter((entry) => inspectionKey(entry) === key));
+                    }}
+                  />
                 );
               })}
             </div>
@@ -964,30 +1070,90 @@ export function App() {
                     }}
                   >
                     <div className="panel-heading">
-                      <div className="result-tabs" role="tablist" aria-label="Result tabs">
-                        {active.results.map((item) => (
-                          <Button
-                            key={item.id}
-                            variant="ghost"
-                            role="tab"
-                            aria-selected={selected === item.id}
-                            onClick={() => data.setPanel(tab.id, item.id)}
-                          >
-                            Result {item.index + 1}
-                          </Button>
-                        ))}
-                        {pinned.map((item) => {
+                      <div
+                        className="result-tabs"
+                        role="tablist"
+                        aria-label="Result tabs"
+                        ref={(element) => {
+                          resultTabDrag.listRef.current = element;
+                          pinnedTabDrag.listRef.current = element;
+                        }}
+                      >
+                        {active.results.map((item, index) => {
+                          const defaultLabel = defaultResultTabLabel(item);
+                          const label = resultTabLabel(item);
+                          const otherClosableIds = active.results
+                            .filter((entry) => entry.id !== item.id && entry.id !== active.fetching)
+                            .map((entry) => entry.id);
+                          return (
+                            <ResultTabItem
+                              key={item.id}
+                              result={item}
+                              label={label}
+                              defaultLabel={defaultLabel}
+                              active={selected === item.id}
+                              renaming={
+                                renamingResultTab?.tabId === tab.id &&
+                                renamingResultTab.resultId === item.id
+                              }
+                              fetching={active.fetching === item.id}
+                              canMoveLeft={index > 0}
+                              canMoveRight={index < active.results.length - 1}
+                              canCloseOthers={otherClosableIds.length > 0}
+                              dragProps={resultTabDrag.getTabProps(item.id)}
+                              onSelect={() => data.setPanel(tab.id, item.id)}
+                              onStartRename={() =>
+                                setRenamingResultTab({ tabId: tab.id, resultId: item.id })
+                              }
+                              onCommitRename={(value) => {
+                                data.renameResult(tab.id, item.id, value);
+                                setRenamingResultTab(null);
+                              }}
+                              onCancelRename={() => setRenamingResultTab(null)}
+                              onResetName={() => data.renameResult(tab.id, item.id, undefined)}
+                              onMoveLeft={() => data.shiftResult(tab.id, item.id, -1)}
+                              onMoveRight={() => data.shiftResult(tab.id, item.id, 1)}
+                              onClose={() => closeResultTabs(tab.id, [item.id])}
+                              onCloseOthers={() => closeResultTabs(tab.id, otherClosableIds)}
+                            />
+                          );
+                        })}
+                        {pinned.map((item, index) => {
                           const key = inspectionKey(item);
                           return (
-                            <Button
+                            <PinnedInspectionTabItem
                               key={key}
-                              variant="ghost"
-                              role="tab"
-                              aria-selected={selected === key}
-                              onClick={() => data.setPanel(tab.id, key)}
-                            >
-                              {item.object.schema}.{item.object.name}
-                            </Button>
+                              item={item}
+                              active={selected === key}
+                              canMoveLeft={index > 0}
+                              canMoveRight={index < pinned.length - 1}
+                              dragProps={pinnedTabDrag.getTabProps(key)}
+                              onSelect={() => data.setPanel(tab.id, key)}
+                              onPromote={() => openObject(item)}
+                              onMoveLeft={() =>
+                                setPinned((current) => ({
+                                  ...current,
+                                  [tab.id]: moveItemByOffset(
+                                    current[tab.id] ?? [],
+                                    key,
+                                    -1,
+                                    inspectionKey,
+                                  ),
+                                }))
+                              }
+                              onMoveRight={() =>
+                                setPinned((current) => ({
+                                  ...current,
+                                  [tab.id]: moveItemByOffset(
+                                    current[tab.id] ?? [],
+                                    key,
+                                    1,
+                                    inspectionKey,
+                                  ),
+                                }))
+                              }
+                              onClose={() => closePinnedInspection(tab.id, key)}
+                            />
                           );
                         })}
                         <Button

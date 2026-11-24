@@ -19,6 +19,7 @@ import { gridTheme } from "@/theme/glide";
 export interface ResultSet {
   id: string;
   index: number;
+  title?: string;
   columns: ColumnMeta[];
   rows: Cell[][];
   more: boolean;

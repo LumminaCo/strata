@@ -266,10 +266,15 @@ export function App() {
     setTheme(next);
   }
 
-  function run(mode: RunMode) {
+  function run(mode: RunMode, keepResults = false) {
     if (!editor.current || active.busy || schemaActive) return;
     if (notificationPrefs.current.sound) primeQuerySound();
-    void data.run({ text: editor.current.text(), target: editor.current.target(), mode });
+    void data.run({
+      text: editor.current.text(),
+      target: editor.current.target(),
+      mode,
+      keepResults,
+    });
   }
 
   function openTab(id: string, database?: string, text?: string, schema?: string) {
@@ -536,6 +541,7 @@ export function App() {
           event.nativeEvent,
           {
             run: () => run("statement"),
+            runInNewTab: () => run("statement", true),
             script: () => run("script"),
             stop: () => void data.stop(),
             newTab: () => {

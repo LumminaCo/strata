@@ -134,6 +134,9 @@ pub struct RunRequest {
     pub target: Target,
     pub mode: RunMode,
     pub confirmed: bool,
+    #[serde(default)]
+    #[ts(optional)]
+    pub keep_results: Option<bool>,
 }
 
 #[derive(Deserialize, TS)]
@@ -331,6 +334,10 @@ pub enum Command {
         cursor_id: Uuid,
         row: usize,
         column: usize,
+    },
+    DropResult {
+        session_id: Uuid,
+        cursor_id: Uuid,
     },
     PlanQuery {
         kind: Option<strata_core::DbKind>,

@@ -77,6 +77,7 @@ async fn desktop_streams_scripts_cancels_and_restores_workspace() {
             target: Target::Cursor { cursor: 0 },
             mode: RunMode::Script,
             confirmed: false,
+            keep_results: None,
         },
         |event| {
             frames.lock().unwrap().push(event);
@@ -168,6 +169,7 @@ async fn desktop_streams_scripts_cancels_and_restores_workspace() {
                 target: Target::Cursor { cursor: 0 },
                 mode: RunMode::Script,
                 confirmed: false,
+                keep_results: None,
             },
             |event| {
                 stopped.lock().unwrap().push(event);
@@ -268,6 +270,7 @@ async fn desktop_streams_scripts_cancels_and_restores_workspace() {
                 target: Target::Cursor { cursor: 0 },
                 mode: RunMode::Statement,
                 confirmed: false,
+                keep_results: None,
             },
             |event| {
                 sql_switch.lock().unwrap().push(event);

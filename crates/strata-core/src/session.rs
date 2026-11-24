@@ -502,6 +502,40 @@ impl Core {
         state.discard().await
     }
 
+    pub async fn preserve_results(&self, session: Uuid) -> Result<()> {
+        let session = self.session(session).await?;
+        let mut state = session.state.lock().await;
+        if let Some(mut cursor) = state.cursor.take() {
+            if let Some(mut stream) = cursor.stream.take() {
+                cursor.cancel.cancel();
+                let result = cancel_and_drain(state.connection.cancel_handle(), &mut stream).await;
+                state.transaction_failed |= state.transaction_open;
+                state.broken |= result.is_err();
+                result?;
+            }
+            if !cursor.columns.is_empty() {
+                state.previous.insert(cursor.id, cursor);
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn drop_result(&self, session: Uuid, cursor: Uuid) -> Result<()> {
+        let session = self.session(session).await?;
+        let mut state = session.state.lock().await;
+        if state.previous.remove(&cursor).is_some() {
+            return Ok(());
+        }
+        if state
+            .cursor
+            .as_ref()
+            .is_some_and(|value| value.id == cursor)
+        {
+            state.discard().await?;
+        }
+        Ok(())
+    }
+
     pub async fn retain_result(&self, session: Uuid, cursor: Uuid) -> Result<()> {
         let session = self.session(session).await?;
         let mut state = session.state.lock().await;
@@ -870,5 +904,163 @@ mod tests {
             .await
             .unwrap();
         assert!(core.set_schema(mssql, "sales").await.is_err());
+    }
+
+    struct ScriptedDriver {
+        batches: Arc<Mutex<std::collections::VecDeque<Vec<ExecEvent>>>>,
+    }
+
+    struct ScriptedConnection {
+        batches: Arc<Mutex<std::collections::VecDeque<Vec<ExecEvent>>>>,
+    }
+
+    #[async_trait]
+    impl Driver for ScriptedDriver {
+        fn kind(&self) -> DbKind {
+            DbKind::Postgres
+        }
+
+        async fn connect(
+            &self,
+            _profile: &Profile,
+            _secret: &Secret,
+        ) -> Result<Box<dyn DbConnection>> {
+            Ok(Box::new(ScriptedConnection {
+                batches: self.batches.clone(),
+            }))
+        }
+
+        async fn introspector(
+            &self,
+            _profile: &Profile,
+            _secret: &Secret,
+        ) -> Result<Box<dyn Introspector>> {
+            Err(CoreError::config("unused"))
+        }
+    }
+
+    #[async_trait]
+    impl DbConnection for ScriptedConnection {
+        async fn execute(&mut self, _sql: &str, _cancel: CancellationToken) -> Result<ExecStream> {
+            let events = self.batches.lock().await.pop_front().unwrap_or_default();
+            Ok(Box::pin(stream::iter(events.into_iter().map(Ok))))
+        }
+
+        fn cancel_handle(&self) -> CancelHandle {
+            Arc::new(|| Box::pin(async { Ok(()) }))
+        }
+
+        async fn set_read_only(&mut self, _on: bool) -> Result<()> {
+            Ok(())
+        }
+        async fn set_statement_timeout(&mut self, _milliseconds: u32) -> Result<()> {
+            Ok(())
+        }
+        async fn begin(&mut self) -> Result<()> {
+            Ok(())
+        }
+        async fn commit(&mut self) -> Result<()> {
+            Ok(())
+        }
+        async fn rollback(&mut self) -> Result<()> {
+            Ok(())
+        }
+        async fn server_info(&mut self) -> Result<ServerInfo> {
+            Ok(ServerInfo {
+                version: "Fake 1".into(),
+                database: "db".into(),
+                schema: Some("public".into()),
+                user: "user".into(),
+            })
+        }
+        async fn ping(&mut self) -> Result<()> {
+            Ok(())
+        }
+        fn is_closed(&self) -> bool {
+            false
+        }
+    }
+
+    fn text_column(name: &str) -> ColumnMeta {
+        ColumnMeta {
+            name: name.into(),
+            db_type: "text".into(),
+            kind: CellKind::Text,
+            nullable: Some(false),
+            table_oid: None,
+            column_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn preserve_results_keeps_previous_cells_and_drop_result_frees_row_cap() {
+        let batches = Arc::new(Mutex::new(std::collections::VecDeque::from([
+            vec![
+                ExecEvent::ResultStart(vec![text_column("label")]),
+                ExecEvent::Row(vec![Cell::Text("first-1".into())]),
+                ExecEvent::Row(vec![Cell::Text("first-2".into())]),
+                ExecEvent::Row(vec![Cell::Text("first-3".into())]),
+                ExecEvent::ResultEnd,
+            ],
+            vec![
+                ExecEvent::ResultStart(vec![text_column("label")]),
+                ExecEvent::Row(vec![Cell::Text("second-1".into())]),
+                ExecEvent::ResultEnd,
+            ],
+            vec![
+                ExecEvent::ResultStart(vec![text_column("label")]),
+                ExecEvent::Row(vec![Cell::Text("third-1".into())]),
+                ExecEvent::Row(vec![Cell::Text("third-2".into())]),
+                ExecEvent::ResultEnd,
+            ],
+        ])));
+        let core = Core::new(
+            [Arc::new(ScriptedDriver { batches }) as Arc<dyn Driver>],
+            Limits {
+                fetch_size: 2,
+                row_cap: 4,
+                timeout_ms: 0,
+            },
+        )
+        .unwrap();
+        let session = core
+            .open_session(&test_profile(DbKind::Postgres), &Secret::new("s".into()))
+            .await
+            .unwrap();
+
+        // First query pauses after 2 rows (still streaming).
+        let first = core.run_batch(session, "SELECT 1", 2, None).await.unwrap();
+        assert!(!first.exhausted);
+        assert_eq!(first.rows.len(), 2);
+
+        // Preserving drains the paused stream and retains its fetched rows for get_cell.
+        core.preserve_results(session).await.unwrap();
+        let second = core.run_batch(session, "SELECT 2", 2, None).await.unwrap();
+        assert!(second.exhausted);
+        assert_eq!(
+            core.get_cell(session, first.cursor, 0, 0).await.unwrap(),
+            Cell::Text("first-1".into())
+        );
+        assert_eq!(
+            core.get_cell(session, second.cursor, 0, 0).await.unwrap(),
+            Cell::Text("second-1".into())
+        );
+
+        // Dropping the first result removes it and frees row_cap budget for a third query.
+        core.drop_result(session, first.cursor).await.unwrap();
+        assert!(core.get_cell(session, first.cursor, 0, 0).await.is_err());
+
+        core.preserve_results(session).await.unwrap();
+        let third = core.run_batch(session, "SELECT 3", 2, None).await.unwrap();
+        assert_eq!(third.rows.len(), 2);
+        assert!(!third.capped);
+        assert_eq!(
+            core.get_cell(session, second.cursor, 0, 0).await.unwrap(),
+            Cell::Text("second-1".into())
+        );
+        assert_eq!(
+            core.get_cell(session, third.cursor, 1, 0).await.unwrap(),
+            Cell::Text("third-2".into())
+        );
     }
 }

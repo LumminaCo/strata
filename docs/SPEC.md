@@ -529,7 +529,8 @@ Full-height version of the table view plus a left list of FK neighbors (depth 1)
 | Action | Shortcut |
 | --- | --- |
 | Run statement / block at cursor | Ctrl+Enter |
-| Run script (all, or selection) | Ctrl+Shift+Enter, Alt+X |
+| Run statement in new result tab | Ctrl+Shift+Enter |
+| Run script (all, or selection) | Alt+X |
 | Stop | Ctrl+. |
 | Explain plan (text) | Ctrl+Shift+E |
 | Table view / Schema tab | Ctrl+Click / Ctrl+Shift+Click, F4 |

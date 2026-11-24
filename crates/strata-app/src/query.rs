@@ -128,7 +128,14 @@ impl AppService {
         let mut explain_mode = false;
         let run = async {
             check_cancel(&cancel)?;
-            self.engine.core().clear_results(request.session_id).await?;
+            if request.keep_results.unwrap_or(false) {
+                self.engine
+                    .core()
+                    .preserve_results(request.session_id)
+                    .await?;
+            } else {
+                self.engine.core().clear_results(request.session_id).await?;
+            }
             if matches!(request.mode, RunMode::Explain) && session.kind == DbKind::SqlServer {
                 self.engine
                     .core()

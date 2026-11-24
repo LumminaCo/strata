@@ -241,6 +241,12 @@ function keybindingEntries(): KeybindingEntry[] {
     },
     {
       group: "Query execution",
+      label: "Run statement in new result tab",
+      description: "Execute the current statement and open its results in a new result tab.",
+      keys: shortcuts.runInNewTab,
+    },
+    {
+      group: "Query execution",
       label: "Run script",
       description: "Execute the entire SQL script in the active tab.",
       keys: shortcuts.script,

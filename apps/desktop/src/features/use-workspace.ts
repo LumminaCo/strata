@@ -26,7 +26,7 @@ import type {
 } from "@/ipc/bindings/protocol";
 import { dispatch, errorMessage, runQuery } from "@/ipc/client";
 
-interface Activity {
+export interface Activity {
   session?: SessionInfo;
   busy?: "Connecting" | "Running" | "Stopping" | "Fetching rows";
   fetching?: string;
@@ -49,6 +49,7 @@ interface Query {
   text: string;
   target: Target;
   mode: RunMode;
+  keepResults?: boolean;
 }
 
 type Modal =
@@ -60,7 +61,95 @@ type Modal =
     }
   | { kind: "query"; name: string; reason: string; sql: string; submit: () => void };
 
-const idle: Activity = { results: [], selected: null, messages: [] };
+export const idle: Activity = { results: [], selected: null, messages: [] };
+
+export function beginQueryActivity(
+  current: Activity,
+  session: SessionInfo,
+  keepResults = false,
+): Activity {
+  if (keepResults) {
+    return {
+      ...current,
+      session,
+      busy: "Running",
+      diagnostic: undefined,
+      elapsed: undefined,
+      results: current.results.map((result) => ({ ...result, more: false })),
+    };
+  }
+  return {
+    ...idle,
+    session,
+    busy: "Running",
+    dbmsOutput: current.dbmsOutput,
+    transaction: current.transaction,
+  };
+}
+
+export function applyResultStart(
+  current: Activity,
+  event: Extract<RunEvent, { type: "resultStart" }>,
+): Activity {
+  const nextIndex = current.results.reduce((max, item) => Math.max(max, item.index), -1) + 1;
+  return {
+    ...current,
+    selected: event.resultIndex === 0 ? event.cursorId : (current.selected ?? event.cursorId),
+    results: [
+      ...current.results,
+      {
+        id: event.cursorId,
+        columns: event.columns,
+        index: nextIndex,
+        rows: event.rows,
+        more: false,
+        capped: false,
+      },
+    ],
+  };
+}
+
+export function finishQueryActivity(
+  current: Activity,
+  event: Extract<RunEvent, { type: "done" }>,
+  options: { keepResults?: boolean; resultSets: number; cancelled: boolean },
+): Activity {
+  return {
+    ...current,
+    selected:
+      options.keepResults && options.resultSets === 0 && !options.cancelled
+        ? "messages"
+        : current.selected,
+    elapsed: event.elapsedMs,
+    messages: [
+      ...current.messages,
+      {
+        level: "info",
+        text: `${event.statements} statements completed · ${event.elapsedMs} ms`,
+      },
+    ],
+  };
+}
+
+export function removeResultTabs(current: Activity, resultIds: string[]): Activity {
+  const targets = new Set(resultIds);
+  if (current.fetching) targets.delete(current.fetching);
+  if (targets.size === 0) return current;
+  const remaining = current.results.filter((item) => !targets.has(item.id));
+  if (remaining.length === current.results.length) return current;
+  let selected = current.selected;
+  if (selected && targets.has(selected)) {
+    const removedIndex = current.results.findIndex((item) => item.id === selected);
+    const fallbackIndex =
+      removedIndex >= 0
+        ? current.results.slice(0, removedIndex).filter((item) => !targets.has(item.id)).length
+        : 0;
+    selected =
+      (remaining[fallbackIndex] ?? remaining[fallbackIndex - 1] ?? remaining[0])?.id ??
+      (current.messages.length ? "messages" : null);
+  }
+  return { ...current, results: remaining, selected };
+}
 
 export interface UseWorkspaceOptions {
   onQueryComplete?: (completion: QueryCompletion) => void;
@@ -304,26 +393,16 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
   }
 
   function closeResults(tabId: string, resultIds: string[]) {
-    const targets = new Set(resultIds);
-    if (targets.size === 0) return;
-    update(tabId, (current) => {
-      if (current.fetching) targets.delete(current.fetching);
-      if (targets.size === 0) return current;
-      const remaining = current.results.filter((item) => !targets.has(item.id));
-      if (remaining.length === current.results.length) return current;
-      let selected = current.selected;
-      if (selected && targets.has(selected)) {
-        const removedIndex = current.results.findIndex((item) => item.id === selected);
-        const fallbackIndex =
-          removedIndex >= 0
-            ? current.results.slice(0, removedIndex).filter((item) => !targets.has(item.id)).length
-            : 0;
-        selected =
-          (remaining[fallbackIndex] ?? remaining[fallbackIndex - 1] ?? remaining[0])?.id ??
-          (current.messages.length ? "messages" : null);
+    if (resultIds.length === 0) return;
+    const fetching = activities[tabId]?.fetching;
+    const droppable = resultIds.filter((cursorId) => cursorId !== fetching);
+    update(tabId, (current) => removeResultTabs(current, resultIds));
+    const session = sessions.current.get(tabId);
+    if (session) {
+      for (const cursorId of droppable) {
+        void dispatch("drop_result", { sessionId: session.id, cursorId }).catch(() => {});
       }
-      return { ...current, results: remaining, selected };
-    });
+    }
   }
 
   function editText(id: string, text: string) {
@@ -401,27 +480,14 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
     query: Query,
     event: RunEvent,
     spans: Map<number, [number, number]>,
+    outcome: { resultSets: number; cancelled: boolean },
   ) {
     switch (event.type) {
       case "statementStart":
         spans.set(event.index, event.span);
         break;
       case "resultStart":
-        update(id, (current) => ({
-          ...current,
-          selected: current.selected ?? event.cursorId,
-          results: [
-            ...current.results,
-            {
-              id: event.cursorId,
-              columns: event.columns,
-              index: event.resultIndex,
-              rows: event.rows,
-              more: false,
-              capped: false,
-            },
-          ],
-        }));
+        update(id, (current) => applyResultStart(current, event));
         break;
       case "rows":
         update(id, (current) =>
@@ -501,17 +567,13 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
         break;
       case "done":
         setHistoryRevision((value) => value + 1);
-        update(id, (current) => ({
-          ...current,
-          elapsed: event.elapsedMs,
-          messages: [
-            ...current.messages,
-            {
-              level: "info",
-              text: `${event.statements} statements completed · ${event.elapsedMs} ms`,
-            },
-          ],
-        }));
+        update(id, (current) =>
+          finishQueryActivity(current, event, {
+            keepResults: query.keepResults,
+            resultSets: outcome.resultSets,
+            cancelled: outcome.cancelled,
+          }),
+        );
     }
   }
 
@@ -601,15 +663,7 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
         if (savePassword) void persistPromptPassword(connection, credential);
       }
       update(item.id, (current) =>
-        query
-          ? {
-              ...idle,
-              session,
-              busy: "Running",
-              dbmsOutput: current.dbmsOutput,
-              transaction: current.transaction,
-            }
-          : { ...current, session },
+        query ? beginQueryActivity(current, session, query.keepResults) : { ...current, session },
       );
       if (query && job.runId) {
         await loadResultGrid();
@@ -626,7 +680,15 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
           completed: false,
         };
         await runQuery(
-          { ...query, runId: job.runId, sessionId: session.id, confirmed },
+          {
+            text: query.text,
+            target: query.target,
+            mode: query.mode,
+            keepResults: !!query.keepResults,
+            runId: job.runId,
+            sessionId: session.id,
+            confirmed,
+          },
           (event) => {
             if (jobs.current.get(item.id) !== job) return;
             switch (event.type) {
@@ -650,7 +712,7 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
                 summary.completed = true;
                 break;
             }
-            receive(item.id, connection.kind, query, event, spans);
+            receive(item.id, connection.kind, query, event, spans, summary);
           },
         );
         if (
@@ -730,7 +792,12 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
     const job = { stopped: false };
     jobs.current.set(tab.id, job);
     try {
-      const plan = await dispatch("plan_query", { ...query, production: profile.env === "prod" });
+      const plan = await dispatch("plan_query", {
+        text: query.text,
+        target: query.target,
+        mode: query.mode,
+        production: profile.env === "prod",
+      });
       if (job.stopped) return;
       if (plan.statements.length === 0) {
         appendMessage(tab.id, "info", "No SQL statement selected.", true);

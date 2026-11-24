@@ -48,6 +48,7 @@ interface Commands {
   set_schema: [{ sessionId: string; schema: string }, string | null];
   next_result: [{ sessionId: string; cursorId: string; count: number }, NextResult];
   get_cell: [{ sessionId: string; cursorId: string; row: number; column: number }, Cell];
+  drop_result: [{ sessionId: string; cursorId: string }, null];
   list_databases: [{ scope: CatalogScope }, string[]];
   list_schemas: [{ scope: CatalogScope }, string[]];
   catalog_snapshot: [{ scope: CatalogScope; schema: string }, CatalogSnapshot];

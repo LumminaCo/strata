@@ -11,7 +11,7 @@
 7. Use Tab to focus the theme control and Space to switch themes. Verify the connection dialog, SQL syntax, grid, and status bar in light and dark.
 8. Run `./x check` and `./x test-int`. Use `COMPOSE_PROFILES=legacy ./x test-int` to include Oracle XE 11g.
 
-Use Ctrl+Enter to run a statement, Ctrl+Shift+Enter or Alt+X for a script, and Ctrl+. to stop. On macOS, Cmd works in place of Ctrl. In browser mode, use Alt+T for a new tab, Alt+W to close it, and Alt+] or Alt+[ to switch tabs.
+Use Ctrl+Enter to run a statement, Ctrl+Shift+Enter to run a statement in a new result tab, Alt+X for a script, and Ctrl+. to stop. On macOS, Cmd works in place of Ctrl. In browser mode, use Alt+T for a new tab, Alt+W to close it, and Alt+] or Alt+[ to switch tabs.
 
 ## Desktop bundles
 

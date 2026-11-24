@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { isBrowserShortcut, shortcuts } from "@/features/keymap";
+import { isBrowserShortcut, shortcuts, workspaceKeydown } from "@/features/keymap";
 
-function key(shortcut: string) {
+function key(shortcut: string, preventDefault = vi.fn()) {
   const parts = shortcut.split("+");
   return {
     key: parts.at(-1)!,
@@ -10,7 +10,8 @@ function key(shortcut: string) {
     metaKey: parts.includes("Cmd"),
     shiftKey: parts.includes("Shift"),
     altKey: parts.includes("Alt"),
-  } as KeyboardEvent;
+    preventDefault,
+  } as unknown as KeyboardEvent;
 }
 
 describe("isBrowserShortcut", () => {
@@ -43,6 +44,46 @@ describe("isBrowserShortcut", () => {
       "Shift+R",
     ]) {
       expect(isBrowserShortcut(key(shortcut)), shortcut).toBe(false);
+    }
+  });
+});
+
+describe("workspaceKeydown", () => {
+  function actions() {
+    return {
+      run: vi.fn(),
+      runInNewTab: vi.fn(),
+      script: vi.fn(),
+      stop: vi.fn(),
+      newTab: vi.fn(),
+      closeTab: vi.fn(),
+      nextTab: vi.fn(),
+      previousTab: vi.fn(),
+      palette: vi.fn(),
+      history: vi.fn(),
+      explorer: vi.fn(),
+      navigate: vi.fn(),
+      explain: vi.fn(),
+      format: vi.fn(),
+      openSql: vi.fn(),
+      saveSql: vi.fn(),
+    };
+  }
+
+  it("maps Ctrl+Enter to run, Ctrl+Shift+Enter to runInNewTab, and Alt+X to script", () => {
+    for (const [shortcut, expected] of [
+      ["Ctrl+Enter", "run"],
+      ["Cmd+Enter", "run"],
+      ["Ctrl+Shift+Enter", "runInNewTab"],
+      ["Cmd+Shift+Enter", "runInNewTab"],
+      ["Alt+x", "script"],
+    ] as const) {
+      const handlers = actions();
+      const preventDefault = vi.fn();
+      const event = key(shortcut, preventDefault);
+      expect(workspaceKeydown(event, handlers, false), shortcut).toBe(true);
+      expect(preventDefault).toHaveBeenCalledOnce();
+      expect(handlers[expected]).toHaveBeenCalledOnce();
     }
   });
 });

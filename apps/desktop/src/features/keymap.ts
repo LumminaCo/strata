@@ -14,7 +14,8 @@ export const editorKeys = keymap.of([
 
 export const shortcuts = {
   run: "Ctrl+Enter",
-  script: "Ctrl+Shift+Enter",
+  runInNewTab: "Ctrl+Shift+Enter",
+  script: "Alt+X",
   stop: "Ctrl+.",
   newTab: "Ctrl+T",
   closeTab: "Ctrl+W",
@@ -47,7 +48,7 @@ export function workspaceKeydown(event: KeyboardEvent, actions: Actions, browser
   const key = event.key.toLowerCase();
   let action: keyof Actions | undefined;
   if (modifier) {
-    if (key === "enter") action = event.shiftKey ? "script" : "run";
+    if (key === "enter") action = event.shiftKey ? "runInNewTab" : "run";
     if (key === ".") action = "stop";
     if (event.shiftKey && key === "e") action = "explain";
     if (event.shiftKey && key === "f") action = "format";

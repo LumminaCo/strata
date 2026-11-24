@@ -217,6 +217,22 @@ impl AppService {
                     .get_cell(session_id, cursor_id, row, column)
                     .await?,
             )),
+            Command::DropResult {
+                session_id,
+                cursor_id,
+            } => {
+                let session = self.session(session_id).await?;
+                let control = session.control.lock().await;
+                if control.active.is_some() {
+                    return Err(CoreError::config("Wait for the running query to finish"));
+                }
+                drop(control);
+                self.engine
+                    .core()
+                    .drop_result(session_id, cursor_id)
+                    .await?;
+                Ok(Value::Null)
+            }
             Command::PlanQuery {
                 kind,
                 text,

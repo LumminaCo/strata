@@ -12,14 +12,42 @@ import type {
 } from "@/ipc/bindings/protocol";
 import { dispatch, errorMessage } from "@/ipc/client";
 
+import { isRelationObject } from "./catalog-context-menu";
 import type { CatalogEntry } from "./catalog-explorer";
 import { TableData } from "./table-data";
 
+export type InspectionSection =
+  | "Data"
+  | "Columns"
+  | "Keys & Indexes"
+  | "References"
+  | "DDL"
+  | "Info";
+
 export interface Inspection extends CatalogEntry {
   column?: string;
+  section?: InspectionSection;
+  requestId?: number;
 }
-type Section = "Data" | "Columns" | "Keys & Indexes" | "References" | "DDL" | "Info";
-const sections: Section[] = ["Data", "Columns", "Keys & Indexes", "References", "DDL", "Info"];
+
+const sections: InspectionSection[] = [
+  "Data",
+  "Columns",
+  "Keys & Indexes",
+  "References",
+  "DDL",
+  "Info",
+];
+
+export function resolveInspectionSection(subject: Inspection): InspectionSection {
+  const relation = isRelationObject(subject.object.kind);
+  if (subject.section) {
+    if (relation || subject.section === "DDL" || subject.section === "Info") {
+      return subject.section;
+    }
+  }
+  return relation ? (subject.column ? "Columns" : "Data") : "DDL";
+}
 
 interface Props {
   subject: Inspection;
@@ -33,17 +61,23 @@ interface Props {
 export function TableInspector({ subject, theme, full, credentials, promote, onValue }: Props) {
   const [path, setPath] = useState({ items: [subject], index: 0 });
   const current = path.items[path.index] ?? subject;
-  const table = ["table", "view", "materialized_view", "foreign_table"].includes(
-    current.object.kind,
+  const table = isRelationObject(current.object.kind);
+  const [section, setSection] = useState<InspectionSection>(() =>
+    resolveInspectionSection(subject),
   );
-  const [section, setSection] = useState<Section>(
-    table ? (subject.column ? "Columns" : "Data") : "DDL",
-  );
+  const appliedRequest = useRef(subject.requestId);
   const [details, setDetails] = useState<ObjectDetails>();
   const [error, setError] = useState("");
   const controls = useRef(credentials);
   controls.current = credentials;
   const column = useRef<HTMLTableRowElement>(null);
+
+  useEffect(() => {
+    if (subject.requestId === appliedRequest.current) return;
+    appliedRequest.current = subject.requestId;
+    setPath({ items: [subject], index: 0 });
+    setSection(resolveInspectionSection(subject));
+  }, [subject]);
 
   useEffect(() => {
     let visible = true;

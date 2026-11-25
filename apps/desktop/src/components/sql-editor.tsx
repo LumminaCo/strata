@@ -84,6 +84,7 @@ export interface EditorHandle {
   target: () => Target;
   text: () => string;
   focus: () => void;
+  insert: (value: string) => void;
   replace: (value: string, range?: [number, number]) => void;
 }
 
@@ -134,6 +135,12 @@ export function SqlEditor({
         return { selection: [selection.from, selection.to] };
       },
       focus: () => view.current?.focus(),
+      insert(value) {
+        const editor = view.current;
+        if (!editor) return;
+        editor.dispatch(editor.state.replaceSelection(value));
+        editor.focus();
+      },
       replace(value, range) {
         const editor = view.current;
         if (editor)

@@ -161,6 +161,7 @@ export function App() {
   } | null>(null);
   const [resolveTip, setResolveTip] = useState("");
   const resolution = useRef(0);
+  const inspectionRequest = useRef(0);
   const schemaActive = schemaTabs.find((item) => inspectionKey(item) === schemaSelected);
   const pinned = tab ? (pinnedByTab[tab.id] ?? []) : [];
   const [entries, setEntries] = useState<CatalogEntry[]>([]);
@@ -300,13 +301,57 @@ export function App() {
 
   function openObject(entry: Inspection) {
     const key = inspectionKey(entry);
-    setSchemaTabs((items) =>
-      items.some((item) => inspectionKey(item) === key)
-        ? items.map((item) => (inspectionKey(item) === key ? entry : item))
-        : [...items, entry],
-    );
+    const hasExplicitTarget = entry.section !== undefined || entry.column !== undefined;
+    setSchemaTabs((items) => {
+      const exists = items.some((item) => inspectionKey(item) === key);
+      if (!exists) {
+        return [...items, { ...entry, requestId: ++inspectionRequest.current }];
+      }
+      if (!hasExplicitTarget) {
+        return items.map((item) =>
+          inspectionKey(item) === key
+            ? { ...item, connection: entry.connection, object: entry.object }
+            : item,
+        );
+      }
+      const next: Inspection = { ...entry, requestId: ++inspectionRequest.current };
+      return items.map((item) => (inspectionKey(item) === key ? next : item));
+    });
     setSchemaSelected(key);
     setPalette(false);
+  }
+
+  function pinObject(entry: Inspection) {
+    if (!tab) return;
+    const next: Inspection = { ...entry, requestId: ++inspectionRequest.current };
+    const key = inspectionKey(next);
+    setSchemaSelected(undefined);
+    setPinned((current) => ({
+      ...current,
+      [tab.id]: [...(current[tab.id] ?? []).filter((item) => inspectionKey(item) !== key), next],
+    }));
+    data.setPanel(tab.id, key);
+  }
+
+  async function copyText(text: string, label: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      data.setNotice(`Copied ${label}.`);
+    } catch (error) {
+      data.setNotice(errorMessage(error));
+    }
+  }
+
+  async function copyObjectDdl(entry: CatalogEntry) {
+    const label = `${entry.object.schema}.${entry.object.name}`;
+    try {
+      const scope = await data.scope(entry.connection, entry.database, true);
+      const details = await dispatch("object_details", { scope, object: entry.object });
+      await navigator.clipboard.writeText(details.ddl);
+      data.setNotice(`Copied DDL for ${label}.`);
+    } catch (error) {
+      data.setNotice(errorMessage(error));
+    }
   }
 
   function closeManyTabs(ids: string[], approved = false) {
@@ -403,15 +448,7 @@ export function App() {
       if (full || ["function", "procedure"].includes(entry.object.kind)) {
         openObject(entry);
       } else {
-        const key = inspectionKey(entry);
-        setPinned((current) => ({
-          ...current,
-          [tab.id]: [
-            ...(current[tab.id] ?? []).filter((item) => inspectionKey(item) !== key),
-            entry,
-          ],
-        }));
-        data.setPanel(tab.id, key);
+        pinObject(entry);
       }
     } catch (error) {
       if (resolution.current !== request) return;
@@ -724,12 +761,23 @@ export function App() {
             profiles={data.profiles}
             active={profile?.id}
             revision={data.catalogRevision}
+            canPin={!!tab}
+            canInsertInEditor={Boolean(tab && !schemaActive)}
             scope={data.scope}
             onSnapshot={catalog.capture}
             onEntries={setEntries}
             openSql={openTab}
             onRefresh={data.invalidateCatalog}
             onObject={openObject}
+            onPinObject={pinObject}
+            onInsertText={(text) => editor.current?.insert(text)}
+            onCopyText={(text, label) => void copyText(text, label)}
+            onCopyDdl={(entry) => void copyObjectDdl(entry)}
+            onEditConnection={(connection) => editConnection(connection)}
+            onDuplicateConnection={(connection) =>
+              editConnection({ ...connection, id: null, name: `${connection.name} copy` })
+            }
+            onDeleteConnection={(connection) => setDeletion(connection)}
           />
           {profile?.id && (
             <div className="profile-actions">

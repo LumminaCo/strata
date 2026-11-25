@@ -40,7 +40,12 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+  usePanelRef,
+} from "@/components/ui/resizable";
 import {
   Confirmation,
   ConnectionDialog,
@@ -69,6 +74,12 @@ import {
   saveSqlFile as persistSqlFile,
   type SavedSqlState,
 } from "@/features/save-sql-file";
+import {
+  SIDEBAR_DEFAULT_WIDTH,
+  SIDEBAR_MIN_WIDTH,
+  readSidebarWidth,
+  writeSidebarWidth,
+} from "@/features/sidebar-layout";
 import {
   PinnedInspectionTabItem,
   ResultTabItem,
@@ -135,7 +146,9 @@ export function App() {
   const [deletion, setDeletion] = useState<Connection>();
   const [valueView, setValueView] = useState<{ name: string; text: string }>();
   const [filterResult, setFilterResult] = useState<{ cursor: string; text: string }>();
+  const [initialSidebarWidth] = useState(() => readSidebarWidth());
   const [explorerOpen, setExplorerOpen] = useState(true);
+  const explorerPanelRef = usePanelRef();
   const [palette, setPalette] = useState(false);
   const [history, setHistory] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -273,6 +286,31 @@ export function App() {
     );
     if (!localStorage.getItem("strata.theme")) setTheme(data.settings.theme);
   }, [data.settings]);
+
+  function collapseExplorer() {
+    if (explorerPanelRef.current) explorerPanelRef.current.collapse();
+    else setExplorerOpen(false);
+  }
+
+  function expandExplorer() {
+    if (explorerPanelRef.current) explorerPanelRef.current.expand();
+    else setExplorerOpen(true);
+  }
+
+  function toggleExplorer() {
+    const panel = explorerPanelRef.current;
+    if (!panel) {
+      setExplorerOpen((open) => !open);
+      return;
+    }
+    if (panel.isCollapsed()) panel.expand();
+    else panel.collapse();
+  }
+
+  function resetSidebarWidth() {
+    explorerPanelRef.current?.resize(`${SIDEBAR_DEFAULT_WIDTH}px`);
+    writeSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
+  }
 
   function changeTheme() {
     const next = themes[(themes.indexOf(theme) + 1) % themes.length] ?? "system";
@@ -624,7 +662,7 @@ export function App() {
             },
             palette: () => setPalette(true),
             history: () => setHistory(true),
-            explorer: () => setExplorerOpen((open) => !open),
+            explorer: toggleExplorer,
             navigate: () => {
               const target = editor.current?.target();
               if (target)
@@ -750,615 +788,663 @@ export function App() {
         </div>
       </header>
 
-      <div className="workspace-body" data-explorer-open={explorerOpen}>
-        <aside className="explorer" aria-label="Connections">
-          <div className="sidebar-heading">
-            <h2>Connections</h2>
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              title="Collapse connections"
-              aria-label="Collapse connections"
-              onClick={() => setExplorerOpen(false)}
-            >
-              <ChevronRight />
-            </Button>
-          </div>
-          <CatalogExplorer
-            profiles={data.profiles}
-            active={profile?.id}
-            revision={data.catalogRevision}
-            canPin={!!tab}
-            canInsertInEditor={Boolean(tab && !schemaActive)}
-            scope={data.scope}
-            onSnapshot={catalog.capture}
-            onEntries={setEntries}
-            openSql={openTab}
-            onRefresh={data.invalidateCatalog}
-            onObject={openObject}
-            onPinObject={pinObject}
-            onInsertText={(text) => editor.current?.insert(text)}
-            onCopyText={(text, label) => void copyText(text, label)}
-            onCopyDdl={(entry) => void copyObjectDdl(entry)}
-            onEditConnection={(connection) => editConnection(connection)}
-            onDuplicateConnection={(connection) =>
-              editConnection({ ...connection, id: null, name: `${connection.name} copy` })
-            }
-            onDeleteConnection={(connection) => setDeletion(connection)}
-          />
-          {profile?.id && (
-            <div className="profile-actions">
+      <ResizablePanelGroup
+        orientation="horizontal"
+        className="workspace-body"
+        data-explorer-open={explorerOpen}
+        onLayoutChanged={(_layout, meta) => {
+          if (!meta.isUserInteraction) return;
+          const panel = explorerPanelRef.current;
+          if (!panel || panel.isCollapsed()) return;
+          const { inPixels } = panel.getSize();
+          if (inPixels >= SIDEBAR_MIN_WIDTH) writeSidebarWidth(inPixels);
+        }}
+      >
+        <ResizablePanel
+          id="explorer"
+          panelRef={explorerPanelRef}
+          defaultSize={`${initialSidebarWidth}px`}
+          minSize={`${SIDEBAR_MIN_WIDTH}px`}
+          maxSize="50%"
+          collapsible
+          collapsedSize={0}
+          groupResizeBehavior="preserve-pixel-size"
+          style={{ overflow: "hidden" }}
+          onResize={(panelSize) => {
+            const open = panelSize.asPercentage > 0;
+            setExplorerOpen((current) => (current === open ? current : open));
+          }}
+        >
+          <aside className="explorer" aria-label="Connections">
+            <div className="sidebar-heading">
+              <h2>Connections</h2>
               <Button
+                size="icon-xs"
                 variant="ghost"
-                size="icon-sm"
-                title="Edit connection"
-                aria-label="Edit connection"
-                onClick={() => editConnection(profile)}
+                title="Collapse connections"
+                aria-label="Collapse connections"
+                onClick={collapseExplorer}
               >
-                <Settings2 />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                title="Duplicate connection"
-                aria-label="Duplicate connection"
-                onClick={() =>
-                  editConnection({ ...profile, id: null, name: `${profile.name} copy` })
-                }
-              >
-                <Copy />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                title="Delete connection"
-                aria-label="Delete connection"
-                onClick={() => setDeletion(profile)}
-              >
-                <Trash2 />
+                <ChevronRight />
               </Button>
             </div>
-          )}
-        </aside>
-
-        <main className="query-workspace">
-          <div className="query-tabs">
-            {!explorerOpen && (
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                title="Show connections"
-                aria-label="Show connections"
-                onClick={() => setExplorerOpen(true)}
-              >
-                <Database />
-              </Button>
-            )}
-            <div
-              className="query-tab-list"
-              role="tablist"
-              aria-label="SQL tabs"
-              ref={(element) => {
-                scriptTabDrag.listRef.current = element;
-                schemaTabDrag.listRef.current = element;
-              }}
-            >
-              {data.tabs.map((item, index) => {
-                const connection = data.profiles.find((value) => value.id === item.connectionId);
-                const defaultLabel = defaultScriptTabLabel(data.tabs, item, connection?.name);
-                const label = scriptTabLabel(data.tabs, item, connection?.name);
-                const unsaved = isSqlTabUnsaved(item.text, savedSqlByTab[item.id]);
-                const closeShortcut = browserMode ? "Alt+W" : shortcuts.closeTab;
-                return (
-                  <ScriptTabItem
-                    key={item.id}
-                    tab={item}
-                    connection={connection}
-                    label={label}
-                    defaultLabel={defaultLabel}
-                    active={!schemaActive && tab?.id === item.id}
-                    unsaved={unsaved}
-                    renaming={renamingScriptTabId === item.id}
-                    canMoveLeft={index > 0}
-                    canMoveRight={index < data.tabs.length - 1}
-                    canCloseOthers={data.tabs.length > 1}
-                    canCloseRight={index < data.tabs.length - 1}
-                    closeShortcut={closeShortcut}
-                    dragProps={scriptTabDrag.getTabProps(item.id)}
-                    onSelect={() => {
-                      resolution.current++;
-                      setResolveTip("");
-                      setSchemaSelected(undefined);
-                      data.selectTab(item.id);
-                    }}
-                    onStartRename={() => setRenamingScriptTabId(item.id)}
-                    onCommitRename={(value) => {
-                      data.renameTab(item.id, value);
-                      setRenamingScriptTabId(null);
-                    }}
-                    onCancelRename={() => setRenamingScriptTabId(null)}
-                    onResetName={() => data.renameTab(item.id, undefined)}
-                    onMoveLeft={() => data.shiftTab(item.id, -1)}
-                    onMoveRight={() => data.shiftTab(item.id, 1)}
-                    onDuplicate={() => {
-                      setSchemaSelected(undefined);
-                      data.duplicateTab(item.id);
-                    }}
-                    onClose={() => closeTab(item.id)}
-                    onCloseOthers={() =>
-                      closeManyTabs(
-                        data.tabs.filter((entry) => entry.id !== item.id).map((entry) => entry.id),
-                      )
-                    }
-                    onCloseRight={() =>
-                      closeManyTabs(data.tabs.slice(index + 1).map((entry) => entry.id))
-                    }
-                  />
-                );
-              })}
-              {schemaTabs.map((item, index) => {
-                const key = inspectionKey(item);
-                return (
-                  <SchemaTabItem
-                    key={key}
-                    item={item}
-                    active={schemaSelected === key}
-                    canMoveLeft={index > 0}
-                    canMoveRight={index < schemaTabs.length - 1}
-                    canCloseOthers={schemaTabs.length > 1}
-                    dragProps={schemaTabDrag.getTabProps(key)}
-                    onSelect={() => setSchemaSelected(key)}
-                    onMoveLeft={() =>
-                      setSchemaTabs((current) => moveItemByOffset(current, key, -1, inspectionKey))
-                    }
-                    onMoveRight={() =>
-                      setSchemaTabs((current) => moveItemByOffset(current, key, 1, inspectionKey))
-                    }
-                    onClose={() => {
-                      if (schemaSelected === key) setSchemaSelected(undefined);
-                      setSchemaTabs((tabs) => tabs.filter((entry) => inspectionKey(entry) !== key));
-                    }}
-                    onCloseOthers={() => {
-                      setSchemaSelected(key);
-                      setSchemaTabs((tabs) => tabs.filter((entry) => inspectionKey(entry) === key));
-                    }}
-                  />
-                );
-              })}
-            </div>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              title={`New SQL tab (${browserMode ? "Alt+T" : shortcuts.newTab})`}
-              aria-label="New SQL tab"
-              disabled={!profile?.id}
-              onClick={() => {
-                if (profile?.id) data.addTab(profile.id);
-              }}
-            >
-              <Plus />
-            </Button>
-          </div>
-
-          {schemaActive ? (
-            <section className="schema-workspace" aria-label="Schema tab">
-              <TableInspector
-                key={inspectionKey(schemaActive)}
-                subject={schemaActive}
-                theme={String(dark)}
-                full
-                credentials={inspectionCredentials}
-                onValue={showCell}
-              />
-            </section>
-          ) : tab && state ? (
-            <>
-              <div className="query-actions">
+            <CatalogExplorer
+              profiles={data.profiles}
+              active={profile?.id}
+              revision={data.catalogRevision}
+              canPin={!!tab}
+              canInsertInEditor={Boolean(tab && !schemaActive)}
+              scope={data.scope}
+              onSnapshot={catalog.capture}
+              onEntries={setEntries}
+              openSql={openTab}
+              onRefresh={data.invalidateCatalog}
+              onObject={openObject}
+              onPinObject={pinObject}
+              onInsertText={(text) => editor.current?.insert(text)}
+              onCopyText={(text, label) => void copyText(text, label)}
+              onCopyDdl={(entry) => void copyObjectDdl(entry)}
+              onEditConnection={(connection) => editConnection(connection)}
+              onDuplicateConnection={(connection) =>
+                editConnection({ ...connection, id: null, name: `${connection.name} copy` })
+              }
+              onDeleteConnection={(connection) => setDeletion(connection)}
+            />
+            {profile?.id && (
+              <div className="profile-actions">
                 <Button
-                  onClick={() => run("statement")}
-                  title={shortcuts.run}
-                  disabled={!profile || !!active.busy}
+                  variant="ghost"
+                  size="icon-sm"
+                  title="Edit connection"
+                  aria-label="Edit connection"
+                  onClick={() => editConnection(profile)}
                 >
-                  <Play /> Run
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => run("script")}
-                  title={shortcuts.script}
-                  disabled={!profile || !!active.busy}
-                >
-                  Run script
+                  <Settings2 />
                 </Button>
                 <Button
                   variant="ghost"
-                  onClick={() => void data.stop()}
-                  title={shortcuts.stop}
-                  disabled={
-                    active.busy === "Stopping" ||
-                    (!active.busy && !active.results.some((item) => item.more))
+                  size="icon-sm"
+                  title="Duplicate connection"
+                  aria-label="Duplicate connection"
+                  onClick={() =>
+                    editConnection({ ...profile, id: null, name: `${profile.name} copy` })
                   }
                 >
-                  <Square /> Stop
-                </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => run("explain")}
-                  title={shortcuts.explain}
-                  disabled={!profile || !!active.busy}
-                >
-                  Explain
-                </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => void formatSql()}
-                  title={shortcuts.format}
-                  disabled={!profile}
-                >
-                  Format
-                </Button>
-                {profile?.kind === "oracle" && (
-                  <Button
-                    variant="ghost"
-                    aria-pressed={!!active.dbmsOutput}
-                    onClick={() => void data.toggleDbmsOutput()}
-                    disabled={!active.session || !!active.busy}
-                  >
-                    DBMS Output
-                  </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Open SQL file"
-                  title="Open SQL file (Ctrl+O)"
-                  disabled={!profile}
-                  onClick={() => fileInput.current?.click()}
-                >
-                  <FolderOpen />
+                  <Copy />
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon-sm"
-                  aria-label="Save SQL file"
-                  title="Save SQL file (Ctrl+S)"
-                  onClick={() => void saveSqlFile()}
+                  title="Delete connection"
+                  aria-label="Delete connection"
+                  onClick={() => setDeletion(profile)}
                 >
-                  <Save />
+                  <Trash2 />
                 </Button>
-                <div className="query-actions-end">
-                  {active.session && (
-                    <div className="transaction-actions">
-                      <NativeSelect
-                        aria-label="Transaction mode"
-                        size="sm"
-                        value={active.transaction?.manual ? "manual" : "auto"}
-                        disabled={!!active.busy || !!active.transaction?.open}
-                        onChange={(event) =>
-                          void data.transactionMode(event.target.value === "manual")
-                        }
-                      >
-                        <NativeSelectOption value="auto">Auto</NativeSelectOption>
-                        <NativeSelectOption value="manual">Manual</NativeSelectOption>
-                      </NativeSelect>
-                      {active.transaction?.open && (
-                        <>
-                          <Button
-                            variant="outline"
-                            size="xs"
-                            disabled={!!active.busy}
-                            onClick={() => void data.finishTransaction(true)}
-                          >
-                            Commit
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="xs"
-                            disabled={!!active.busy}
-                            onClick={() => void data.finishTransaction(false)}
-                          >
-                            Rollback
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  )}
-                  {profile?.id && (
-                    <DatabasePicker
-                      key={profile.id}
-                      selected={tab.database ?? profile.database}
-                      disabled={!!active.busy || !!active.transaction?.open}
-                      load={async () =>
-                        dispatch("list_databases", { scope: await data.scope(profile) })
-                      }
-                      onChange={(database) => data.setDatabase(tab.id, database)}
-                    />
-                  )}
-                  {profile?.id && profile.kind !== "sqlserver" && (
-                    <SchemaPicker
-                      key={`${profile.id}:${tab.database ?? profile.database}:${data.catalogRevision}:${active.session ? 1 : 0}`}
-                      selected={defaultSchema}
-                      disabled={!!active.busy || !!active.transaction?.open}
-                      load={async () =>
-                        dispatch("list_schemas", {
-                          scope: await data.scope(profile, tab.database),
-                        })
-                      }
-                      onChange={(schema) => void data.setSchema(tab.id, schema)}
-                    />
-                  )}
-                  <Button
-                    variant="ghost"
-                    disabled={!profile || !!active.busy}
-                    onClick={() => {
-                      if (!active.session) data.connect();
-                      else if (tab && data.transactionAtRisk(tab.id))
-                        setCloseWarning({
-                          title: "Disconnect this tab?",
-                          confirm: data.disconnect,
-                        });
-                      else data.disconnect();
-                    }}
-                  >
-                    <Cable /> {active.session ? "Disconnect" : "Connect"}
-                  </Button>
-                  {profile && (
-                    <Badge variant="outline" className="environment-badge" data-env={profile.env}>
-                      {environments[profile.env]}
-                    </Badge>
-                  )}
-                </div>
               </div>
-              <ResizablePanelGroup orientation="vertical" className="editor-and-results">
-                <ResizablePanel defaultSize="49%" minSize="100px">
-                  <section className="editor" aria-label="Query text">
-                    <SqlEditor
-                      key={tab.id}
-                      ref={editor}
-                      text={tab.text}
-                      dark={dark}
-                      savedState={state}
-                      schema={catalog.completion}
-                      defaultSchema={defaultSchema}
-                      kind={profile?.kind}
-                      onNavigate={(offset, full) => void navigate(offset, full)}
-                      diagnostic={active.diagnostic}
-                      onChange={(text) => data.editText(tab.id, text)}
+            )}
+          </aside>
+        </ResizablePanel>
+
+        <ResizableHandle
+          className="sidebar-resize-handle"
+          aria-label="Resize connections sidebar"
+          disableDoubleClick
+          onDoubleClick={resetSidebarWidth}
+        />
+
+        <ResizablePanel id="workspace" minSize="50%" style={{ overflow: "hidden" }}>
+          <main className="query-workspace">
+            <div className="query-tabs">
+              {!explorerOpen && (
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  title="Show connections"
+                  aria-label="Show connections"
+                  onClick={expandExplorer}
+                >
+                  <Database />
+                </Button>
+              )}
+              <div
+                className="query-tab-list"
+                role="tablist"
+                aria-label="SQL tabs"
+                ref={(element) => {
+                  scriptTabDrag.listRef.current = element;
+                  schemaTabDrag.listRef.current = element;
+                }}
+              >
+                {data.tabs.map((item, index) => {
+                  const connection = data.profiles.find((value) => value.id === item.connectionId);
+                  const defaultLabel = defaultScriptTabLabel(data.tabs, item, connection?.name);
+                  const label = scriptTabLabel(data.tabs, item, connection?.name);
+                  const unsaved = isSqlTabUnsaved(item.text, savedSqlByTab[item.id]);
+                  const closeShortcut = browserMode ? "Alt+W" : shortcuts.closeTab;
+                  return (
+                    <ScriptTabItem
+                      key={item.id}
+                      tab={item}
+                      connection={connection}
+                      label={label}
+                      defaultLabel={defaultLabel}
+                      active={!schemaActive && tab?.id === item.id}
+                      unsaved={unsaved}
+                      renaming={renamingScriptTabId === item.id}
+                      canMoveLeft={index > 0}
+                      canMoveRight={index < data.tabs.length - 1}
+                      canCloseOthers={data.tabs.length > 1}
+                      canCloseRight={index < data.tabs.length - 1}
+                      closeShortcut={closeShortcut}
+                      dragProps={scriptTabDrag.getTabProps(item.id)}
+                      onSelect={() => {
+                        resolution.current++;
+                        setResolveTip("");
+                        setSchemaSelected(undefined);
+                        data.selectTab(item.id);
+                      }}
+                      onStartRename={() => setRenamingScriptTabId(item.id)}
+                      onCommitRename={(value) => {
+                        data.renameTab(item.id, value);
+                        setRenamingScriptTabId(null);
+                      }}
+                      onCancelRename={() => setRenamingScriptTabId(null)}
+                      onResetName={() => data.renameTab(item.id, undefined)}
+                      onMoveLeft={() => data.shiftTab(item.id, -1)}
+                      onMoveRight={() => data.shiftTab(item.id, 1)}
+                      onDuplicate={() => {
+                        setSchemaSelected(undefined);
+                        data.duplicateTab(item.id);
+                      }}
+                      onClose={() => closeTab(item.id)}
+                      onCloseOthers={() =>
+                        closeManyTabs(
+                          data.tabs
+                            .filter((entry) => entry.id !== item.id)
+                            .map((entry) => entry.id),
+                        )
+                      }
+                      onCloseRight={() =>
+                        closeManyTabs(data.tabs.slice(index + 1).map((entry) => entry.id))
+                      }
                     />
-                    {resolveTip && (
-                      <div className="resolve-tip" role="status">
-                        {resolveTip}
+                  );
+                })}
+                {schemaTabs.map((item, index) => {
+                  const key = inspectionKey(item);
+                  return (
+                    <SchemaTabItem
+                      key={key}
+                      item={item}
+                      active={schemaSelected === key}
+                      canMoveLeft={index > 0}
+                      canMoveRight={index < schemaTabs.length - 1}
+                      canCloseOthers={schemaTabs.length > 1}
+                      dragProps={schemaTabDrag.getTabProps(key)}
+                      onSelect={() => setSchemaSelected(key)}
+                      onMoveLeft={() =>
+                        setSchemaTabs((current) =>
+                          moveItemByOffset(current, key, -1, inspectionKey),
+                        )
+                      }
+                      onMoveRight={() =>
+                        setSchemaTabs((current) => moveItemByOffset(current, key, 1, inspectionKey))
+                      }
+                      onClose={() => {
+                        if (schemaSelected === key) setSchemaSelected(undefined);
+                        setSchemaTabs((tabs) =>
+                          tabs.filter((entry) => inspectionKey(entry) !== key),
+                        );
+                      }}
+                      onCloseOthers={() => {
+                        setSchemaSelected(key);
+                        setSchemaTabs((tabs) =>
+                          tabs.filter((entry) => inspectionKey(entry) === key),
+                        );
+                      }}
+                    />
+                  );
+                })}
+              </div>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                title={`New SQL tab (${browserMode ? "Alt+T" : shortcuts.newTab})`}
+                aria-label="New SQL tab"
+                disabled={!profile?.id}
+                onClick={() => {
+                  if (profile?.id) data.addTab(profile.id);
+                }}
+              >
+                <Plus />
+              </Button>
+            </div>
+
+            {schemaActive ? (
+              <section className="schema-workspace" aria-label="Schema tab">
+                <TableInspector
+                  key={inspectionKey(schemaActive)}
+                  subject={schemaActive}
+                  theme={String(dark)}
+                  full
+                  credentials={inspectionCredentials}
+                  onValue={showCell}
+                />
+              </section>
+            ) : tab && state ? (
+              <>
+                <div className="query-actions">
+                  <Button
+                    onClick={() => run("statement")}
+                    title={shortcuts.run}
+                    disabled={!profile || !!active.busy}
+                  >
+                    <Play /> Run
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => run("script")}
+                    title={shortcuts.script}
+                    disabled={!profile || !!active.busy}
+                  >
+                    Run script
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={() => void data.stop()}
+                    title={shortcuts.stop}
+                    disabled={
+                      active.busy === "Stopping" ||
+                      (!active.busy && !active.results.some((item) => item.more))
+                    }
+                  >
+                    <Square /> Stop
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={() => run("explain")}
+                    title={shortcuts.explain}
+                    disabled={!profile || !!active.busy}
+                  >
+                    Explain
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={() => void formatSql()}
+                    title={shortcuts.format}
+                    disabled={!profile}
+                  >
+                    Format
+                  </Button>
+                  {profile?.kind === "oracle" && (
+                    <Button
+                      variant="ghost"
+                      aria-pressed={!!active.dbmsOutput}
+                      onClick={() => void data.toggleDbmsOutput()}
+                      disabled={!active.session || !!active.busy}
+                    >
+                      DBMS Output
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Open SQL file"
+                    title="Open SQL file (Ctrl+O)"
+                    disabled={!profile}
+                    onClick={() => fileInput.current?.click()}
+                  >
+                    <FolderOpen />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Save SQL file"
+                    title="Save SQL file (Ctrl+S)"
+                    onClick={() => void saveSqlFile()}
+                  >
+                    <Save />
+                  </Button>
+                  <div className="query-actions-end">
+                    {active.session && (
+                      <div className="transaction-actions">
+                        <NativeSelect
+                          aria-label="Transaction mode"
+                          size="sm"
+                          value={active.transaction?.manual ? "manual" : "auto"}
+                          disabled={!!active.busy || !!active.transaction?.open}
+                          onChange={(event) =>
+                            void data.transactionMode(event.target.value === "manual")
+                          }
+                        >
+                          <NativeSelectOption value="auto">Auto</NativeSelectOption>
+                          <NativeSelectOption value="manual">Manual</NativeSelectOption>
+                        </NativeSelect>
+                        {active.transaction?.open && (
+                          <>
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              disabled={!!active.busy}
+                              onClick={() => void data.finishTransaction(true)}
+                            >
+                              Commit
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              disabled={!!active.busy}
+                              onClick={() => void data.finishTransaction(false)}
+                            >
+                              Rollback
+                            </Button>
+                          </>
+                        )}
                       </div>
                     )}
-                  </section>
-                </ResizablePanel>
-                <ResizableHandle aria-label="Resize editor and results" />
-                <ResizablePanel minSize="104px">
-                  <section
-                    className="results"
-                    aria-label="Results"
-                    onKeyDown={(event) => {
-                      if (
-                        !result ||
-                        !(event.ctrlKey || event.metaKey) ||
-                        event.key.toLowerCase() !== "f"
-                      )
-                        return;
-                      event.preventDefault();
-                      setFilterResult({ cursor: result.id, text: filterResult?.text ?? "" });
-                      filterInput.current?.focus();
-                    }}
-                  >
-                    <div className="panel-heading">
-                      <div
-                        className="result-tabs"
-                        role="tablist"
-                        aria-label="Result tabs"
-                        ref={(element) => {
-                          resultTabDrag.listRef.current = element;
-                          pinnedTabDrag.listRef.current = element;
-                        }}
-                      >
-                        {active.results.map((item, index) => {
-                          const defaultLabel = defaultResultTabLabel(item);
-                          const label = resultTabLabel(item);
-                          const otherClosableIds = active.results
-                            .filter((entry) => entry.id !== item.id && entry.id !== active.fetching)
-                            .map((entry) => entry.id);
-                          return (
-                            <ResultTabItem
-                              key={item.id}
-                              result={item}
-                              label={label}
-                              defaultLabel={defaultLabel}
-                              active={selected === item.id}
-                              renaming={
-                                renamingResultTab?.tabId === tab.id &&
-                                renamingResultTab.resultId === item.id
-                              }
-                              fetching={active.fetching === item.id}
-                              canMoveLeft={index > 0}
-                              canMoveRight={index < active.results.length - 1}
-                              canCloseOthers={otherClosableIds.length > 0}
-                              dragProps={resultTabDrag.getTabProps(item.id)}
-                              onSelect={() => data.setPanel(tab.id, item.id)}
-                              onStartRename={() =>
-                                setRenamingResultTab({ tabId: tab.id, resultId: item.id })
-                              }
-                              onCommitRename={(value) => {
-                                data.renameResult(tab.id, item.id, value);
-                                setRenamingResultTab(null);
-                              }}
-                              onCancelRename={() => setRenamingResultTab(null)}
-                              onResetName={() => data.renameResult(tab.id, item.id, undefined)}
-                              onMoveLeft={() => data.shiftResult(tab.id, item.id, -1)}
-                              onMoveRight={() => data.shiftResult(tab.id, item.id, 1)}
-                              onClose={() => closeResultTabs(tab.id, [item.id])}
-                              onCloseOthers={() => closeResultTabs(tab.id, otherClosableIds)}
-                            />
-                          );
-                        })}
-                        {pinned.map((item, index) => {
-                          const key = inspectionKey(item);
-                          return (
-                            <PinnedInspectionTabItem
-                              key={key}
-                              item={item}
-                              active={selected === key}
-                              canMoveLeft={index > 0}
-                              canMoveRight={index < pinned.length - 1}
-                              dragProps={pinnedTabDrag.getTabProps(key)}
-                              onSelect={() => data.setPanel(tab.id, key)}
-                              onPromote={() => openObject(item)}
-                              onMoveLeft={() =>
-                                setPinned((current) => ({
-                                  ...current,
-                                  [tab.id]: moveItemByOffset(
-                                    current[tab.id] ?? [],
-                                    key,
-                                    -1,
-                                    inspectionKey,
-                                  ),
-                                }))
-                              }
-                              onMoveRight={() =>
-                                setPinned((current) => ({
-                                  ...current,
-                                  [tab.id]: moveItemByOffset(
-                                    current[tab.id] ?? [],
-                                    key,
-                                    1,
-                                    inspectionKey,
-                                  ),
-                                }))
-                              }
-                              onClose={() => closePinnedInspection(tab.id, key)}
-                            />
-                          );
-                        })}
-                        <Button
-                          variant="ghost"
-                          role="tab"
-                          aria-selected={selected === "messages" || !selected}
-                          onClick={() => data.setPanel(tab.id, "messages")}
-                        >
-                          Messages
-                        </Button>
-                      </div>
-                      {result && (
-                        <div className="result-actions">
-                          {showFilter ? (
-                            <>
-                              <Input
-                                ref={filterInput}
-                                aria-label="Filter fetched rows"
-                                placeholder="Filter fetched rows"
-                                value={filterResult.text}
-                                onChange={(event) =>
-                                  setFilterResult({ cursor: result.id, text: event.target.value })
-                                }
-                                onKeyDown={(event) => {
-                                  if (event.key === "Escape") setFilterResult(undefined);
-                                }}
-                              />
-                              <Button
-                                variant="ghost"
-                                size="icon-xs"
-                                aria-label="Clear filter"
-                                title="Clear filter"
-                                onClick={() => setFilterResult(undefined)}
-                              >
-                                <X />
-                              </Button>
-                            </>
-                          ) : (
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              aria-label="Filter fetched rows"
-                              title="Filter fetched rows (Ctrl+F)"
-                              onClick={() => setFilterResult({ cursor: result.id, text: "" })}
-                            >
-                              <Search />
-                            </Button>
-                          )}
-                          <Button
-                            variant="outline"
-                            size="xs"
-                            disabled={!result.more || !!active.busy}
-                            onClick={() => void data.fetchRows(result)}
-                          >
-                            Fetch more
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="xs"
-                            disabled={!result.more || !!active.busy}
-                            onClick={() => void data.fetchRows(result, true)}
-                          >
-                            Fetch all
-                          </Button>
+                    {profile?.id && (
+                      <DatabasePicker
+                        key={profile.id}
+                        selected={tab.database ?? profile.database}
+                        disabled={!!active.busy || !!active.transaction?.open}
+                        load={async () =>
+                          dispatch("list_databases", { scope: await data.scope(profile) })
+                        }
+                        onChange={(database) => data.setDatabase(tab.id, database)}
+                      />
+                    )}
+                    {profile?.id && profile.kind !== "sqlserver" && (
+                      <SchemaPicker
+                        key={`${profile.id}:${tab.database ?? profile.database}:${data.catalogRevision}:${active.session ? 1 : 0}`}
+                        selected={defaultSchema}
+                        disabled={!!active.busy || !!active.transaction?.open}
+                        load={async () =>
+                          dispatch("list_schemas", {
+                            scope: await data.scope(profile, tab.database),
+                          })
+                        }
+                        onChange={(schema) => void data.setSchema(tab.id, schema)}
+                      />
+                    )}
+                    <Button
+                      variant="ghost"
+                      disabled={!profile || !!active.busy}
+                      onClick={() => {
+                        if (!active.session) data.connect();
+                        else if (tab && data.transactionAtRisk(tab.id))
+                          setCloseWarning({
+                            title: "Disconnect this tab?",
+                            confirm: data.disconnect,
+                          });
+                        else data.disconnect();
+                      }}
+                    >
+                      <Cable /> {active.session ? "Disconnect" : "Connect"}
+                    </Button>
+                    {profile && (
+                      <Badge variant="outline" className="environment-badge" data-env={profile.env}>
+                        {environments[profile.env]}
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+                <ResizablePanelGroup orientation="vertical" className="editor-and-results">
+                  <ResizablePanel defaultSize="49%" minSize="100px">
+                    <section className="editor" aria-label="Query text">
+                      <SqlEditor
+                        key={tab.id}
+                        ref={editor}
+                        text={tab.text}
+                        dark={dark}
+                        savedState={state}
+                        schema={catalog.completion}
+                        defaultSchema={defaultSchema}
+                        kind={profile?.kind}
+                        onNavigate={(offset, full) => void navigate(offset, full)}
+                        diagnostic={active.diagnostic}
+                        onChange={(text) => data.editText(tab.id, text)}
+                      />
+                      {resolveTip && (
+                        <div className="resolve-tip" role="status">
+                          {resolveTip}
                         </div>
                       )}
-                    </div>
-                    {selectedInspection ? (
-                      <TableInspector
-                        key={inspectionKey(selectedInspection) + (selectedInspection.column ?? "")}
-                        subject={selectedInspection}
-                        theme={String(dark)}
-                        credentials={inspectionCredentials}
-                        promote={openObject}
-                        onValue={showCell}
-                      />
-                    ) : result ? (
-                      <ResultGrid
-                        key={result.id}
-                        result={result}
-                        themeVersion={String(dark)}
-                        canFetch={result.more && !active.busy}
-                        fetching={fetchingResult}
-                        filter={showFilter ? filterResult.text : ""}
-                        onMore={() => void data.fetchRows(result)}
-                        onCell={(row, column) => void openCell(result, row, column)}
-                        readCell={(row, column) => data.getCell(result, row, column)}
-                      />
-                    ) : active.messages.length ? (
-                      <div className="query-messages" role="log" aria-label="Query messages">
-                        {active.messages.map((message, index) => (
-                          <div key={index} data-level={message.level}>
-                            <span>{message.level}</span>
-                            <span>{message.text}</span>
+                    </section>
+                  </ResizablePanel>
+                  <ResizableHandle aria-label="Resize editor and results" />
+                  <ResizablePanel minSize="104px">
+                    <section
+                      className="results"
+                      aria-label="Results"
+                      onKeyDown={(event) => {
+                        if (
+                          !result ||
+                          !(event.ctrlKey || event.metaKey) ||
+                          event.key.toLowerCase() !== "f"
+                        )
+                          return;
+                        event.preventDefault();
+                        setFilterResult({ cursor: result.id, text: filterResult?.text ?? "" });
+                        filterInput.current?.focus();
+                      }}
+                    >
+                      <div className="panel-heading">
+                        <div
+                          className="result-tabs"
+                          role="tablist"
+                          aria-label="Result tabs"
+                          ref={(element) => {
+                            resultTabDrag.listRef.current = element;
+                            pinnedTabDrag.listRef.current = element;
+                          }}
+                        >
+                          {active.results.map((item, index) => {
+                            const defaultLabel = defaultResultTabLabel(item);
+                            const label = resultTabLabel(item);
+                            const otherClosableIds = active.results
+                              .filter(
+                                (entry) => entry.id !== item.id && entry.id !== active.fetching,
+                              )
+                              .map((entry) => entry.id);
+                            return (
+                              <ResultTabItem
+                                key={item.id}
+                                result={item}
+                                label={label}
+                                defaultLabel={defaultLabel}
+                                active={selected === item.id}
+                                renaming={
+                                  renamingResultTab?.tabId === tab.id &&
+                                  renamingResultTab.resultId === item.id
+                                }
+                                fetching={active.fetching === item.id}
+                                canMoveLeft={index > 0}
+                                canMoveRight={index < active.results.length - 1}
+                                canCloseOthers={otherClosableIds.length > 0}
+                                dragProps={resultTabDrag.getTabProps(item.id)}
+                                onSelect={() => data.setPanel(tab.id, item.id)}
+                                onStartRename={() =>
+                                  setRenamingResultTab({ tabId: tab.id, resultId: item.id })
+                                }
+                                onCommitRename={(value) => {
+                                  data.renameResult(tab.id, item.id, value);
+                                  setRenamingResultTab(null);
+                                }}
+                                onCancelRename={() => setRenamingResultTab(null)}
+                                onResetName={() => data.renameResult(tab.id, item.id, undefined)}
+                                onMoveLeft={() => data.shiftResult(tab.id, item.id, -1)}
+                                onMoveRight={() => data.shiftResult(tab.id, item.id, 1)}
+                                onClose={() => closeResultTabs(tab.id, [item.id])}
+                                onCloseOthers={() => closeResultTabs(tab.id, otherClosableIds)}
+                              />
+                            );
+                          })}
+                          {pinned.map((item, index) => {
+                            const key = inspectionKey(item);
+                            return (
+                              <PinnedInspectionTabItem
+                                key={key}
+                                item={item}
+                                active={selected === key}
+                                canMoveLeft={index > 0}
+                                canMoveRight={index < pinned.length - 1}
+                                dragProps={pinnedTabDrag.getTabProps(key)}
+                                onSelect={() => data.setPanel(tab.id, key)}
+                                onPromote={() => openObject(item)}
+                                onMoveLeft={() =>
+                                  setPinned((current) => ({
+                                    ...current,
+                                    [tab.id]: moveItemByOffset(
+                                      current[tab.id] ?? [],
+                                      key,
+                                      -1,
+                                      inspectionKey,
+                                    ),
+                                  }))
+                                }
+                                onMoveRight={() =>
+                                  setPinned((current) => ({
+                                    ...current,
+                                    [tab.id]: moveItemByOffset(
+                                      current[tab.id] ?? [],
+                                      key,
+                                      1,
+                                      inspectionKey,
+                                    ),
+                                  }))
+                                }
+                                onClose={() => closePinnedInspection(tab.id, key)}
+                              />
+                            );
+                          })}
+                          <Button
+                            variant="ghost"
+                            role="tab"
+                            aria-selected={selected === "messages" || !selected}
+                            onClick={() => data.setPanel(tab.id, "messages")}
+                          >
+                            Messages
+                          </Button>
+                        </div>
+                        {result && (
+                          <div className="result-actions">
+                            {showFilter ? (
+                              <>
+                                <Input
+                                  ref={filterInput}
+                                  aria-label="Filter fetched rows"
+                                  placeholder="Filter fetched rows"
+                                  value={filterResult.text}
+                                  onChange={(event) =>
+                                    setFilterResult({ cursor: result.id, text: event.target.value })
+                                  }
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Escape") setFilterResult(undefined);
+                                  }}
+                                />
+                                <Button
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  aria-label="Clear filter"
+                                  title="Clear filter"
+                                  onClick={() => setFilterResult(undefined)}
+                                >
+                                  <X />
+                                </Button>
+                              </>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                aria-label="Filter fetched rows"
+                                title="Filter fetched rows (Ctrl+F)"
+                                onClick={() => setFilterResult({ cursor: result.id, text: "" })}
+                              >
+                                <Search />
+                              </Button>
+                            )}
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              disabled={!result.more || !!active.busy}
+                              onClick={() => void data.fetchRows(result)}
+                            >
+                              Fetch more
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              disabled={!result.more || !!active.busy}
+                              onClick={() => void data.fetchRows(result, true)}
+                            >
+                              Fetch all
+                            </Button>
                           </div>
-                        ))}
+                        )}
                       </div>
-                    ) : (
-                      <div className="results-empty">
-                        {active.busy === "Running"
-                          ? "Waiting for results…"
-                          : "Run a statement to see results here."}
-                      </div>
-                    )}
-                  </section>
-                </ResizablePanel>
-              </ResizablePanelGroup>
-            </>
-          ) : (
-            <section className="workspace-empty">
-              <div className="empty-state">
-                <div className="empty-state-icon">
-                  <Database />
+                      {selectedInspection ? (
+                        <TableInspector
+                          key={
+                            inspectionKey(selectedInspection) + (selectedInspection.column ?? "")
+                          }
+                          subject={selectedInspection}
+                          theme={String(dark)}
+                          credentials={inspectionCredentials}
+                          promote={openObject}
+                          onValue={showCell}
+                        />
+                      ) : result ? (
+                        <ResultGrid
+                          key={result.id}
+                          result={result}
+                          themeVersion={String(dark)}
+                          canFetch={result.more && !active.busy}
+                          fetching={fetchingResult}
+                          filter={showFilter ? filterResult.text : ""}
+                          onMore={() => void data.fetchRows(result)}
+                          onCell={(row, column) => void openCell(result, row, column)}
+                          readCell={(row, column) => data.getCell(result, row, column)}
+                        />
+                      ) : active.messages.length ? (
+                        <div className="query-messages" role="log" aria-label="Query messages">
+                          {active.messages.map((message, index) => (
+                            <div key={index} data-level={message.level}>
+                              <span>{message.level}</span>
+                              <span>{message.text}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="results-empty">
+                          {active.busy === "Running"
+                            ? "Waiting for results…"
+                            : "Run a statement to see results here."}
+                        </div>
+                      )}
+                    </section>
+                  </ResizablePanel>
+                </ResizablePanelGroup>
+              </>
+            ) : (
+              <section className="workspace-empty">
+                <div className="empty-state">
+                  <div className="empty-state-icon">
+                    <Database />
+                  </div>
+                  <h1>{data.profiles.length ? "Select a connection" : "Connect to PostgreSQL"}</h1>
+                  {!data.profiles.length && data.workspace && (
+                    <Button onClick={() => editConnection(emptyConnection)}>
+                      <Plus /> New connection
+                    </Button>
+                  )}
+                  {!data.workspace && data.notice && <Button onClick={data.retry}>Retry</Button>}
                 </div>
-                <h1>{data.profiles.length ? "Select a connection" : "Connect to PostgreSQL"}</h1>
-                {!data.profiles.length && data.workspace && (
-                  <Button onClick={() => editConnection(emptyConnection)}>
-                    <Plus /> New connection
-                  </Button>
-                )}
-                {!data.workspace && data.notice && <Button onClick={data.retry}>Retry</Button>}
-              </div>
-            </section>
-          )}
-        </main>
-      </div>
+              </section>
+            )}
+          </main>
+        </ResizablePanel>
+      </ResizablePanelGroup>
 
       <QueryNotificationStack
         notifications={queryToasts}

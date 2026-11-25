@@ -22,6 +22,7 @@ import { editorTheme } from "@/theme/codemirror";
 
 const listener = new Compartment();
 const language = new Compartment();
+const themeMode = new Compartment();
 const dialects = { postgres: PostgreSQL, sqlserver: MSSQL, oracle: PLSQL };
 const setNavigation = StateEffect.define<[number, number] | undefined>();
 const navigationMarks = StateField.define<DecorationSet>({
@@ -38,20 +39,45 @@ const navigationMarks = StateField.define<DecorationSet>({
   },
   provide: (field) => EditorView.decorations.from(field),
 });
-const setStatement = StateEffect.define<[number, number] | undefined>();
-const statementMarks = StateField.define<DecorationSet>({
-  create: () => Decoration.none,
-  update(marks, transaction) {
+export const setStatement = StateEffect.define<[number, number] | undefined>();
+
+function statementDecoration(
+  range: [number, number] | undefined,
+  docLength: number,
+): DecorationSet {
+  if (!range) return Decoration.none;
+  const [from, to] = range;
+  if (from < 0 || from >= to || to > docLength) return Decoration.none;
+  return Decoration.set(Decoration.mark({ class: "cm-statement" }).range(from, to));
+}
+
+export const statementMarks = StateField.define<{
+  range?: [number, number];
+  decorations: DecorationSet;
+}>({
+  create: () => ({ decorations: Decoration.none }),
+  update(value, transaction) {
+    let range = transaction.docChanged ? undefined : value.range;
     for (const effect of transaction.effects) {
       if (effect.is(setStatement)) {
-        return effect.value
-          ? Decoration.set(Decoration.mark({ class: "cm-statement" }).range(...effect.value))
-          : Decoration.none;
+        range = effect.value;
       }
     }
-    return transaction.docChanged ? Decoration.none : marks;
+    const hasSelection = transaction.state.selection.ranges.some((selection) => !selection.empty);
+    if (!range || hasSelection) {
+      return value.range === range && value.decorations === Decoration.none
+        ? value
+        : { range, decorations: Decoration.none };
+    }
+    if (value.range === range && value.decorations !== Decoration.none) {
+      return value;
+    }
+    return {
+      range,
+      decorations: statementDecoration(range, transaction.state.doc.length),
+    };
   },
-  provide: (field) => EditorView.decorations.from(field),
+  provide: (field) => EditorView.decorations.from(field, (value) => value.decorations),
 });
 
 export interface EditorHandle {
@@ -70,6 +96,7 @@ export interface EditorDiagnostic {
 interface SqlEditorProps {
   ref?: Ref<EditorHandle>;
   text: string;
+  dark?: boolean;
   diagnostic?: EditorDiagnostic;
   schema?: SQLNamespace;
   defaultSchema?: string;
@@ -82,6 +109,7 @@ interface SqlEditorProps {
 export function SqlEditor({
   ref,
   text,
+  dark = false,
   diagnostic,
   schema,
   defaultSchema,
@@ -92,10 +120,10 @@ export function SqlEditor({
 }: SqlEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
-  const latest = useRef({ text, onChange, onNavigate, kind });
+  const latest = useRef({ text, dark, onChange, onNavigate, kind });
   useLayoutEffect(() => {
-    latest.current = { text, onChange, onNavigate, kind };
-  }, [text, onChange, onNavigate, kind]);
+    latest.current = { text, dark, onChange, onNavigate, kind };
+  }, [text, dark, onChange, onNavigate, kind]);
 
   useImperativeHandle(
     ref,
@@ -129,9 +157,10 @@ export function SqlEditor({
     const highlight = () => {
       clearTimeout(timer);
       const currentRevision = ++revision;
+      if (view.current?.state.selection.ranges.some((selection) => !selection.empty)) return;
       timer = setTimeout(() => {
         const editor = view.current;
-        if (!editor) return;
+        if (!editor || editor.state.selection.ranges.some((selection) => !selection.empty)) return;
         void dispatch("plan_query", {
           text: editor.state.doc.toString(),
           target: { cursor: editor.state.selection.main.head },
@@ -210,6 +239,7 @@ export function SqlEditor({
           EditorView.contentAttributes.of({ "aria-label": "SQL editor", spellcheck: "false" }),
           statementMarks,
           navigationMarks,
+          themeMode.of(EditorView.darkTheme.of(latest.current.dark)),
           editorTheme,
           listener.of(updates),
         ],
@@ -231,6 +261,12 @@ export function SqlEditor({
       effects: language.reconfigure(sql({ dialect: dialects[kind], schema, defaultSchema })),
     });
   }, [schema, defaultSchema, kind]);
+
+  useLayoutEffect(() => {
+    view.current?.dispatch({
+      effects: themeMode.reconfigure(EditorView.darkTheme.of(dark)),
+    });
+  }, [dark]);
 
   useEffect(() => {
     const editor = view.current;

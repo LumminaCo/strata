@@ -27,9 +27,9 @@ Strata's [logo](../dev/strata-logo.png) combines a three-layer database stack wi
 | `--primary-hover`      | `#21458F` | `#B6CAFF` | Primary action on hover                                |
 | `--primary-foreground` | `#FFFFFF` | `#102045` | Text and icons on primary fills                        |
 | `--ring`               | `#3769D4` | `#A2BDFF` | Keyboard focus                                         |
-| `--accent`             | `#E5EEFF` | `#233A66` | Selected controls, result cells, current SQL statement |
+| `--accent`             | `#E5EEFF` | `#233A66` | Selected controls, result cells                        |
 | `--accent-foreground`  | `#234A9C` | `#B8CCFF` | Selected labels and links                              |
-| `--selection`          | `#D0DFFF` | `#2B4574` | Text selection in the SQL editor                       |
+| `--selection`          | `#A8CBFF` | `#2B56A3` | Text selection in the SQL editor                       |
 | `--env-dev`            | `#176446` | `#86D5AD` | Development                                            |
 | `--env-staging`        | `#805200` | `#F0C46B` | Staging                                                |
 | `--env-prod`           | `#AD273C` | `#FF9AA9` | Production                                             |

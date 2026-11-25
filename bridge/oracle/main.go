@@ -396,6 +396,7 @@ func (c *connection) closeQuery() {
 
 func (c *connection) execute(p params) (executeResult, error) {
 	c.closeQuery()
+	bind := normalizeBinds(p.Bind)
 	var ctx context.Context
 	var cancel context.CancelFunc
 	if p.Timeout > 0 {
@@ -411,7 +412,7 @@ func (c *connection) execute(p params) (executeResult, error) {
 	defer finish()
 	if !p.ReturnsRows {
 		defer c.closeQuery()
-		result, err := c.exec(ctx, p.SQL, p.Bind...)
+		result, err := c.exec(ctx, p.SQL, bind...)
 		if err != nil {
 			if ctx.Err() != nil {
 				return executeResult{}, ctx.Err()
@@ -424,17 +425,17 @@ func (c *connection) execute(p params) (executeResult, error) {
 	var rows *sql.Rows
 	var err error
 	if c.tx != nil {
-		rows, err = c.tx.QueryContext(ctx, p.SQL, p.Bind...)
+		rows, err = c.tx.QueryContext(ctx, p.SQL, bind...)
 	} else if c.readOnly {
 		c.implicitReadOnly, err = c.conn.BeginTx(context.Background(), nil)
 		if err == nil {
 			_, err = c.implicitReadOnly.ExecContext(ctx, "SET TRANSACTION READ ONLY")
 		}
 		if err == nil {
-			rows, err = c.implicitReadOnly.QueryContext(ctx, p.SQL, p.Bind...)
+			rows, err = c.implicitReadOnly.QueryContext(ctx, p.SQL, bind...)
 		}
 	} else {
-		rows, err = c.conn.QueryContext(ctx, p.SQL, p.Bind...)
+		rows, err = c.conn.QueryContext(ctx, p.SQL, bind...)
 	}
 	if err != nil {
 		interrupted := ctx.Err()
@@ -465,7 +466,7 @@ func (c *connection) fetch(p params) (page, error) {
 	ctx := c.queryContext
 	finish := c.monitor(ctx)
 	defer finish()
-	count := min(128, max(p.Count, 1))
+	count := min(1000, max(p.Count, 1))
 	size := 0
 	result := page{Rows: make([][]any, 0, count)}
 	for range count {
@@ -517,6 +518,21 @@ func (c *connection) readOutput(ctx context.Context) []string {
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+func normalizeBinds(values []any) []any {
+	if len(values) == 0 {
+		return values
+	}
+	out := make([]any, len(values))
+	for i, value := range values {
+		if number, ok := value.(float64); ok && math.Trunc(number) == number && number >= -(1<<53) && number <= (1<<53) {
+			out[i] = int64(number)
+			continue
+		}
+		out[i] = value
+	}
+	return out
 }
 
 func wireValue(value any, dbType string) any {

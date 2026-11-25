@@ -1270,6 +1270,24 @@ body[data-tab-dragging="true"] * {
 .catalog-name .catalog-error {
   color: var(--env-prod);
 }
+.catalog-load-more {
+  display: flex;
+  justify-content: flex-start;
+  flex: 1;
+  min-width: 0;
+  gap: 5px;
+  padding-inline: 4px;
+  color: var(--workspace-accent);
+  font-size: var(--font-size-label);
+  font-weight: 500;
+}
+.catalog-load-more span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.catalog-load-more[data-error="true"] {
+  color: var(--env-prod);
+}
 .catalog-dialog {
   width: min(560px, calc(100vw - 32px));
   max-width: none;

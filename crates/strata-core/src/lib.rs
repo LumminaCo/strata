@@ -4,7 +4,7 @@ mod session;
 
 use std::{future::Future, pin::Pin, sync::Arc};
 
-use async_trait::async_trait;
+pub use async_trait::async_trait;
 use futures_util::Stream;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -334,6 +334,13 @@ pub struct Object {
     pub comment: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ObjectPage {
+    pub objects: Vec<Object>,
+    pub has_more: bool,
+}
+
 #[derive(Debug, Deserialize, Serialize, TS)]
 pub struct TableColumn {
     pub name: String,
@@ -373,6 +380,42 @@ pub trait Introspector: Send + Sync {
     async fn databases(&self) -> Result<Vec<String>>;
     async fn schemas(&self, include_system: bool) -> Result<Vec<String>>;
     async fn objects(&self, schema: &str, kinds: &[ObjectKind]) -> Result<Vec<Object>>;
+    async fn objects_page(
+        &self,
+        schema: &str,
+        kinds: &[ObjectKind],
+        search: Option<&str>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ObjectPage> {
+        if limit == 0 {
+            return Ok(ObjectPage::default());
+        }
+        let needle = search
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_lowercase);
+        let mut items: Vec<Object> = self
+            .objects(schema, kinds)
+            .await?
+            .into_iter()
+            .filter(|object| {
+                needle
+                    .as_ref()
+                    .is_none_or(|needle| object.name.to_lowercase().contains(needle))
+            })
+            .collect();
+        if offset >= items.len() {
+            return Ok(ObjectPage::default());
+        }
+        items.drain(..offset);
+        let has_more = items.len() > limit;
+        items.truncate(limit);
+        Ok(ObjectPage {
+            objects: items,
+            has_more,
+        })
+    }
     async fn column_names(
         &self,
         schema: &str,
@@ -400,6 +443,31 @@ pub trait Introspector: Send + Sync {
                     .collect(),
             );
         }
+        Ok(columns)
+    }
+    async fn columns_for_objects(
+        &self,
+        schema: &str,
+        objects: &[Object],
+    ) -> Result<std::collections::BTreeMap<u32, Vec<String>>> {
+        let wanted: std::collections::HashSet<u32> = objects
+            .iter()
+            .filter(|object| {
+                matches!(
+                    object.kind,
+                    ObjectKind::Table
+                        | ObjectKind::View
+                        | ObjectKind::MaterializedView
+                        | ObjectKind::ForeignTable
+                )
+            })
+            .map(|object| object.oid)
+            .collect();
+        if wanted.is_empty() {
+            return Ok(std::collections::BTreeMap::new());
+        }
+        let mut columns = self.column_names(schema).await?;
+        columns.retain(|oid, _| wanted.contains(oid));
         Ok(columns)
     }
     async fn table_detail(&self, object: &Object) -> Result<TableDetail>;

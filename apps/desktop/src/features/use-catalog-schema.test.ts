@@ -48,6 +48,7 @@ describe("buildCompletionNamespace", () => {
             object(6, "public", "order_id_seq", "sequence"),
             object(7, "public", "calc_total", "function"),
           ],
+          hasMoreTables: false,
           columns: {
             "1": ["id", "name"],
             "2": ["id", "account_id"],
@@ -64,6 +65,7 @@ describe("buildCompletionNamespace", () => {
             object(10, "sales", "invoices", "table"),
             object(11, "sales", "line_items", "table"),
           ],
+          hasMoreTables: false,
           columns: {
             "10": ["id", "total"],
             "11": ["id", "invoice_id"],
@@ -76,6 +78,7 @@ describe("buildCompletionNamespace", () => {
         name: "public",
         snapshot: {
           objects: [object(99, "public", "other_connection_table", "table")],
+          hasMoreTables: false,
           columns: { "99": ["id"] },
         },
       },
@@ -118,6 +121,7 @@ describe("buildCompletionNamespace", () => {
         name: "public",
         snapshot: {
           objects: [object(1, "public", "archive.events", "table")],
+          hasMoreTables: false,
           columns: { "1": ["id", "payload"] },
         },
       },

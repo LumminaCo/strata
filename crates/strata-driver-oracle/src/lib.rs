@@ -101,9 +101,24 @@ impl Session {
     }
 
     pub(crate) async fn query(&self, sql: &str, bind: &[Value]) -> Result<Vec<Vec<Value>>> {
-        let result: Executed = self.bridge.rpc("execute", json!({
-            "conn_id": self.id, "sql": sql, "bind": bind, "returns_rows": true, "timeout_ms": 15_000,
-        })).await?;
+        self.query_with_timeout(sql, bind, 30_000).await
+    }
+
+    pub(crate) async fn query_with_timeout(
+        &self,
+        sql: &str,
+        bind: &[Value],
+        timeout_ms: u32,
+    ) -> Result<Vec<Vec<Value>>> {
+        let result: Executed = self
+            .bridge
+            .rpc(
+                "execute",
+                json!({
+                    "conn_id": self.id, "sql": sql, "bind": bind, "returns_rows": true, "timeout_ms": timeout_ms,
+                }),
+            )
+            .await?;
         let mut rows = Vec::new();
         loop {
             let page: Page = self
@@ -111,7 +126,7 @@ impl Session {
                 .rpc(
                     "fetch",
                     json!({
-                        "conn_id": self.id, "query_id": result.query_id, "n": 128,
+                        "conn_id": self.id, "query_id": result.query_id, "n": 1000,
                     }),
                 )
                 .await?;

@@ -1,15 +1,18 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use strata_core::{
-    CoreError, Definition, Introspector, Object, ObjectKind, ObjectReference, Result, TableColumn,
-    TableDetail,
+    CoreError, Definition, Introspector, Object, ObjectKind, ObjectPage, ObjectReference, Result,
+    TableColumn, TableDetail,
 };
 use strata_sql::{Dialect, relation_at};
 use tokio::sync::Mutex;
 
 use crate::Session;
+
+const AUTOCOMPLETE_RELATION_LIMIT: usize = 100;
+const AUTOCOMPLETE_COLUMNS_TIMEOUT_MS: u32 = 8_000;
 
 pub struct Catalog {
     pub session: Mutex<Session>,
@@ -21,6 +24,19 @@ impl Catalog {
         self.session.lock().await.query(sql, bind).await
     }
 
+    async fn query_with_timeout(
+        &self,
+        sql: &str,
+        bind: &[Value],
+        timeout_ms: u32,
+    ) -> Result<Vec<Vec<Value>>> {
+        self.session
+            .lock()
+            .await
+            .query_with_timeout(sql, bind, timeout_ms)
+            .await
+    }
+
     async fn named(&self, owner: &str, name: Option<&str>) -> Result<Vec<Object>> {
         let rows = self
             .query(
@@ -28,12 +44,7 @@ impl Catalog {
                 &[json!(owner), json!(name), json!(name)],
             )
             .await?;
-        let mut seen = HashSet::new();
-        Ok(rows
-            .iter()
-            .filter_map(|row| object(row))
-            .filter(|object| seen.insert(object.name.clone()))
-            .collect())
+        Ok(dedup_objects(rows))
     }
 
     async fn synonym(&self, schema: &str, name: &str) -> Result<Option<ObjectReference>> {
@@ -69,12 +80,32 @@ impl Introspector for Catalog {
     }
 
     async fn objects(&self, schema: &str, kinds: &[ObjectKind]) -> Result<Vec<Object>> {
-        Ok(self
-            .named(schema, None)
-            .await?
-            .into_iter()
-            .filter(|object| kinds.is_empty() || kinds.contains(&object.kind))
-            .collect())
+        let Some(sql) = objects_list_sql(kinds) else {
+            return Ok(Vec::new());
+        };
+        let rows = self.query(&sql, &[json!(schema)]).await?;
+        Ok(dedup_objects(rows))
+    }
+
+    async fn objects_page(
+        &self,
+        schema: &str,
+        kinds: &[ObjectKind],
+        search: Option<&str>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ObjectPage> {
+        if limit == 0 {
+            return Ok(ObjectPage::default());
+        }
+        let Some((sql, bind)) = objects_page_query(schema, kinds, search, offset, limit) else {
+            return Ok(ObjectPage::default());
+        };
+        let rows = self.query(&sql, &bind).await?;
+        let mut objects = dedup_objects(rows);
+        let has_more = objects.len() > limit;
+        objects.truncate(limit);
+        Ok(ObjectPage { objects, has_more })
     }
 
     async fn column_names(&self, schema: &str) -> Result<BTreeMap<u32, Vec<String>>> {
@@ -83,6 +114,46 @@ impl Introspector for Catalog {
         let mut columns = BTreeMap::<_, Vec<_>>::new();
         for row in rows {
             if let Some(oid) = number(&row, 0).and_then(|id| id.try_into().ok()) {
+                columns.entry(oid).or_default().push(text(&row, 1));
+            }
+        }
+        Ok(columns)
+    }
+
+    async fn columns_for_objects(
+        &self,
+        schema: &str,
+        objects: &[Object],
+    ) -> Result<BTreeMap<u32, Vec<String>>> {
+        let mut oids_by_name = HashMap::new();
+        let mut table_names = Vec::new();
+        for object in objects {
+            if !matches!(
+                object.kind,
+                ObjectKind::Table | ObjectKind::View | ObjectKind::MaterializedView
+            ) {
+                continue;
+            }
+            if oids_by_name.contains_key(object.name.as_str()) {
+                continue;
+            }
+            oids_by_name.insert(object.name.as_str(), object.oid);
+            table_names.push(object.name.as_str());
+            if table_names.len() >= AUTOCOMPLETE_RELATION_LIMIT {
+                break;
+            }
+        }
+        if table_names.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let (sql, bind) = columns_for_objects_query(schema, &table_names);
+        let rows = self
+            .query_with_timeout(&sql, &bind, AUTOCOMPLETE_COLUMNS_TIMEOUT_MS)
+            .await?;
+        let mut columns = BTreeMap::<_, Vec<_>>::new();
+        for row in rows {
+            let table_name = text(&row, 0);
+            if let Some(&oid) = oids_by_name.get(table_name.as_str()) {
                 columns.entry(oid).or_default().push(text(&row, 1));
             }
         }
@@ -378,6 +449,139 @@ impl Introspector for Catalog {
     }
 }
 
+fn dedup_objects(rows: Vec<Vec<Value>>) -> Vec<Object> {
+    let mut seen = HashSet::new();
+    rows.iter()
+        .filter_map(|row| object(row))
+        .filter(|object| seen.insert(object.name.clone()))
+        .collect()
+}
+
+fn oracle_object_types(kinds: &[ObjectKind]) -> Vec<&'static str> {
+    if kinds.is_empty() {
+        return vec![
+            "'TABLE'",
+            "'VIEW'",
+            "'MATERIALIZED VIEW'",
+            "'FUNCTION'",
+            "'PROCEDURE'",
+            "'SEQUENCE'",
+            "'SYNONYM'",
+        ];
+    }
+    let mut types = Vec::new();
+    for kind in kinds {
+        let literal = match kind {
+            ObjectKind::Table => "'TABLE'",
+            ObjectKind::View => "'VIEW'",
+            ObjectKind::MaterializedView => "'MATERIALIZED VIEW'",
+            ObjectKind::Function => "'FUNCTION'",
+            ObjectKind::Procedure => "'PROCEDURE'",
+            ObjectKind::Sequence => "'SEQUENCE'",
+            ObjectKind::Synonym => "'SYNONYM'",
+            ObjectKind::ForeignTable => continue,
+        };
+        if !types.contains(&literal) {
+            types.push(literal);
+        }
+    }
+    types
+}
+
+fn like_pattern(search: &str) -> String {
+    let mut pattern = String::with_capacity(search.len() + 2);
+    pattern.push('%');
+    for ch in search.chars() {
+        if matches!(ch, '\\' | '%' | '_') {
+            pattern.push('\\');
+        }
+        for upper in ch.to_uppercase() {
+            pattern.push(upper);
+        }
+    }
+    pattern.push('%');
+    pattern
+}
+
+fn objects_list_sql(kinds: &[ObjectKind]) -> Option<String> {
+    let types = oracle_object_types(kinds);
+    if types.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "SELECT o.object_id, o.owner, o.object_name, o.object_type \
+         FROM all_objects o \
+         WHERE o.owner = :1 AND o.object_type IN ({}) \
+         ORDER BY o.object_name, CASE WHEN o.object_type = 'MATERIALIZED VIEW' THEN 0 ELSE 1 END",
+        types.join(",")
+    ))
+}
+
+fn objects_page_query(
+    schema: &str,
+    kinds: &[ObjectKind],
+    search: Option<&str>,
+    offset: usize,
+    limit: usize,
+) -> Option<(String, Vec<Value>)> {
+    let types = oracle_object_types(kinds);
+    if types.is_empty() {
+        return None;
+    }
+    let search = search.map(str::trim).filter(|value| !value.is_empty());
+    let end_row = offset.saturating_add(limit).saturating_add(1) as i64;
+    let start_row = offset as i64;
+    let mut bind = vec![json!(schema)];
+    let (search_clause, end_bind, start_bind) = if let Some(search) = search {
+        bind.push(json!(like_pattern(search)));
+        bind.push(json!(end_row));
+        bind.push(json!(start_row));
+        (" AND UPPER(o.object_name) LIKE :2 ESCAPE '\\'", ":3", ":4")
+    } else {
+        bind.push(json!(end_row));
+        bind.push(json!(start_row));
+        ("", ":2", ":3")
+    };
+    let sql = format!(
+        "SELECT object_id, owner, object_name, object_type \
+         FROM ( \
+           SELECT inner_q.object_id, inner_q.owner, inner_q.object_name, inner_q.object_type, ROWNUM AS rn \
+           FROM ( \
+             SELECT o.object_id, o.owner, o.object_name, o.object_type \
+             FROM all_objects o \
+             WHERE o.owner = :1 AND o.object_type IN ({}){} \
+             ORDER BY o.object_name, CASE WHEN o.object_type = 'MATERIALIZED VIEW' THEN 0 ELSE 1 END, o.object_id \
+           ) inner_q \
+           WHERE ROWNUM <= {} \
+         ) \
+         WHERE rn > {} \
+         ORDER BY rn",
+        types.join(","),
+        search_clause,
+        end_bind,
+        start_bind
+    );
+    Some((sql, bind))
+}
+
+fn columns_for_objects_query(schema: &str, table_names: &[&str]) -> (String, Vec<Value>) {
+    let mut bind = Vec::with_capacity(table_names.len() + 1);
+    bind.push(json!(schema));
+    let mut placeholders = Vec::with_capacity(table_names.len());
+    for (index, name) in table_names.iter().enumerate() {
+        placeholders.push(format!(":{}", index + 2));
+        bind.push(json!(name));
+    }
+    let sql = format!(
+        "SELECT table_name, column_name \
+         FROM all_tab_columns \
+         WHERE owner = :1 AND table_name IN ({}) \
+         ORDER BY table_name, column_id",
+        placeholders.join(",")
+    );
+    (sql, bind)
+}
+
 fn object(row: &[Value]) -> Option<Object> {
     let kind = match text(row, 3).as_str() {
         "TABLE" => ObjectKind::Table,
@@ -417,4 +621,63 @@ fn quote(name: &str) -> String {
 }
 fn qualified(schema: &str, name: &str) -> String {
     format!("{}.{}", quote(schema), quote(name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn like_pattern_escapes_wildcards_and_uppercases() {
+        assert_eq!(like_pattern("emp"), "%EMP%");
+        assert_eq!(like_pattern("pay_100%\\x"), "%PAY\\_100\\%\\\\X%");
+    }
+
+    #[test]
+    fn objects_page_query_uses_rownum_without_heavy_joins() {
+        let (sql, bind) =
+            objects_page_query("SFBZ0800", &[ObjectKind::Table], None, 0, 100).unwrap();
+        assert!(sql.contains("FROM all_objects o"));
+        assert!(!sql.contains("all_tables"));
+        assert!(!sql.contains("all_tab_comments"));
+        assert!(sql.contains("o.object_type IN ('TABLE')"));
+        assert!(sql.contains("WHERE ROWNUM <= :2"));
+        assert!(sql.contains("WHERE rn > :3"));
+        assert_eq!(bind, vec![json!("SFBZ0800"), json!(101), json!(0)]);
+
+        let (filtered_sql, filtered_bind) = objects_page_query(
+            "SFBZ0800",
+            &[ObjectKind::Table, ObjectKind::Procedure],
+            Some(" ventas_1 "),
+            100,
+            100,
+        )
+        .unwrap();
+        assert!(filtered_sql.contains("o.object_type IN ('TABLE','PROCEDURE')"));
+        assert!(filtered_sql.contains("UPPER(o.object_name) LIKE :2 ESCAPE '\\'"));
+        assert!(filtered_sql.contains("WHERE ROWNUM <= :3"));
+        assert!(filtered_sql.contains("WHERE rn > :4"));
+        assert_eq!(
+            filtered_bind,
+            vec![
+                json!("SFBZ0800"),
+                json!("%VENTAS\\_1%"),
+                json!(201),
+                json!(100)
+            ]
+        );
+
+        assert!(
+            objects_page_query("SFBZ0800", &[ObjectKind::ForeignTable], None, 0, 100).is_none()
+        );
+    }
+
+    #[test]
+    fn columns_for_objects_query_targets_selected_tables_only() {
+        let (sql, bind) = columns_for_objects_query("SFBZ0800", &["T_A", "T_B"]);
+        assert!(sql.contains("FROM all_tab_columns"));
+        assert!(!sql.contains("all_objects"));
+        assert!(sql.contains("WHERE owner = :1 AND table_name IN (:2,:3)"));
+        assert_eq!(bind, vec![json!("SFBZ0800"), json!("T_A"), json!("T_B")]);
+    }
 }

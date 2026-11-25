@@ -90,13 +90,20 @@ export function useCatalogSchema(
   const capture = useCallback(
     (connectionId: string, database: string, name: string, snapshot: CatalogSnapshot) => {
       const key = JSON.stringify([connectionId, database, name]);
-      setCache((current) => ({
-        revision,
-        entries: {
-          ...(current.revision === revision ? current.entries : {}),
-          [key]: { connectionId, database, name, snapshot },
-        },
-      }));
+      setCache((current) => {
+        const existing = current.revision === revision ? current.entries[key] : undefined;
+        const columns =
+          Object.keys(snapshot.columns).length > 0
+            ? snapshot.columns
+            : (existing?.snapshot.columns ?? snapshot.columns);
+        return {
+          revision,
+          entries: {
+            ...(current.revision === revision ? current.entries : {}),
+            [key]: { connectionId, database, name, snapshot: { ...snapshot, columns } },
+          },
+        };
+      });
     },
     [revision],
   );

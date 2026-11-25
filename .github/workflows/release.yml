@@ -37,7 +37,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [linux, windows]
+        platform: [linux]
     steps:
       - uses: actions/checkout@v6
       - name: Free space for Docker images and Rust artifacts
@@ -83,7 +83,7 @@ jobs:
           if-no-files-found: error
 
   windows-native:
-    if: ${{ !cancelled() && (needs.linux-and-windows-bundles.result == 'success' || inputs.windows_artifact_run) }}
+    if: ${{ !cancelled() && inputs.windows_artifact_run }}
     runs-on: windows-latest
     timeout-minutes: 45
     needs: linux-and-windows-bundles
@@ -204,7 +204,7 @@ jobs:
       - run: cargo test --locked --workspace
 
   macos-arm64:
-    if: ${{ !inputs.windows_artifact_run && !inputs.macos_artifact_run }}
+    if: ${{ false }}
     runs-on: macos-15
     timeout-minutes: 45
     steps:
@@ -266,7 +266,7 @@ jobs:
           if-no-files-found: error
 
   macos-native:
-    if: ${{ !cancelled() && (needs.macos-arm64.result == 'success' || inputs.macos_artifact_run) }}
+    if: ${{ !cancelled() && inputs.macos_artifact_run }}
     runs-on: macos-15
     timeout-minutes: 15
     needs: macos-arm64
@@ -309,7 +309,7 @@ jobs:
 
   publish-updates:
     if: ${{ github.event_name == 'push' && vars.STRATA_RELEASE_REPOSITORY != '' && !contains(github.ref_name, '-') }}
-    needs: [linux-and-windows-bundles, windows-native, macos-native]
+    needs: [linux-and-windows-bundles]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -324,11 +324,6 @@ jobs:
         run: |
           visibility="$(gh api "repos/$STRATA_RELEASE_REPOSITORY" --jq .private)"
           test "$visibility" = false
-          python3 dev/update-release.py manifest artifacts
+          python3 dev/update-release.py manifest artifacts linux
           gh release create "$GITHUB_REF_NAME" --repo "$STRATA_RELEASE_REPOSITORY" \
             --title "Strata ${GITHUB_REF_NAME#v}" --latest artifacts/*
-      - uses: actions/upload-artifact@v7
-        with:
-          name: strata-macos-performance
-          path: macos-performance.jsonl
-          if-no-files-found: error

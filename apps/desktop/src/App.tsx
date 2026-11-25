@@ -62,7 +62,13 @@ import {
   type QueryCompletion,
 } from "@/features/query-notifications";
 import { playQuerySound, primeQuerySound } from "@/features/query-sound";
-import { saveSqlFile as persistSqlFile } from "@/features/save-sql-file";
+import {
+  isSqlTabUnsaved,
+  recordSavedSqlTab,
+  removeSavedSqlTabs,
+  saveSqlFile as persistSqlFile,
+  type SavedSqlState,
+} from "@/features/save-sql-file";
 import {
   PinnedInspectionTabItem,
   ResultTabItem,
@@ -170,7 +176,7 @@ export function App() {
   const editor = useRef<EditorHandle>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const editors = useRef(new Map<string, { current: EditorState | null }>());
-  const savedSqlPaths = useRef(new Map<string, string>());
+  const [savedSqlByTab, setSavedSqlByTab] = useState<Record<string, SavedSqlState>>({});
   const savingSql = useRef(false);
   const filterInput = useRef<HTMLInputElement>(null);
   const ThemeIcon = themeIcons[theme];
@@ -277,7 +283,7 @@ export function App() {
     });
   }
 
-  function openTab(id: string, database?: string, text?: string, schema?: string) {
+  function openTab(id: string, database?: string, text?: string, schema?: string): string | null {
     setSchemaSelected(undefined);
     const profile = data.profiles.find((entry) => entry.id === id);
     const existing = data.tabs.find(
@@ -285,8 +291,11 @@ export function App() {
         item.connectionId === id &&
         (item.database ?? profile?.database) === (database ?? profile?.database),
     );
-    if (existing && text === undefined) data.selectTab(existing.id);
-    else data.addTab(id, database, text, schema);
+    if (existing && text === undefined) {
+      data.selectTab(existing.id);
+      return existing.id;
+    }
+    return data.addTab(id, database, text, schema);
   }
 
   function openObject(entry: Inspection) {
@@ -316,8 +325,8 @@ export function App() {
     data.closeTabs(ids);
     for (const id of closing) {
       editors.current.delete(id);
-      savedSqlPaths.current.delete(id);
     }
+    setSavedSqlByTab((current) => removeSavedSqlTabs(current, closing));
     setRenamingScriptTabId((current) => (current && closing.has(current) ? null : current));
     setRenamingResultTab((current) => (current && closing.has(current.tabId) ? null : current));
     setQueryToasts((current) => current.filter((item) => !closing.has(item.tabId)));
@@ -444,7 +453,11 @@ export function App() {
       return;
     }
     try {
-      openTab(profile.id, tab?.database, await file.text(), tab?.schema);
+      const content = await file.text();
+      const tabId = openTab(profile.id, tab?.database, content, tab?.schema);
+      if (tabId) {
+        setSavedSqlByTab((current) => recordSavedSqlTab(current, tabId, content, file.name));
+      }
     } catch (error) {
       data.setNotice(errorMessage(error));
     }
@@ -454,12 +467,14 @@ export function App() {
     if (!tab || !editor.current || schemaActive || savingSql.current) return;
     const tabId = tab.id;
     const content = editor.current.text();
-    const suggestedPath = savedSqlPaths.current.get(tabId);
+    const suggestedPath = savedSqlByTab[tabId]?.path;
     savingSql.current = true;
     try {
       const savedPath = await persistSqlFile(content, suggestedPath);
       if (!savedPath) return;
-      if (editors.current.has(tabId)) savedSqlPaths.current.set(tabId, savedPath);
+      if (editors.current.has(tabId)) {
+        setSavedSqlByTab((current) => recordSavedSqlTab(current, tabId, content, savedPath));
+      }
       data.setNotice(`Saved SQL to ${savedPath}.`);
     } catch (error) {
       data.setNotice(errorMessage(error));
@@ -777,6 +792,7 @@ export function App() {
                 const connection = data.profiles.find((value) => value.id === item.connectionId);
                 const defaultLabel = defaultScriptTabLabel(data.tabs, item, connection?.name);
                 const label = scriptTabLabel(data.tabs, item, connection?.name);
+                const unsaved = isSqlTabUnsaved(item.text, savedSqlByTab[item.id]);
                 const closeShortcut = browserMode ? "Alt+W" : shortcuts.closeTab;
                 return (
                   <ScriptTabItem
@@ -786,6 +802,7 @@ export function App() {
                     label={label}
                     defaultLabel={defaultLabel}
                     active={!schemaActive && tab?.id === item.id}
+                    unsaved={unsaved}
                     renaming={renamingScriptTabId === item.id}
                     canMoveLeft={index > 0}
                     canMoveRight={index < data.tabs.length - 1}

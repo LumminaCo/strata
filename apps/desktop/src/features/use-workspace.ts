@@ -231,13 +231,19 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
     setWorkspace((current) => current && { ...current, activeTab: id });
   }
 
-  function addTab(connectionId: string, database?: string, text = "", schema?: string) {
+  function addTab(
+    connectionId: string,
+    database?: string,
+    text = "",
+    schema?: string,
+  ): string | null {
     if (!workspace || workspace.tabs.length >= 100) {
       setNotice("Close a tab before opening another.");
-      return;
+      return null;
     }
     const newTab: SavedTab = { id: crypto.randomUUID(), connectionId, database, schema, text };
     setWorkspace((current) => current && { tabs: [...current.tabs, newTab], activeTab: newTab.id });
+    return newTab.id;
   }
 
   function moveTab(direction: number) {

@@ -25,6 +25,13 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { DatabaseIcon } from "@/components/database-icon";
 import { ResultGrid } from "@/components/load-result-grid";
+import {
+  readAggregateFunction,
+  saveAggregateFunction,
+  type AggregateFunction,
+  type NumericAggregateSummary,
+} from "@/components/numeric-aggregate";
+import { NumericAggregateBar } from "@/components/numeric-aggregate-bar";
 import type { ResultSet } from "@/components/result-grid";
 import { SqlEditor, type EditorHandle } from "@/components/sql-editor";
 import { Badge } from "@/components/ui/badge";
@@ -160,6 +167,8 @@ export function App() {
   const [resultViews, setResultViews] = useState<Record<string, ResultViewState>>({});
   const [visibleRowCounts, setVisibleRowCounts] = useState<Record<string, number>>({});
   const [initialSidebarWidth] = useState(() => readSidebarWidth());
+  const [gridAggregate, setGridAggregate] = useState<NumericAggregateSummary | null>(null);
+  const [aggregateFn, setAggregateFn] = useState<AggregateFunction>(readAggregateFunction);
   const [explorerOpen, setExplorerOpen] = useState(true);
   const explorerPanelRef = usePanelRef();
   const [palette, setPalette] = useState(false);
@@ -337,6 +346,11 @@ export function App() {
     const next = themes[(themes.indexOf(theme) + 1) % themes.length] ?? "system";
     localStorage.setItem("strata.theme", next);
     setTheme(next);
+  }
+
+  function changeAggregateFn(next: AggregateFunction) {
+    saveAggregateFunction(next);
+    setAggregateFn(next);
   }
 
   function run(mode: RunMode, keepResults = false) {
@@ -1461,6 +1475,7 @@ export function App() {
                             canFetch={result.more && !active.busy}
                             fetching={fetchingResult}
                             filter={resultView.draftFilter}
+                            onAggregateChange={setGridAggregate}
                             filters={resultView.filters}
                             sorts={resultView.sorts}
                             onSortsChange={(sorts) =>
@@ -1582,6 +1597,13 @@ export function App() {
         {active.elapsed !== undefined && <span>{active.elapsed} ms</span>}
         {profile?.readOnly && <span>Read-only</span>}
         {active.transaction?.open && <span className="transaction-open">Transaction open</span>}
+        {!schemaActive && !selectedInspection && result && gridAggregate && (
+          <NumericAggregateBar
+            summary={gridAggregate}
+            fn={aggregateFn}
+            onChangeFn={changeAggregateFn}
+          />
+        )}
       </footer>
 
       {update.status && (

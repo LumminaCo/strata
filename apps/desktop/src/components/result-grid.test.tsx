@@ -12,6 +12,7 @@ interface MockEditorProps {
   getCellContent: (cell: Item) => GridCell;
   onVisibleRegionChanged?: (region: Rectangle) => void;
   onHeaderClicked?: (col: number) => void;
+  rangeSelect?: string;
 }
 
 let capturedProps: MockEditorProps | undefined;
@@ -166,4 +167,19 @@ test("applies filter expressions and nested multi-column sorting with clearable 
   // Clicking column 0 (currently DESC) removes it from sorts instead of cycling forever!
   capturedProps?.onHeaderClicked?.(0);
   expect(onSortsChange).toHaveBeenCalledWith([{ column: 1, descending: false }]);
+});
+
+test("enables multi-rect cell range selection for numeric aggregation", () => {
+  renderToStaticMarkup(
+    <ResultGrid
+      result={sampleResult(10)}
+      themeVersion="false"
+      canFetch={false}
+      fetching={false}
+      filter=""
+      onMore={vi.fn()}
+      onCell={vi.fn()}
+    />,
+  );
+  expect(capturedProps?.rangeSelect).toBe("multi-rect");
 });

@@ -1267,7 +1267,7 @@ export function App() {
                         )
                           return;
                         event.preventDefault();
-                      filterInput.current?.focus({ openSuggestions: true, selectAll: true });
+                        filterInput.current?.focus({ openSuggestions: true, selectAll: true });
                       }}
                     >
                       <div className="panel-heading">
@@ -1401,90 +1401,93 @@ export function App() {
                           onValue={showCell}
                         />
                       ) : result ? (
-                      <div className="result-view">
-                        <ResultToolbar
-                          key={`toolbar-${result.id}`}
-                          inputRef={filterInput}
-                          columns={result.columns}
-                          rows={result.rows}
-                          visibleRows={visibleRows}
-                          draftFilter={resultView.draftFilter}
-                          filters={resultView.filters}
-                          sorts={resultView.sorts}
-                          onDraftFilterChange={(draftFilter) =>
-                            updateResultView(result.id, (current) => ({ ...current, draftFilter }))
-                          }
-                          onAddFilter={(expression) =>
-                            updateResultView(result.id, (current) => ({
-                              ...current,
-                              draftFilter: "",
-                              filters: [
-                                ...current.filters,
-                                { id: crypto.randomUUID(), expression },
-                              ],
-                            }))
-                          }
-                          onRemoveFilter={(id) =>
-                            updateResultView(result.id, (current) => ({
-                              ...current,
-                              filters: current.filters.filter((item) => item.id !== id),
-                            }))
-                          }
-                          onEditFilter={(item) => {
-                            updateResultView(result.id, (current) => ({
-                              ...current,
-                              draftFilter: item.expression,
-                              filters: current.filters.filter((entry) => entry.id !== item.id),
-                            }));
-                            requestAnimationFrame(() =>
-                              filterInput.current?.focus({ openSuggestions: true }),
-                            );
-                          }}
-                          onClearFilters={() =>
-                            updateResultView(result.id, (current) => ({
-                              ...current,
-                              draftFilter: "",
-                              filters: [],
-                            }))
-                          }
-                          onSortsChange={(sorts) =>
-                            updateResultView(result.id, (current) => ({ ...current, sorts }))
-                          }
-                        />
-                        <ResultGrid
-                          key={result.id}
-                          result={result}
-                          themeVersion={String(dark)}
-                          canFetch={result.more && !active.busy}
-                          fetching={fetchingResult}
-                          filter={resultView.draftFilter}
-                          filters={resultView.filters}
-                          sorts={resultView.sorts}
-                          onSortsChange={(sorts) =>
-                            updateResultView(result.id, (current) => ({ ...current, sorts }))
-                          }
-                          onFilterByColumn={(columnName) => {
-                            const prefix = `${formatColumnIdentifier(columnName)} = `;
-                            updateResultView(result.id, (current) => ({
-                              ...current,
-                              draftFilter: prefix,
-                            }));
-                            requestAnimationFrame(() =>
-                              filterInput.current?.focus({ openSuggestions: true }),
-                            );
-                          }}
-                          onRowCountChange={(count) =>
-                            setVisibleRowCounts((current) =>
-                              current[result.id] === count
-                                ? current
-                                : { ...current, [result.id]: count },
-                            )
-                          }
-                          onMore={() => void data.fetchRows(result)}
-                          onCell={(row, column) => void openCell(result, row, column)}
-                          readCell={(row, column) => data.getCell(result, row, column)}
-                        />
-                      </div>
+                        <div className="result-view">
+                          <ResultToolbar
+                            key={`toolbar-${result.id}`}
+                            inputRef={filterInput}
+                            columns={result.columns}
+                            rows={result.rows}
+                            visibleRows={visibleRows}
+                            draftFilter={resultView.draftFilter}
+                            filters={resultView.filters}
+                            sorts={resultView.sorts}
+                            onDraftFilterChange={(draftFilter) =>
+                              updateResultView(result.id, (current) => ({
+                                ...current,
+                                draftFilter,
+                              }))
+                            }
+                            onAddFilter={(expression) =>
+                              updateResultView(result.id, (current) => ({
+                                ...current,
+                                draftFilter: "",
+                                filters: [
+                                  ...current.filters,
+                                  { id: crypto.randomUUID(), expression },
+                                ],
+                              }))
+                            }
+                            onRemoveFilter={(id) =>
+                              updateResultView(result.id, (current) => ({
+                                ...current,
+                                filters: current.filters.filter((item) => item.id !== id),
+                              }))
+                            }
+                            onEditFilter={(item) => {
+                              updateResultView(result.id, (current) => ({
+                                ...current,
+                                draftFilter: item.expression,
+                                filters: current.filters.filter((entry) => entry.id !== item.id),
+                              }));
+                              requestAnimationFrame(() =>
+                                filterInput.current?.focus({ openSuggestions: true }),
+                              );
+                            }}
+                            onClearFilters={() =>
+                              updateResultView(result.id, (current) => ({
+                                ...current,
+                                draftFilter: "",
+                                filters: [],
+                              }))
+                            }
+                            onSortsChange={(sorts) =>
+                              updateResultView(result.id, (current) => ({ ...current, sorts }))
+                            }
+                          />
+                          <ResultGrid
+                            key={result.id}
+                            result={result}
+                            themeVersion={String(dark)}
+                            canFetch={result.more && !active.busy}
+                            fetching={fetchingResult}
+                            filter={resultView.draftFilter}
+                            filters={resultView.filters}
+                            sorts={resultView.sorts}
+                            onSortsChange={(sorts) =>
+                              updateResultView(result.id, (current) => ({ ...current, sorts }))
+                            }
+                            onFilterByColumn={(columnName) => {
+                              const prefix = `${formatColumnIdentifier(columnName)} = `;
+                              updateResultView(result.id, (current) => ({
+                                ...current,
+                                draftFilter: prefix,
+                              }));
+                              requestAnimationFrame(() =>
+                                filterInput.current?.focus({ openSuggestions: true }),
+                              );
+                            }}
+                            onRowCountChange={(count) =>
+                              setVisibleRowCounts((current) =>
+                                current[result.id] === count
+                                  ? current
+                                  : { ...current, [result.id]: count },
+                              )
+                            }
+                            onMore={() => void data.fetchRows(result)}
+                            onCell={(row, column) => void openCell(result, row, column)}
+                            readCell={(row, column) => data.getCell(result, row, column)}
+                          />
+                        </div>
                       ) : active.messages.length ? (
                         <div className="query-messages" role="log" aria-label="Query messages">
                           {active.messages.map((message, index) => (

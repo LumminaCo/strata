@@ -891,6 +891,9 @@ body[data-tab-dragging="true"] * {
   background: var(--accent-surface);
   color: var(--workspace-accent);
 }
+.catalog-row[data-context-open="true"] {
+  background: var(--accent-surface);
+}
 .catalog-name {
   display: flex;
   justify-content: flex-start;

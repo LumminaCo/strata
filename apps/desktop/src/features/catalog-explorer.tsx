@@ -12,6 +12,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { DatabaseIcon } from "@/components/database-icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { CatalogRowMenu, type CatalogNode } from "@/features/catalog-context-menu";
+import type { Inspection } from "@/features/table-inspector";
 import type {
   CatalogScope,
   CatalogSnapshot,
@@ -24,18 +26,6 @@ export interface CatalogEntry {
   connection: Connection;
   database: string;
   object: CatalogObject;
-}
-
-type Kind = "connection" | "database" | "schema" | "group" | "object";
-interface Node {
-  key: string;
-  kind: Kind;
-  label: string;
-  connection: Connection;
-  database: string;
-  schema?: string;
-  children?: Node[];
-  object?: CatalogObject;
 }
 
 const groups: Record<CatalogObject["kind"], string> = {
@@ -54,6 +44,8 @@ interface Props {
   profiles: Connection[];
   active?: string | null;
   revision: number;
+  canPin?: boolean;
+  canInsertInEditor?: boolean;
   scope: (connection: Connection, database?: string, prompt?: boolean) => Promise<CatalogScope>;
   onSnapshot: (
     connectionId: string,
@@ -62,37 +54,53 @@ interface Props {
     snapshot: CatalogSnapshot,
   ) => void;
   onEntries: (entries: CatalogEntry[]) => void;
-  openSql: (connectionId: string, database?: string, text?: string) => void;
+  openSql: (connectionId: string, database?: string, text?: string, schema?: string) => void;
   onRefresh: () => void;
-  onObject?: (entry: CatalogEntry) => void;
+  onObject?: (entry: Inspection) => void;
+  onPinObject?: (entry: Inspection) => void;
+  onInsertText?: (text: string) => void;
+  onCopyText?: (text: string, label: string) => void;
+  onCopyDdl?: (entry: CatalogEntry) => void;
+  onEditConnection?: (connection: Connection) => void;
+  onDuplicateConnection?: (connection: Connection) => void;
+  onDeleteConnection?: (connection: Connection) => void;
 }
 
 export function CatalogExplorer({
   profiles,
   active,
   revision,
+  canPin = false,
+  canInsertInEditor = false,
   scope,
   onSnapshot,
   onEntries,
   openSql,
   onRefresh,
   onObject,
+  onPinObject,
+  onInsertText,
+  onCopyText,
+  onCopyDdl,
+  onEditConnection,
+  onDuplicateConnection,
+  onDeleteConnection,
 }: Props) {
   const [filter, setFilter] = useState("");
   const [expanded, setExpanded] = useState(new Set<string>());
-  const [children, setChildren] = useState<Record<string, Node[]>>({});
+  const [children, setChildren] = useState<Record<string, CatalogNode[]>>({});
   const [loading, setLoading] = useState(new Set<string>());
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [area, setArea] = useState({ y: 0, height: 300 });
   const scroller = useRef<HTMLDivElement>(null);
   const requests = useRef(new Map<string, object>());
-  const loads = useRef(new Map<string, Node>());
+  const loads = useRef(new Map<string, CatalogNode>());
   const roots = useMemo(() => {
-    const nodes: Node[] = [];
-    const folders = new Map<string, Node>();
+    const nodes: CatalogNode[] = [];
+    const folders = new Map<string, CatalogNode>();
     for (const connection of profiles) {
       if (!connection.id) continue;
-      const node: Node = {
+      const node: CatalogNode = {
         connection,
         database: connection.database,
         key: nodeKey(connection.id),
@@ -109,7 +117,7 @@ export function CatalogExplorer({
           ...node,
           key: nodeKey("folder", connection.folder),
           label: connection.folder,
-          kind: "group",
+          kind: "folder",
           children: [],
         };
         folders.set(connection.folder, folder);
@@ -130,8 +138,8 @@ export function CatalogExplorer({
     return () => observer.disconnect();
   }, []);
 
-  async function load(node: Node, prompt: boolean) {
-    if (node.kind === "group" || node.kind === "object") return;
+  async function load(node: CatalogNode, prompt: boolean) {
+    if (node.kind === "folder" || node.kind === "group" || node.kind === "object") return;
     const request = {};
     loads.current.set(node.key, node);
     requests.current.set(node.key, request);
@@ -139,7 +147,7 @@ export function CatalogExplorer({
     setErrors((current) => ({ ...current, [node.key]: "" }));
     try {
       const args = await scope(node.connection, node.database, prompt);
-      let nodes: Node[];
+      let nodes: CatalogNode[];
       switch (node.kind) {
         case "connection": {
           const databases = await dispatch("list_databases", { scope: args });
@@ -168,13 +176,14 @@ export function CatalogExplorer({
           const snapshot = await dispatch("catalog_snapshot", { scope: args, schema });
           if (requests.current.get(node.key) !== request) return;
           if (node.connection.id) onSnapshot(node.connection.id, node.database, schema, snapshot);
-          const categories = new Map<string, Node[]>();
+          const categories = new Map<string, CatalogNode[]>();
           for (const object of snapshot.objects) {
             const category = groups[object.kind];
             const objects = categories.get(category) ?? [];
             objects.push({
               ...node,
               object,
+              columns: snapshot.columns[object.oid],
               key: nodeKey(node.key, String(object.oid), object.name),
               label: object.name,
               kind: "object",
@@ -235,7 +244,7 @@ export function CatalogExplorer({
     onEntries(entries);
   }, [children, profiles, onEntries]);
 
-  function toggle(node: Node) {
+  function toggle(node: CatalogNode) {
     if (
       !expanded.has(node.key) &&
       !node.children &&
@@ -253,8 +262,8 @@ export function CatalogExplorer({
   }
 
   const needle = filter.trim().toLowerCase();
-  const rows: { node: Node; depth: number }[] = [];
-  function append(node: Node, depth: number): boolean {
+  const rows: { node: CatalogNode; depth: number }[] = [];
+  function append(node: CatalogNode, depth: number): boolean {
     const index = rows.length;
     rows.push({ node, depth });
     let childMatches = false;
@@ -271,15 +280,19 @@ export function CatalogExplorer({
   const end = Math.min(rows.length, Math.ceil((area.y + area.height) / rowHeight) + 5);
   const currentProfile = profiles.find((connection) => connection.id === active);
 
-  async function refresh() {
-    if (!currentProfile?.id) return;
+  async function refreshConnection(connectionId: string) {
     try {
-      await dispatch("refresh_metadata", { connectionId: currentProfile.id });
+      await dispatch("refresh_metadata", { connectionId });
       onRefresh();
     } catch (error) {
-      const root = nodeKey(currentProfile.id);
+      const root = nodeKey(connectionId);
       setErrors((current) => ({ ...current, [root]: errorMessage(error) }));
     }
+  }
+
+  async function refresh() {
+    if (!currentProfile?.id) return;
+    await refreshConnection(currentProfile.id);
   }
 
   return (
@@ -331,22 +344,54 @@ export function CatalogExplorer({
             const opened = expanded.has(node.key) || !!needle;
             const count = (node.children ?? children[node.key])?.length;
             const error = errors[node.key];
+            const isActive = node.kind === "connection" && node.connection.id === active;
+            const tabSchema =
+              node.connection.kind === "sqlserver"
+                ? undefined
+                : node.kind === "schema" || node.kind === "group"
+                  ? node.schema
+                  : undefined;
             return (
-              <div
-                className="catalog-row"
+              <CatalogRowMenu
                 key={node.key}
-                role="treeitem"
-                aria-level={depth + 1}
-                aria-expanded={branch ? opened : undefined}
-                aria-selected={
-                  node.kind === "connection" ? node.connection.id === active : undefined
-                }
-                data-active={node.kind === "connection" && node.connection.id === active}
+                node={node}
+                depth={depth}
+                branch={branch}
+                opened={opened}
+                filtered={!!needle}
+                active={isActive}
+                canPin={canPin}
+                canInsertInEditor={canInsertInEditor}
                 style={{
                   top: (first + index) * rowHeight,
                   height: rowHeight,
                   paddingInlineStart: 4 + depth * 11,
                 }}
+                onToggle={() => toggle(node)}
+                onRefresh={() => {
+                  if (node.connection.id) void refreshConnection(node.connection.id);
+                }}
+                onNewSqlTab={() => {
+                  if (node.connection.id) openSql(node.connection.id, node.database, "", tabSchema);
+                }}
+                onInspectObject={onObject}
+                onPinObject={onPinObject}
+                onGenerateSelect={(entry, sql) => {
+                  if (entry.connection.id) {
+                    openSql(
+                      entry.connection.id,
+                      entry.database,
+                      sql,
+                      entry.connection.kind === "sqlserver" ? undefined : entry.object.schema,
+                    );
+                  }
+                }}
+                onInsertText={onInsertText}
+                onCopyText={onCopyText}
+                onCopyDdl={onCopyDdl}
+                onEditConnection={onEditConnection}
+                onDuplicateConnection={onDuplicateConnection}
+                onDeleteConnection={onDeleteConnection}
               >
                 {branch && (
                   <Button
@@ -414,7 +459,7 @@ export function CatalogExplorer({
                     <FileCode2 />
                   </Button>
                 )}
-              </div>
+              </CatalogRowMenu>
             );
           })}
         </div>

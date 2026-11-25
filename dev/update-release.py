@@ -37,13 +37,25 @@ def configure(platform, repository, version):
     })
 
 
-def manifest(directory, repository, tag, version):
-    artifacts = {
-        "linux-x86_64-appimage": f"Strata_{version}_amd64.AppImage",
-        "linux-x86_64-deb": f"Strata_{version}_amd64.deb",
-        "windows-x86_64-nsis": f"Strata_{version}_x64-setup.exe",
-        "darwin-aarch64-app": "Strata.app.tar.gz",
+def manifest(directory, repository, tag, version, selected_platforms=None):
+    artifacts_by_platform = {
+        "linux": {
+            "linux-x86_64-appimage": f"Strata_{version}_amd64.AppImage",
+            "linux-x86_64-deb": f"Strata_{version}_amd64.deb",
+        },
+        "windows": {
+            "windows-x86_64-nsis": f"Strata_{version}_x64-setup.exe",
+        },
+        "macos": {
+            "darwin-aarch64-app": "Strata.app.tar.gz",
+        },
     }
+    names = selected_platforms or list(artifacts_by_platform)
+    artifacts = {}
+    for name in names:
+        if name not in artifacts_by_platform:
+            raise SystemExit(f"Unknown release platform: {name}")
+        artifacts.update(artifacts_by_platform[name])
     platforms = {}
     for target, filename in artifacts.items():
         bundle = directory / filename
@@ -60,7 +72,11 @@ def manifest(directory, repository, tag, version):
 
 
 if __name__ == "__main__":
-    action, argument = sys.argv[1:]
+    if len(sys.argv) < 3 or len(sys.argv) > 4:
+        raise SystemExit("Usage: update-release.py <configure|manifest> <argument> [platforms]")
+    action = sys.argv[1]
+    argument = sys.argv[2]
+    extra = sys.argv[3] if len(sys.argv) == 4 else None
     repository = os.environ["STRATA_RELEASE_REPOSITORY"]
     tag = os.environ["GITHUB_REF_NAME"]
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", repository, re.ASCII):
@@ -71,6 +87,7 @@ if __name__ == "__main__":
     if action == "configure":
         configure(argument, repository, version)
     elif action == "manifest":
-        manifest(Path(argument), repository, tag, version)
+        selected = [p.strip() for p in extra.split(",") if p.strip()] if extra else None
+        manifest(Path(argument), repository, tag, version, selected)
     else:
         raise SystemExit(f"Unknown release action: {action}")

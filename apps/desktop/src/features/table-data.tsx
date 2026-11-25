@@ -3,12 +3,12 @@ import { useEffect, useRef, useState } from "react";
 import { ResultGrid, loadResultGrid } from "@/components/load-result-grid";
 import type { ResultSet } from "@/components/result-grid";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import type { CatalogScope, Cell, ColumnMeta } from "@/ipc/bindings/protocol";
 import { dispatch, errorMessage, runQuery } from "@/ipc/client";
 
 import type { CatalogEntry } from "./catalog-explorer";
+import { ResultFilterInput } from "./result-filter-input";
 
 export function quoteName(name: string, kind: CatalogEntry["connection"]["kind"]) {
   return kind === "sqlserver"
@@ -221,11 +221,17 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
           setCount(undefined);
         }}
       >
-        <Input
-          aria-label="WHERE expression"
+        <ResultFilterInput
+          ariaLabel="WHERE expression"
           placeholder="WHERE expression"
           value={filter}
-          onChange={(event) => setFilter(event.target.value)}
+          columns={result?.columns ?? []}
+          rows={result?.rows ?? []}
+          onChange={setFilter}
+          onSubmit={() => {
+            setApplied((state) => ({ filter: filter.trim(), order, version: state.version + 1 }));
+            setCount(undefined);
+          }}
         />
         <NativeSelect
           aria-label="Order by column"

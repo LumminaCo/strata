@@ -38,4 +38,8 @@ function ResizableHandle({
   );
 }
 
-export { ResizableHandle, ResizablePanel, ResizablePanelGroup };
+const { usePanelRef } = ResizablePrimitive;
+type PanelImperativeHandle = ResizablePrimitive.PanelImperativeHandle;
+
+export { ResizableHandle, ResizablePanel, ResizablePanelGroup, usePanelRef };
+export type { PanelImperativeHandle };

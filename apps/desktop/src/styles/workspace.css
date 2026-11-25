@@ -66,14 +66,10 @@ body {
 }
 
 .workspace-body {
-  display: grid;
-  grid-template-columns: clamp(156px, 23vw, 224px) minmax(0, 1fr);
   min-height: 0;
+  min-width: 0;
 }
 
-.workspace-body[data-explorer-open="false"] {
-  grid-template-columns: minmax(0, 1fr);
-}
 .workspace-body[data-explorer-open="false"] .explorer {
   display: none;
 }
@@ -81,9 +77,34 @@ body {
 .explorer {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100%;
   background: var(--surface);
-  border-right: 1px solid var(--border);
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+[data-slot="resizable-handle"] {
+  z-index: 4;
+  transition: background var(--motion-fast);
+}
+
+[data-slot="resizable-handle"]::after {
+  transition: background var(--motion-fast);
+}
+
+[data-slot="resizable-handle"][data-separator="hover"],
+[data-slot="resizable-handle"][data-separator="active"] {
+  background: var(--ring);
+}
+
+[data-slot="resizable-handle"][data-separator="hover"]::after,
+[data-slot="resizable-handle"][data-separator="active"]::after {
+  background: color-mix(in srgb, var(--ring) 35%, transparent);
+}
+
+.workspace-body[data-explorer-open="false"] > .sidebar-resize-handle[data-separator="inactive"] {
+  background: transparent;
 }
 
 .sidebar-heading {
@@ -180,6 +201,7 @@ body {
 .query-workspace {
   display: flex;
   flex-direction: column;
+  height: 100%;
   min-height: 0;
   min-width: 0;
 }
@@ -942,10 +964,6 @@ body[data-tab-dragging="true"] * {
   text-overflow: ellipsis;
 }
 
-.explorer {
-  min-height: 0;
-  overflow: hidden;
-}
 .catalog-scroll {
   min-height: 0;
   contain: size;

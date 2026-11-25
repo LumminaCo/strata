@@ -1060,6 +1060,7 @@ export function App() {
                       key={tab.id}
                       ref={editor}
                       text={tab.text}
+                      dark={dark}
                       savedState={state}
                       schema={catalog.completion}
                       defaultSchema={defaultSchema}

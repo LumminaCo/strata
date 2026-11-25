@@ -22,7 +22,7 @@
   --ring: var(--brand-blue);
   --accent: #e5eeff;
   --accent-foreground: #234a9c;
-  --selection: #d0dfff;
+  --selection: #a8cbff;
 
   --env-dev: #176446;
   --env-staging: #805200;
@@ -62,9 +62,11 @@
   --grid-stripe: var(--surface);
   --grid-selection: var(--accent);
   --grid-null: var(--muted-foreground);
-  --editor-active-line: var(--surface);
-  --editor-statement: var(--accent);
+  --editor-active-line: #18243a0a;
+  --editor-statement: #3769d412;
   --editor-selection: var(--selection);
+  --editor-selection-inactive: #d3e0f4;
+  --editor-caret: var(--foreground);
 
   --ui-font: system-ui, sans-serif;
   --editor-font: "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
@@ -104,7 +106,11 @@
   --ring: #a2bdff;
   --accent: #233a66;
   --accent-foreground: #b8ccff;
-  --selection: #2b4574;
+  --selection: #2b56a3;
+
+  --editor-active-line: #edf3fc0d;
+  --editor-statement: #7aa2ff14;
+  --editor-selection-inactive: #223a63;
 
   --env-dev: #86d5ad;
   --env-staging: #f0c46b;

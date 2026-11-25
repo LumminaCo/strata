@@ -32,7 +32,14 @@ import type { CatalogEntry } from "./catalog-explorer";
 import { quoteName } from "./table-data";
 import type { Inspection } from "./table-inspector";
 
-export type CatalogNodeKind = "folder" | "connection" | "database" | "schema" | "group" | "object";
+export type CatalogNodeKind =
+  | "folder"
+  | "connection"
+  | "database"
+  | "schema"
+  | "group"
+  | "object"
+  | "load_more";
 
 export interface CatalogNode {
   key: string;
@@ -44,6 +51,12 @@ export interface CatalogNode {
   children?: CatalogNode[];
   object?: CatalogObject;
   columns?: string[];
+  objectKind?: CatalogObject["kind"];
+  schemaKey?: string;
+  position?: "top" | "bottom";
+  countLabel?: string;
+  loading?: boolean;
+  error?: string;
 }
 
 export function isRelationObject(kind: CatalogObject["kind"]): boolean {

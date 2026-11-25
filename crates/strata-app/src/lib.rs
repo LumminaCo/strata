@@ -277,6 +277,26 @@ impl AppService {
                     .await?
                     .as_ref(),
             ),
+            Command::CatalogObjects {
+                scope,
+                schema,
+                kinds,
+                search,
+                offset,
+                limit,
+            } => json(
+                self.metadata
+                    .objects_page(
+                        &self.engine,
+                        &scope,
+                        &schema,
+                        &kinds,
+                        search.as_deref(),
+                        offset,
+                        limit.unwrap_or(metadata::TABLE_PAGE_SIZE).clamp(1, 500),
+                    )
+                    .await?,
+            ),
             Command::RefreshMetadata { connection_id } => {
                 self.metadata
                     .invalidate(&self.engine, connection_id)

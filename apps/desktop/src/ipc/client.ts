@@ -4,6 +4,8 @@ import type {
   CatalogScope,
   AuditEntry,
   Object as CatalogObject,
+  ObjectKind,
+  ObjectPage,
   NextResult,
   ObjectReference,
   ObjectDetails,
@@ -52,6 +54,17 @@ interface Commands {
   list_databases: [{ scope: CatalogScope }, string[]];
   list_schemas: [{ scope: CatalogScope }, string[]];
   catalog_snapshot: [{ scope: CatalogScope; schema: string }, CatalogSnapshot];
+  catalog_objects: [
+    {
+      scope: CatalogScope;
+      schema: string;
+      kinds?: ObjectKind[];
+      search?: string;
+      offset?: number;
+      limit?: number;
+    },
+    ObjectPage,
+  ];
   refresh_metadata: [{ connectionId: string }, null];
   history_list: [{ connectionId: string; limit?: number }, HistoryItem[]];
   resolve_at: [

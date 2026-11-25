@@ -356,6 +356,18 @@ pub enum Command {
         scope: crate::CatalogScope,
         schema: String,
     },
+    CatalogObjects {
+        scope: crate::CatalogScope,
+        schema: String,
+        #[serde(default)]
+        kinds: Vec<strata_core::ObjectKind>,
+        #[serde(default)]
+        search: Option<String>,
+        #[serde(default)]
+        offset: usize,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
     RefreshMetadata {
         connection_id: Uuid,
     },
@@ -446,6 +458,7 @@ fn typescript_bindings() {
     for decl in [
         strata_core::ObjectKind::decl(&cfg),
         strata_core::Object::decl(&cfg),
+        strata_core::ObjectPage::decl(&cfg),
         strata_core::ObjectReference::decl(&cfg),
         strata_core::TableColumn::decl(&cfg),
         strata_core::Definition::decl(&cfg),

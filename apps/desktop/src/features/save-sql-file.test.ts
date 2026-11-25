@@ -15,7 +15,14 @@ vi.mock("@/ipc/client", () => ({
   },
 }));
 
-import { DEFAULT_SQL_FILE_NAME, saveSqlFile, suggestedSqlFileName } from "./save-sql-file";
+import {
+  DEFAULT_SQL_FILE_NAME,
+  isSqlTabUnsaved,
+  recordSavedSqlTab,
+  removeSavedSqlTabs,
+  saveSqlFile,
+  suggestedSqlFileName,
+} from "./save-sql-file";
 
 afterEach(() => {
   state.browserMode = false;
@@ -114,5 +121,40 @@ describe("saveSqlFile", () => {
     expect(anchor.href).toBe("blob:sql");
     expect(anchor.download).toBe(DEFAULT_SQL_FILE_NAME);
     expect(click).toHaveBeenCalledOnce();
+  });
+});
+
+describe("unsaved SQL tab tracking", () => {
+  it("treats empty never-saved tabs as clean and non-empty never-saved tabs as unsaved", () => {
+    expect(isSqlTabUnsaved("")).toBe(false);
+    expect(isSqlTabUnsaved("SELECT 1;")).toBe(true);
+    expect(isSqlTabUnsaved(" ")).toBe(true);
+  });
+
+  it("compares tab text against the last saved snapshot", () => {
+    const saved = { path: "/home/ada/Documents/Strata/query.sql", content: "SELECT 1;" };
+    expect(isSqlTabUnsaved("SELECT 1;", saved)).toBe(false);
+    expect(isSqlTabUnsaved("SELECT 2;", saved)).toBe(true);
+    expect(isSqlTabUnsaved("", saved)).toBe(true);
+
+    // Reverting to the exact saved text clears the unsaved indicator.
+    expect(isSqlTabUnsaved("SELECT 1;", saved)).toBe(false);
+  });
+
+  it("records and cleans up saved tab snapshots without unnecessary state churn", () => {
+    const initial = {};
+    const afterSave = recordSavedSqlTab(initial, "tab-1", "SELECT 1;", "/tmp/a.sql");
+    expect(afterSave).toEqual({
+      "tab-1": { path: "/tmp/a.sql", content: "SELECT 1;" },
+    });
+    expect(recordSavedSqlTab(afterSave, "tab-1", "SELECT 1;", "/tmp/a.sql")).toBe(afterSave);
+
+    const updated = recordSavedSqlTab(afterSave, "tab-1", "SELECT 2;", "/tmp/b.sql");
+    expect(updated).toEqual({
+      "tab-1": { path: "/tmp/b.sql", content: "SELECT 2;" },
+    });
+
+    expect(removeSavedSqlTabs(updated, new Set(["tab-missing"]))).toBe(updated);
+    expect(removeSavedSqlTabs(updated, new Set(["tab-1"]))).toEqual({});
   });
 });

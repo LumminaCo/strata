@@ -146,6 +146,14 @@ body {
   background: var(--tag-color);
   flex-shrink: 0;
 }
+.unsaved-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tab-unsaved-dot);
+  box-shadow: 0 0 0 1px var(--tab-unsaved-dot-ring);
+  flex-shrink: 0;
+}
 [data-env="dev"] {
   --tag-color: var(--env-dev);
 }

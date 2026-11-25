@@ -56,6 +56,8 @@
 
   --workspace-accent: var(--accent-foreground);
   --accent-surface: var(--accent);
+  --tab-unsaved-dot: #ffffff;
+  --tab-unsaved-dot-ring: var(--muted-foreground);
   --grid-header: var(--surface);
   --grid-stripe: var(--surface);
   --grid-selection: var(--accent);
@@ -116,6 +118,9 @@
   --syntax-keyword: #ccafff;
   --syntax-string: #94d9a9;
   --syntax-number: #f1b688;
+
+  --tab-unsaved-dot: #ffffff;
+  --tab-unsaved-dot-ring: transparent;
 
   --elevation-popover: 0 2px 4px #0609104d, 0 8px 24px #06091073;
 }

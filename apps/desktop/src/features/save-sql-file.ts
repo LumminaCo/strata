@@ -4,6 +4,47 @@ import { browserMode } from "@/ipc/client";
 
 export const DEFAULT_SQL_FILE_NAME = "query.sql";
 
+export interface SavedSqlState {
+  path?: string;
+  content: string;
+}
+
+export function isSqlTabUnsaved(text: string, saved?: SavedSqlState): boolean {
+  if (saved !== undefined) {
+    return text !== saved.content;
+  }
+  return text.length > 0;
+}
+
+export function recordSavedSqlTab(
+  current: Record<string, SavedSqlState>,
+  tabId: string,
+  content: string,
+  path?: string,
+): Record<string, SavedSqlState> {
+  const next: SavedSqlState = path !== undefined ? { path, content } : { content };
+  const existing = current[tabId];
+  if (existing && existing.path === next.path && existing.content === next.content) {
+    return current;
+  }
+  return { ...current, [tabId]: next };
+}
+
+export function removeSavedSqlTabs(
+  current: Record<string, SavedSqlState>,
+  closing: ReadonlySet<string>,
+): Record<string, SavedSqlState> {
+  let changed = false;
+  const next = { ...current };
+  for (const id of closing) {
+    if (id in next) {
+      delete next[id];
+      changed = true;
+    }
+  }
+  return changed ? next : current;
+}
+
 interface SaveFilePickerWritable {
   write(data: string): Promise<void>;
   close(): Promise<void>;

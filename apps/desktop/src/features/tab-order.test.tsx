@@ -233,6 +233,84 @@ describe("tab control rendering", () => {
     expect(renameMarkup).toContain('value="Invoices"');
     expect(renameMarkup).toContain('placeholder="Analytics"');
     expect(renameMarkup).toContain('data-no-drag="true"');
+    expect(normalMarkup).not.toContain('class="unsaved-dot"');
+    expect(normalMarkup).not.toContain('data-unsaved="true"');
+  });
+
+  it("renders a white unsaved dot on the left side of unsaved script tabs", () => {
+    const connection = sampleConnection();
+    const tab = sampleTab("t1", { title: "Invoices" });
+
+    const unsavedMarkup = renderToStaticMarkup(
+      <ScriptTabItem
+        tab={tab}
+        connection={connection}
+        label="Invoices"
+        defaultLabel="Analytics"
+        active
+        unsaved
+        renaming={false}
+        canMoveLeft={false}
+        canMoveRight
+        canCloseOthers
+        canCloseRight
+        closeShortcut="Ctrl+W"
+        dragProps={idleDragProps}
+        onSelect={() => {}}
+        onStartRename={() => {}}
+        onCommitRename={() => {}}
+        onCancelRename={() => {}}
+        onResetName={() => {}}
+        onMoveLeft={() => {}}
+        onMoveRight={() => {}}
+        onDuplicate={() => {}}
+        onClose={() => {}}
+        onCloseOthers={() => {}}
+        onCloseRight={() => {}}
+      />,
+    );
+
+    expect(unsavedMarkup).toContain('data-unsaved="true"');
+    expect(unsavedMarkup).toContain('title="Invoices (Analytics) · Unsaved"');
+    expect(unsavedMarkup).toContain('<span class="unsaved-dot" aria-hidden="true"></span>');
+    expect(unsavedMarkup).toContain('<span class="sr-only"> (unsaved)</span>');
+    expect(unsavedMarkup.indexOf('class="unsaved-dot"')).toBeLessThan(
+      unsavedMarkup.indexOf("db-icon"),
+    );
+
+    const renamingUnsavedMarkup = renderToStaticMarkup(
+      <ScriptTabItem
+        tab={tab}
+        connection={connection}
+        label="Invoices"
+        defaultLabel="Analytics"
+        active
+        unsaved
+        renaming
+        canMoveLeft={false}
+        canMoveRight
+        canCloseOthers
+        canCloseRight
+        closeShortcut="Ctrl+W"
+        dragProps={idleDragProps}
+        onSelect={() => {}}
+        onStartRename={() => {}}
+        onCommitRename={() => {}}
+        onCancelRename={() => {}}
+        onResetName={() => {}}
+        onMoveLeft={() => {}}
+        onMoveRight={() => {}}
+        onDuplicate={() => {}}
+        onClose={() => {}}
+        onCloseOthers={() => {}}
+        onCloseRight={() => {}}
+      />,
+    );
+
+    expect(renamingUnsavedMarkup).toContain('data-unsaved="true"');
+    expect(renamingUnsavedMarkup.indexOf('class="unsaved-dot"')).toBeLessThan(
+      renamingUnsavedMarkup.indexOf("db-icon"),
+    );
   });
 
   it("renders result tab with custom label and inline rename input", () => {

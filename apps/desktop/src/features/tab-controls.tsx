@@ -104,6 +104,7 @@ export interface ScriptTabItemProps {
   label: string;
   defaultLabel: string;
   active: boolean;
+  unsaved?: boolean;
   renaming: boolean;
   canMoveLeft: boolean;
   canMoveRight: boolean;
@@ -130,6 +131,7 @@ export function ScriptTabItem({
   label,
   defaultLabel,
   active,
+  unsaved = false,
   renaming,
   canMoveLeft,
   canMoveRight,
@@ -150,6 +152,8 @@ export function ScriptTabItem({
   onCloseRight,
 }: ScriptTabItemProps) {
   const skipFinalFocusRef = useRef(false);
+  const baseTitle = tab.title ? `${label} (${defaultLabel})` : label;
+  const title = unsaved ? `${baseTitle} · Unsaved` : baseTitle;
 
   return (
     <ContextMenu>
@@ -157,10 +161,12 @@ export function ScriptTabItem({
         className="query-tab"
         data-active={active}
         data-renaming={renaming ? "true" : undefined}
+        data-unsaved={unsaved ? "true" : undefined}
         {...dragProps}
       >
         {renaming ? (
           <div className="query-tab-rename" role="tab" aria-selected={active}>
+            {unsaved && <span className="unsaved-dot" aria-hidden="true" />}
             {connection ? <DatabaseIcon kind={connection.kind} /> : <FileCode2 />}
             <InlineTabRename
               initialValue={tab.title ?? label}
@@ -176,7 +182,7 @@ export function ScriptTabItem({
             variant="ghost"
             role="tab"
             aria-selected={active}
-            title={tab.title ? `${label} (${defaultLabel})` : label}
+            title={title}
             onClick={onSelect}
             onDoubleClick={(event) => {
               event.preventDefault();
@@ -189,8 +195,10 @@ export function ScriptTabItem({
               }
             }}
           >
+            {unsaved && <span className="unsaved-dot" aria-hidden="true" />}
             {connection ? <DatabaseIcon kind={connection.kind} /> : <FileCode2 />}
             <span className="tab-label">{label}</span>
+            {unsaved && <span className="sr-only"> (unsaved)</span>}
             <span className="env-dot" data-env={connection?.env} data-color={connection?.color} />
           </Button>
         )}

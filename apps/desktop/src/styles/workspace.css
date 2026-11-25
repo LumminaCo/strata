@@ -2084,6 +2084,90 @@ body[data-tab-dragging="true"] * {
   color: var(--env-staging);
   font-weight: 600;
 }
+.status-aggregation {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--foreground);
+  font-size: var(--font-size-label);
+}
+.status-aggregation-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.status-aggregation-select {
+  height: 20px;
+  padding: 0 18px 0 6px;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) * 0.7);
+  background: var(--background);
+  color: var(--workspace-accent);
+  font: 600 var(--font-size-caption) / 1 var(--ui-font);
+  letter-spacing: 0.02em;
+  appearance: none;
+  cursor: pointer;
+  outline: none;
+}
+.status-aggregation-select:hover {
+  background: var(--accent-surface);
+}
+.status-aggregation-select:focus-visible {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 25%, transparent);
+}
+.status-aggregation-select option {
+  background: Canvas;
+  color: CanvasText;
+  font-weight: 500;
+}
+.status-aggregation-chevron {
+  position: absolute;
+  right: 4px;
+  width: 11px;
+  height: 11px;
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+.status-aggregation-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: calc(var(--radius) * 0.7);
+  background: transparent;
+  color: var(--foreground);
+  font-family: var(--editor-font);
+  font-size: var(--font-size-label);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  cursor: pointer;
+}
+.status-aggregation-value:hover {
+  background: var(--muted);
+}
+.status-aggregation-value:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--ring);
+}
+.status-aggregation-value[data-copied="true"] {
+  color: var(--env-dev);
+}
+.status-aggregation-copied {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+.status-aggregation-count {
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+}
 .transaction-actions {
   display: flex;
   gap: 3px;

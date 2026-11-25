@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 
 import { ResultGrid, loadResultGrid } from "@/components/load-result-grid";
+import {
+  readAggregateFunction,
+  saveAggregateFunction,
+  type AggregateFunction,
+  type NumericAggregateSummary,
+} from "@/components/numeric-aggregate";
+import { NumericAggregateBar } from "@/components/numeric-aggregate-bar";
 import type { ResultSet } from "@/components/result-grid";
 import { Button } from "@/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
@@ -38,6 +45,8 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
   const [fetching, setFetching] = useState(false);
   const [error, setError] = useState("");
   const [count, setCount] = useState<Cell>();
+  const [gridAggregate, setGridAggregate] = useState<NumericAggregateSummary | null>(null);
+  const [aggregateFn, setAggregateFn] = useState<AggregateFunction>(readAggregateFunction);
   const session = useRef<string | undefined>(undefined);
   const running = useRef(false);
   const lifetime = useRef<AbortController | null>(null);
@@ -266,6 +275,7 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
           themeVersion={theme}
           onMore={() => void fetchRows()}
           onCell={(row, column) => void value(row, column)}
+          onAggregateChange={setGridAggregate}
         />
       ) : (
         <div className="results-empty">{busy ? "Loading table data…" : "No data to display."}</div>
@@ -284,6 +294,16 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
           <Button variant="ghost" size="xs" disabled={busy} onClick={() => void fetchRows()}>
             Fetch more
           </Button>
+        )}
+        {result && gridAggregate && (
+          <NumericAggregateBar
+            summary={gridAggregate}
+            fn={aggregateFn}
+            onChangeFn={(next) => {
+              saveAggregateFunction(next);
+              setAggregateFn(next);
+            }}
+          />
         )}
       </div>
     </div>

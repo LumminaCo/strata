@@ -25,6 +25,8 @@ import { errorMessage } from "@/ipc/client";
 import type { Cell, ColumnMeta } from "@/ipc/bindings/protocol";
 import { gridTheme } from "@/theme/glide";
 
+import { summarizeSelection, type NumericAggregateSummary } from "./numeric-aggregate";
+
 export interface ResultSet {
   id: string;
   index: number;
@@ -51,6 +53,7 @@ export function ResultGrid({
   onMore,
   onCell,
   readCell,
+  onAggregateChange,
   filter,
   filters,
   sorts: controlledSorts,
@@ -65,6 +68,7 @@ export function ResultGrid({
   onMore: () => void;
   onCell: (row: number, column: number) => void;
   readCell?: (row: number, column: number) => Promise<Cell>;
+  onAggregateChange?: (summary: NumericAggregateSummary | null) => void;
   filter: string;
   filters?: readonly ResultFilter[];
   sorts?: readonly SortRule[];
@@ -159,6 +163,22 @@ export function ResultGrid({
   useEffect(() => {
     onRowCountChange?.(rows);
   }, [onRowCountChange, rows]);
+  const aggregateSummary = useMemo(
+    () =>
+      summarizeSelection({
+        selection,
+        rows: result.rows,
+        columns: result.columns,
+        rowIndices,
+      }),
+    [result.columns, result.rows, rowIndices, selection],
+  );
+  const onAggregateChangeRef = useRef(onAggregateChange);
+  onAggregateChangeRef.current = onAggregateChange;
+  useEffect(() => {
+    onAggregateChangeRef.current?.(aggregateSummary);
+  }, [aggregateSummary]);
+  useEffect(() => () => onAggregateChangeRef.current?.(null), []);
   const nearBottom = useCallback(
     (region: Rectangle) => {
       if (canFetch && activeFilterCount === 0 && region.y + region.height >= rows - 48) onMore();
@@ -254,6 +274,7 @@ export function ResultGrid({
         rowMarkers={{ kind: "both", width: 58 }}
         getCellContent={getCell}
         getCellsForSelection={true}
+        rangeSelect="multi-rect"
         gridSelection={selection}
         onGridSelectionChange={setSelection}
         theme={theme}

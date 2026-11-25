@@ -48,6 +48,79 @@ export const editorThemeSpec = {
     borderColor: "var(--border)",
   },
   ".cm-diagnostic-error": { borderColor: "var(--destructive)" },
+  "&.cm-editor .cm-tooltip": {
+    backgroundColor: "var(--popover)",
+    color: "var(--popover-foreground)",
+    border: "1px solid var(--border)",
+    borderRadius: "var(--radius)",
+    boxShadow: "var(--elevation-popover)",
+  },
+  "&.cm-editor .cm-tooltip-section:not(:first-child)": {
+    borderTop: "1px solid var(--border)",
+  },
+  "&.cm-editor .cm-tooltip .cm-tooltip-arrow:before": {
+    borderTopColor: "var(--border)",
+    borderBottomColor: "var(--border)",
+  },
+  "&.cm-editor .cm-tooltip .cm-tooltip-arrow:after": {
+    borderTopColor: "var(--popover)",
+    borderBottomColor: "var(--popover)",
+  },
+  "&.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul": {
+    fontFamily: "var(--editor-font)",
+    fontSize: "var(--font-size-label)",
+    padding: "4px",
+    maxHeight: "14em",
+  },
+  "&.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li": {
+    padding: "3px 8px",
+    borderRadius: "calc(var(--radius) * 0.6)",
+    color: "var(--popover-foreground)",
+    lineHeight: "1.45",
+  },
+  "&.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]": {
+    background: "var(--accent)",
+    color: "var(--accent-foreground)",
+  },
+  "&.cm-editor .cm-tooltip.cm-tooltip-autocomplete-disabled > ul > li[aria-selected]": {
+    background: "var(--muted)",
+    color: "var(--muted-foreground)",
+  },
+  "&.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > completion-section": {
+    color: "var(--muted-foreground)",
+    borderBottom: "1px solid var(--border)",
+    padding: "3px 8px",
+  },
+  "&.cm-editor .cm-completionMatchedText": {
+    textDecoration: "none",
+    fontWeight: "600",
+    color: "var(--workspace-accent)",
+  },
+  "&.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionMatchedText":
+    {
+      color: "var(--accent-foreground)",
+    },
+  "&.cm-editor .cm-completionDetail": {
+    color: "var(--muted-foreground)",
+    fontStyle: "normal",
+    marginLeft: "0.75em",
+  },
+  "&.cm-editor .cm-completionIcon": {
+    color: "var(--muted-foreground)",
+    opacity: "0.85",
+  },
+  "&.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionDetail, &.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionIcon":
+    {
+      color: "var(--accent-foreground)",
+      opacity: "0.85",
+    },
+  "&.cm-editor .cm-tooltip.cm-completionInfo": {
+    backgroundColor: "var(--popover)",
+    color: "var(--popover-foreground)",
+    border: "1px solid var(--border)",
+    borderRadius: "var(--radius)",
+    boxShadow: "var(--elevation-popover)",
+  },
 } as const;
 
 export const editorTheme = [

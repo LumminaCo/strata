@@ -121,10 +121,10 @@ export function SqlEditor({
 }: SqlEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
-  const latest = useRef({ text, dark, onChange, onNavigate, kind });
+  const latest = useRef({ text, dark, schema, defaultSchema, onChange, onNavigate, kind });
   useLayoutEffect(() => {
-    latest.current = { text, dark, onChange, onNavigate, kind };
-  }, [text, dark, onChange, onNavigate, kind]);
+    latest.current = { text, dark, schema, defaultSchema, onChange, onNavigate, kind };
+  }, [text, dark, schema, defaultSchema, onChange, onNavigate, kind]);
 
   useImperativeHandle(
     ref,
@@ -226,12 +226,24 @@ export function SqlEditor({
         },
       }),
     ];
+    const initialLanguage = sql({
+      dialect: dialects[latest.current.kind],
+      schema: latest.current.schema,
+      defaultSchema: latest.current.defaultSchema,
+    });
+    const initialThemeMode = EditorView.darkTheme.of(latest.current.dark);
     const state =
-      savedState.current?.update({ effects: listener.reconfigure(updates) }).state ??
+      savedState.current?.update({
+        effects: [
+          listener.reconfigure(updates),
+          language.reconfigure(initialLanguage),
+          themeMode.reconfigure(initialThemeMode),
+        ],
+      }).state ??
       EditorState.create({
         doc: latest.current.text,
         extensions: [
-          language.of(sql({ dialect: PostgreSQL })),
+          language.of(initialLanguage),
           autocompletion(),
           history(),
           lineNumbers(),
@@ -246,7 +258,7 @@ export function SqlEditor({
           EditorView.contentAttributes.of({ "aria-label": "SQL editor", spellcheck: "false" }),
           statementMarks,
           navigationMarks,
-          themeMode.of(EditorView.darkTheme.of(latest.current.dark)),
+          themeMode.of(initialThemeMode),
           editorTheme,
           listener.of(updates),
         ],

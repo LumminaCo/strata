@@ -1,11 +1,13 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+import { autocompletion } from "@codemirror/autocomplete";
 import { EditorSelection, EditorState } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 import { expect, test } from "vite-plus/test";
 
 import { setStatement, statementMarks } from "@/components/sql-editor";
-import { editorThemeSpec } from "@/theme/codemirror";
+import { editorTheme, editorThemeSpec } from "@/theme/codemirror";
 
 function parseTokens(css: string, selector: ":root" | ":root.dark"): Record<string, string> {
   const escaped = selector.replace(".", "\\.");
@@ -82,4 +84,27 @@ test("hides statement highlight while text is selected and restores it on cursor
 
   state = state.update({ changes: { from: 21, insert: " " } }).state;
   expect(state.field(statementMarks).decorations.size).toBe(0);
+});
+
+test("styles autocomplete tooltips with theme tokens so light and dark modes stay legible", () => {
+  const state = EditorState.create({
+    extensions: [editorTheme, autocompletion(), EditorView.darkTheme.of(true)],
+  });
+  const css = state
+    .facet(EditorView.styleModule)
+    .map((module) => module.getRules())
+    .join("\n");
+
+  expect(css).toContain(
+    ".cm-editor .cm-tooltip {background-color: var(--popover); color: var(--popover-foreground);",
+  );
+  expect(css).toContain(
+    ".cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {background: var(--accent); color: var(--accent-foreground);}",
+  );
+  expect(css).toContain(
+    ".cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li {padding: 3px 8px; border-radius: calc(var(--radius) * 0.6); color: var(--popover-foreground);",
+  );
+  expect(css).toContain(
+    ".cm-editor .cm-tooltip.cm-completionInfo {background-color: var(--popover);",
+  );
 });

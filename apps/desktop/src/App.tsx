@@ -166,14 +166,21 @@ export function App() {
   const pinned = tab ? (pinnedByTab[tab.id] ?? []) : [];
   const [entries, setEntries] = useState<CatalogEntry[]>([]);
   const defaultSchema =
-    active.session?.schema ??
-    tab?.schema ??
+    active.session?.schema ||
+    tab?.schema ||
     (profile?.kind === "sqlserver"
       ? "dbo"
       : profile?.kind === "oracle"
         ? profile.user.toUpperCase()
         : "public");
-  const catalog = useCatalogSchema(profile, tab, data.catalogRevision, defaultSchema, data.scope);
+  const catalog = useCatalogSchema(
+    profile,
+    tab,
+    data.catalogRevision,
+    defaultSchema,
+    data.scope,
+    active.session?.id,
+  );
   const editor = useRef<EditorHandle>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const editors = useRef(new Map<string, { current: EditorState | null }>());

@@ -8,10 +8,19 @@ import {
   type Rectangle,
 } from "@glideapps/glide-data-grid";
 import "@glideapps/glide-data-grid/dist/index.css";
-import { LoaderCircle } from "lucide-react";
+import { ArrowDown, ArrowUp, Filter, LoaderCircle, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import {
+  computeRowIndices,
+  formatSortHeader,
+  removeColumnSort,
+  setColumnSort,
+  toggleColumnSort,
+  type ResultFilter,
+  type SortRule,
+} from "@/features/result-query";
 import { errorMessage } from "@/ipc/client";
 import type { Cell, ColumnMeta } from "@/ipc/bindings/protocol";
 import { gridTheme } from "@/theme/glide";
@@ -28,6 +37,12 @@ export interface ResultSet {
 
 const numeric = new Set(["int", "float", "decimal"]);
 
+interface HeaderMenuState {
+  column: number;
+  x: number;
+  y: number;
+}
+
 export function ResultGrid({
   result,
   themeVersion,
@@ -37,6 +52,11 @@ export function ResultGrid({
   onCell,
   readCell,
   filter,
+  filters,
+  sorts: controlledSorts,
+  onSortsChange,
+  onFilterByColumn,
+  onRowCountChange,
 }: {
   result: ResultSet;
   themeVersion: string;
@@ -46,53 +66,75 @@ export function ResultGrid({
   onCell: (row: number, column: number) => void;
   readCell?: (row: number, column: number) => Promise<Cell>;
   filter: string;
+  filters?: readonly ResultFilter[];
+  sorts?: readonly SortRule[];
+  onSortsChange?: (sorts: SortRule[]) => void;
+  onFilterByColumn?: (columnName: string) => void;
+  onRowCountChange?: (count: number) => void;
 }) {
   const [widths, setWidths] = useState<Record<number, number>>({});
-  const [sort, setSort] = useState<{ column: number; descending: boolean }>();
+  const [internalSorts, setInternalSorts] = useState<SortRule[]>([]);
   const [selection, setSelection] = useState<GridSelection>();
   const [copyError, setCopyError] = useState("");
   const [nativeType, setNativeType] = useState("");
+  const [headerMenu, setHeaderMenu] = useState<HeaderMenuState | null>(null);
   const editor = useRef<DataEditorRef>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const visible = useRef<Rectangle | null>(null);
   const [theme, setTheme] = useState(gridTheme);
   useEffect(() => setTheme(gridTheme()), [themeVersion]);
+
+  const sorts = controlledSorts ?? internalSorts;
+  const updateSorts = useCallback(
+    (next: SortRule[] | ((current: readonly SortRule[]) => SortRule[])) => {
+      if (onSortsChange) {
+        const resolved = typeof next === "function" ? next(sorts) : next;
+        onSortsChange(resolved);
+      } else {
+        setInternalSorts((current) => (typeof next === "function" ? next(current) : next));
+      }
+    },
+    [onSortsChange, sorts],
+  );
+
+  useEffect(() => {
+    if (!headerMenu) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setHeaderMenu(null);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setHeaderMenu(null);
+    };
+    window.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [headerMenu]);
+
   const columns = useMemo(
     () =>
       result.columns.map((column, index) => ({
         id: String(index),
-        title:
-          sort?.column === index ? `${column.name} ${sort.descending ? "↓" : "↑"}` : column.name,
-        width: widths[index] ?? Math.min(360, Math.max(115, column.name.length * 9 + 30)),
+        title: formatSortHeader(column.name, sorts, index),
+        width: widths[index] ?? Math.min(360, Math.max(115, column.name.length * 9 + 34)),
       })),
-    [result.columns, sort, widths],
+    [result.columns, sorts, widths],
   );
 
-  const rowIndices = useMemo(() => {
-    if (!filter && !sort) return undefined;
-    const needle = filter.toLocaleLowerCase();
-    const indices = result.rows.flatMap((row, index) =>
-      !needle ||
-      row.some((cell) =>
-        (cell === null ? "null" : String(cell).toLocaleLowerCase()).includes(needle),
-      )
-        ? [index]
-        : [],
-    );
-    if (sort) {
-      const compare = new Intl.Collator(undefined, { numeric: true });
-      const { column, descending } = sort;
-      indices.sort((a, b) => {
-        const left = result.rows[a]?.[column];
-        const right = result.rows[b]?.[column];
-        const order =
-          typeof left === "number" && typeof right === "number"
-            ? left - right
-            : compare.compare(String(left ?? ""), String(right ?? ""));
-        return descending ? -order : order;
-      });
-    }
-    return indices;
-  }, [filter, result.rows, sort]);
+  const { indices: rowIndices, activeFilterCount } = useMemo(
+    () =>
+      computeRowIndices(result.rows, result.columns, {
+        filters,
+        draftFilter: filter,
+        sorts,
+      }),
+    [filter, filters, result.columns, result.rows, sorts],
+  );
 
   const getCell = useCallback(
     ([column, row]: Item): GridCell => {
@@ -114,11 +156,14 @@ export function ResultGrid({
   );
 
   const rows = rowIndices?.length ?? result.rows.length;
+  useEffect(() => {
+    onRowCountChange?.(rows);
+  }, [onRowCountChange, rows]);
   const nearBottom = useCallback(
     (region: Rectangle) => {
-      if (canFetch && !filter && region.y + region.height >= rows - 48) onMore();
+      if (canFetch && activeFilterCount === 0 && region.y + region.height >= rows - 48) onMore();
     },
-    [canFetch, filter, onMore, rows],
+    [activeFilterCount, canFetch, onMore, rows],
   );
   useEffect(() => {
     if (visible.current) nearBottom(visible.current);
@@ -180,8 +225,17 @@ export function ResultGrid({
     }
   }
 
+  const menuColumn = headerMenu ? result.columns[headerMenu.column] : undefined;
+  const menuColumnSort = headerMenu
+    ? sorts.find((rule) => rule.column === headerMenu.column)
+    : undefined;
+  const hasOtherSorts = headerMenu
+    ? sorts.some((rule) => rule.column !== headerMenu.column)
+    : false;
+
   return (
     <div
+      ref={containerRef}
       className="grid-container"
       title={nativeType}
       aria-label="Query results"
@@ -216,15 +270,145 @@ export function ResultGrid({
             item.kind === "header" ? (result.columns[item.location[0]]?.db_type ?? "") : "",
           )
         }
-        onHeaderClicked={(column) =>
-          setSort((current) =>
-            current?.column === column
-              ? { column, descending: !current.descending }
-              : { column, descending: false },
-          )
-        }
+        onHeaderClicked={(column) => {
+          setHeaderMenu(null);
+          updateSorts((current) => toggleColumnSort(current, column));
+        }}
+        onHeaderContextMenu={(column, event) => {
+          event.preventDefault();
+          const rect = containerRef.current?.getBoundingClientRect();
+          const rawX = event.bounds.x + event.localEventX - (rect?.left ?? 0);
+          const rawY = event.bounds.y + event.localEventY - (rect?.top ?? 0);
+          const maxX = Math.max(8, (rect?.width ?? 300) - 210);
+          const maxY = Math.max(8, (rect?.height ?? 200) - 180);
+          setHeaderMenu({
+            column,
+            x: Math.max(4, Math.min(rawX, maxX)),
+            y: Math.max(4, Math.min(rawY, maxY)),
+          });
+        }}
         getRowThemeOverride={(row) => (row % 2 ? { bgCell: theme.bgCellMedium } : undefined)}
       />
+      {headerMenu && menuColumn && (
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label={`Column ${menuColumn.name} actions`}
+          className="grid-header-menu"
+          style={{ left: `${headerMenu.x}px`, top: `${headerMenu.y}px` }}
+        >
+          <div className="grid-header-menu-title">{menuColumn.name}</div>
+          <button
+            type="button"
+            role="menuitem"
+            className="grid-header-menu-item"
+            onClick={() => {
+              updateSorts((current) => setColumnSort(current, headerMenu.column, false));
+              setHeaderMenu(null);
+            }}
+          >
+            <ArrowUp />
+            <span>{hasOtherSorts && !menuColumnSort ? "Add to sort (ASC)" : "Sort ascending"}</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="grid-header-menu-item"
+            onClick={() => {
+              updateSorts((current) => setColumnSort(current, headerMenu.column, true));
+              setHeaderMenu(null);
+            }}
+          >
+            <ArrowDown />
+            <span>
+              {hasOtherSorts && !menuColumnSort ? "Add to sort (DESC)" : "Sort descending"}
+            </span>
+          </button>
+          {hasOtherSorts && (
+            <>
+              <div className="grid-header-menu-sep" role="separator" />
+              <button
+                type="button"
+                role="menuitem"
+                className="grid-header-menu-item"
+                onClick={() => {
+                  updateSorts((current) =>
+                    setColumnSort(current, headerMenu.column, false, { replace: true }),
+                  );
+                  setHeaderMenu(null);
+                }}
+              >
+                <ArrowUp />
+                <span>Sort only by this (ASC)</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="grid-header-menu-item"
+                onClick={() => {
+                  updateSorts((current) =>
+                    setColumnSort(current, headerMenu.column, true, { replace: true }),
+                  );
+                  setHeaderMenu(null);
+                }}
+              >
+                <ArrowDown />
+                <span>Sort only by this (DESC)</span>
+              </button>
+            </>
+          )}
+          {(menuColumnSort || sorts.length > 0) && (
+            <>
+              <div className="grid-header-menu-sep" role="separator" />
+              {menuColumnSort && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="grid-header-menu-item"
+                  onClick={() => {
+                    updateSorts((current) => removeColumnSort(current, headerMenu.column));
+                    setHeaderMenu(null);
+                  }}
+                >
+                  <X />
+                  <span>Remove sort</span>
+                </button>
+              )}
+              {sorts.length > 0 && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="grid-header-menu-item"
+                  onClick={() => {
+                    updateSorts([]);
+                    setHeaderMenu(null);
+                  }}
+                >
+                  <X />
+                  <span>Clear all sorting</span>
+                </button>
+              )}
+            </>
+          )}
+          {onFilterByColumn && (
+            <>
+              <div className="grid-header-menu-sep" role="separator" />
+              <button
+                type="button"
+                role="menuitem"
+                className="grid-header-menu-item"
+                onClick={() => {
+                  onFilterByColumn(menuColumn.name);
+                  setHeaderMenu(null);
+                }}
+              >
+                <Filter />
+                <span>Filter by column…</span>
+              </button>
+            </>
+          )}
+        </div>
+      )}
       {readCell && rows > 0 && (
         <div className="grid-copy">
           <NativeSelect
@@ -249,7 +433,21 @@ export function ResultGrid({
           <span>Fetching rows…</span>
         </div>
       )}
-      {sort && <span className="grid-note">Fetched rows sorted locally</span>}
+      {sorts.length > 0 && (
+        <div className="grid-note">
+          <span>
+            Fetched rows sorted locally ({sorts.length} {sorts.length === 1 ? "column" : "columns"})
+          </span>
+          <button
+            type="button"
+            className="grid-note-clear"
+            aria-label="Clear local sort"
+            onClick={() => updateSorts([])}
+          >
+            Clear
+          </button>
+        </div>
+      )}
     </div>
   );
 }

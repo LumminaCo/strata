@@ -16,12 +16,10 @@ import {
   Play,
   Plus,
   RefreshCw,
-  Search,
   Settings2,
   Square,
   Sun,
   Trash2,
-  X,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
@@ -38,7 +36,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import {
   ResizableHandle,
@@ -46,6 +43,9 @@ import {
   ResizablePanelGroup,
   usePanelRef,
 } from "@/components/ui/resizable";
+import { type FilterInputHandle } from "@/features/result-filter-input";
+import { formatColumnIdentifier, type ResultFilter, type SortRule } from "@/features/result-query";
+import { ResultToolbar } from "@/features/result-toolbar";
 import {
   Confirmation,
   ConnectionDialog,
@@ -108,6 +108,18 @@ const themes = ["system", "light", "dark"] as const;
 const themeIcons = { system: Monitor, light: Sun, dark: Moon };
 const environments = { dev: "Development", staging: "Staging", prod: "Production" };
 
+interface ResultViewState {
+  draftFilter: string;
+  filters: ResultFilter[];
+  sorts: SortRule[];
+}
+
+const emptyResultView: ResultViewState = {
+  draftFilter: "",
+  filters: [],
+  sorts: [],
+};
+
 function readTheme() {
   const saved = localStorage.getItem("strata.theme");
   return themes.find((theme) => theme === saved) ?? "system";
@@ -145,7 +157,8 @@ export function App() {
   const [connectionEditor, editConnection] = useState<Connection>();
   const [deletion, setDeletion] = useState<Connection>();
   const [valueView, setValueView] = useState<{ name: string; text: string }>();
-  const [filterResult, setFilterResult] = useState<{ cursor: string; text: string }>();
+  const [resultViews, setResultViews] = useState<Record<string, ResultViewState>>({});
+  const [visibleRowCounts, setVisibleRowCounts] = useState<Record<string, number>>({});
   const [initialSidebarWidth] = useState(() => readSidebarWidth());
   const [explorerOpen, setExplorerOpen] = useState(true);
   const explorerPanelRef = usePanelRef();
@@ -199,7 +212,7 @@ export function App() {
   const editors = useRef(new Map<string, { current: EditorState | null }>());
   const [savedSqlByTab, setSavedSqlByTab] = useState<Record<string, SavedSqlState>>({});
   const savingSql = useRef(false);
-  const filterInput = useRef<HTMLInputElement>(null);
+  const filterInput = useRef<FilterInputHandle>(null);
   const ThemeIcon = themeIcons[theme];
   const dark = theme === "dark" || (theme === "system" && systemDark);
   const editorState = tab ? editors.current.get(tab.id) : undefined;
@@ -207,7 +220,18 @@ export function App() {
   const selectedInspection = pinned.find((item) => inspectionKey(item) === selected);
   const result = active.results.find((entry) => entry.id === selected);
   const fetchingResult = !!result && active.fetching === result.id;
-  const showFilter = !!result && filterResult?.cursor === result.id;
+  const resultView = result ? (resultViews[result.id] ?? emptyResultView) : emptyResultView;
+  const visibleRows = result ? (visibleRowCounts[result.id] ?? result.rows.length) : 0;
+
+  function updateResultView(
+    resultId: string,
+    change: (current: ResultViewState) => ResultViewState,
+  ) {
+    setResultViews((current) => ({
+      ...current,
+      [resultId]: change(current[resultId] ?? emptyResultView),
+    }));
+  }
   const scriptTabDrag = useTabDrag({
     disabled: renamingScriptTabId !== null,
     onReorder: (activeId, targetId, placement) => data.reorderTabs(activeId, targetId, placement),
@@ -245,9 +269,6 @@ export function App() {
   useLayoutEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
   }, [dark]);
-  useLayoutEffect(() => {
-    if (showFilter) filterInput.current?.focus();
-  }, [showFilter]);
 
   useEffect(() => {
     if (browserMode) {
@@ -441,7 +462,28 @@ export function App() {
     if (resultIds.length === 0) return;
     const closing = new Set(resultIds);
     data.closeResults(tabId, resultIds);
-    setFilterResult((current) => (current && closing.has(current.cursor) ? undefined : current));
+    setResultViews((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const id of closing) {
+        if (id in next) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+    setVisibleRowCounts((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const id of closing) {
+        if (id in next) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
     setRenamingResultTab((current) =>
       current && current.tabId === tabId && closing.has(current.resultId) ? null : current,
     );
@@ -1225,8 +1267,7 @@ export function App() {
                         )
                           return;
                         event.preventDefault();
-                        setFilterResult({ cursor: result.id, text: filterResult?.text ?? "" });
-                        filterInput.current?.focus();
+                      filterInput.current?.focus({ openSuggestions: true, selectAll: true });
                       }}
                     >
                       <div className="panel-heading">
@@ -1329,41 +1370,6 @@ export function App() {
                         </div>
                         {result && (
                           <div className="result-actions">
-                            {showFilter ? (
-                              <>
-                                <Input
-                                  ref={filterInput}
-                                  aria-label="Filter fetched rows"
-                                  placeholder="Filter fetched rows"
-                                  value={filterResult.text}
-                                  onChange={(event) =>
-                                    setFilterResult({ cursor: result.id, text: event.target.value })
-                                  }
-                                  onKeyDown={(event) => {
-                                    if (event.key === "Escape") setFilterResult(undefined);
-                                  }}
-                                />
-                                <Button
-                                  variant="ghost"
-                                  size="icon-xs"
-                                  aria-label="Clear filter"
-                                  title="Clear filter"
-                                  onClick={() => setFilterResult(undefined)}
-                                >
-                                  <X />
-                                </Button>
-                              </>
-                            ) : (
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                aria-label="Filter fetched rows"
-                                title="Filter fetched rows (Ctrl+F)"
-                                onClick={() => setFilterResult({ cursor: result.id, text: "" })}
-                              >
-                                <Search />
-                              </Button>
-                            )}
                             <Button
                               variant="outline"
                               size="xs"
@@ -1395,17 +1401,90 @@ export function App() {
                           onValue={showCell}
                         />
                       ) : result ? (
+                      <div className="result-view">
+                        <ResultToolbar
+                          key={`toolbar-${result.id}`}
+                          inputRef={filterInput}
+                          columns={result.columns}
+                          rows={result.rows}
+                          visibleRows={visibleRows}
+                          draftFilter={resultView.draftFilter}
+                          filters={resultView.filters}
+                          sorts={resultView.sorts}
+                          onDraftFilterChange={(draftFilter) =>
+                            updateResultView(result.id, (current) => ({ ...current, draftFilter }))
+                          }
+                          onAddFilter={(expression) =>
+                            updateResultView(result.id, (current) => ({
+                              ...current,
+                              draftFilter: "",
+                              filters: [
+                                ...current.filters,
+                                { id: crypto.randomUUID(), expression },
+                              ],
+                            }))
+                          }
+                          onRemoveFilter={(id) =>
+                            updateResultView(result.id, (current) => ({
+                              ...current,
+                              filters: current.filters.filter((item) => item.id !== id),
+                            }))
+                          }
+                          onEditFilter={(item) => {
+                            updateResultView(result.id, (current) => ({
+                              ...current,
+                              draftFilter: item.expression,
+                              filters: current.filters.filter((entry) => entry.id !== item.id),
+                            }));
+                            requestAnimationFrame(() =>
+                              filterInput.current?.focus({ openSuggestions: true }),
+                            );
+                          }}
+                          onClearFilters={() =>
+                            updateResultView(result.id, (current) => ({
+                              ...current,
+                              draftFilter: "",
+                              filters: [],
+                            }))
+                          }
+                          onSortsChange={(sorts) =>
+                            updateResultView(result.id, (current) => ({ ...current, sorts }))
+                          }
+                        />
                         <ResultGrid
                           key={result.id}
                           result={result}
                           themeVersion={String(dark)}
                           canFetch={result.more && !active.busy}
                           fetching={fetchingResult}
-                          filter={showFilter ? filterResult.text : ""}
+                          filter={resultView.draftFilter}
+                          filters={resultView.filters}
+                          sorts={resultView.sorts}
+                          onSortsChange={(sorts) =>
+                            updateResultView(result.id, (current) => ({ ...current, sorts }))
+                          }
+                          onFilterByColumn={(columnName) => {
+                            const prefix = `${formatColumnIdentifier(columnName)} = `;
+                            updateResultView(result.id, (current) => ({
+                              ...current,
+                              draftFilter: prefix,
+                            }));
+                            requestAnimationFrame(() =>
+                              filterInput.current?.focus({ openSuggestions: true }),
+                            );
+                          }}
+                          onRowCountChange={(count) =>
+                            setVisibleRowCounts((current) =>
+                              current[result.id] === count
+                                ? current
+                                : { ...current, [result.id]: count },
+                            )
+                          }
                           onMore={() => void data.fetchRows(result)}
                           onCell={(row, column) => void openCell(result, row, column)}
                           readCell={(row, column) => data.getCell(result, row, column)}
                         />
+                      </div>
                       ) : active.messages.length ? (
                         <div className="query-messages" role="log" aria-label="Query messages">
                           {active.messages.map((message, index) => (

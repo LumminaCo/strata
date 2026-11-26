@@ -8,6 +8,7 @@ import {
   moveItemByOffset,
   normalizeTabTitle,
   reorderById,
+  reorderByOrder,
   scriptTabLabel,
   type DropPlacement,
 } from "@/features/tab-order";
@@ -431,6 +432,13 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
   function shiftResult(tabId: string, resultId: string, delta: -1 | 1) {
     update(tabId, (current) => {
       const nextResults = moveItemByOffset(current.results, resultId, delta, (item) => item.id);
+      return nextResults === current.results ? current : { ...current, results: nextResults };
+    });
+  }
+
+  function syncResultOrder(tabId: string, orderedIds: readonly string[]) {
+    update(tabId, (current) => {
+      const nextResults = reorderByOrder(current.results, orderedIds, (item) => item.id);
       return nextResults === current.results ? current : { ...current, results: nextResults };
     });
   }
@@ -1211,6 +1219,7 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
     renameResult,
     reorderResults,
     shiftResult,
+    syncResultOrder,
     closeResults,
     editText,
     setPanel,

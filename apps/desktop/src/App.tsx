@@ -91,16 +91,20 @@ import {
   writeSidebarWidth,
 } from "@/features/sidebar-layout";
 import {
+  MessagesTabItem,
   PinnedInspectionTabItem,
   ResultTabItem,
   SchemaTabItem,
   ScriptTabItem,
 } from "@/features/tab-controls";
 import {
+  MESSAGES_TAB_ID,
   defaultResultTabLabel,
   defaultScriptTabLabel,
   moveItemByOffset,
   reorderById,
+  reorderByOrder,
+  resolveResultPanelOrder,
   resultTabLabel,
   scriptTabLabel,
 } from "@/features/tab-order";
@@ -196,6 +200,7 @@ export function App() {
   const [schemaTabs, setSchemaTabs] = useState<Inspection[]>([]);
   const [schemaSelected, setSchemaSelected] = useState<string>();
   const [pinnedByTab, setPinned] = useState<Record<string, Inspection[]>>({});
+  const [resultTabOrderByTab, setResultTabOrderByTab] = useState<Record<string, string[]>>({});
   const [renamingScriptTabId, setRenamingScriptTabId] = useState<string | null>(null);
   const [renamingResultTab, setRenamingResultTab] = useState<{
     tabId: string;
@@ -248,8 +253,31 @@ export function App() {
       [resultId]: change(current[resultId] ?? emptyResultView),
     }));
   }
+  const renamingScriptActive =
+    renamingScriptTabId !== null && data.tabs.some((entry) => entry.id === renamingScriptTabId);
+  const renamingResultActive =
+    renamingResultTab !== null &&
+    tab !== undefined &&
+    renamingResultTab.tabId === tab.id &&
+    active.results.some((entry) => entry.id === renamingResultTab.resultId);
+  const resultPanelIds = resolveResultPanelOrder(
+    tab ? resultTabOrderByTab[tab.id] : undefined,
+    active.results.map((entry) => entry.id),
+    pinned.map(inspectionKey),
+  );
+
+  function applyResultPanelOrder(tabId: string, nextOrder: string[]) {
+    setResultTabOrderByTab((current) => ({ ...current, [tabId]: nextOrder }));
+    data.syncResultOrder(tabId, nextOrder);
+    setPinned((current) => {
+      const list = current[tabId] ?? [];
+      const next = reorderByOrder(list, nextOrder, inspectionKey);
+      return next === list ? current : { ...current, [tabId]: next };
+    });
+  }
+
   const scriptTabDrag = useTabDrag({
-    disabled: renamingScriptTabId !== null,
+    disabled: renamingScriptActive,
     onReorder: (activeId, targetId, placement) => data.reorderTabs(activeId, targetId, placement),
   });
   const schemaTabDrag = useTabDrag({
@@ -258,21 +286,13 @@ export function App() {
         reorderById(current, activeId, targetId, placement, inspectionKey),
       ),
   });
-  const resultTabDrag = useTabDrag({
-    disabled: !tab || renamingResultTab !== null,
-    onReorder: (activeId, targetId, placement) => {
-      if (tab) data.reorderResults(tab.id, activeId, targetId, placement);
-    },
-  });
-  const pinnedTabDrag = useTabDrag({
-    disabled: !tab,
+  const resultPanelDrag = useTabDrag({
+    disabled: !tab || renamingResultActive,
     onReorder: (activeId, targetId, placement) => {
       if (!tab) return;
-      setPinned((current) => {
-        const list = current[tab.id] ?? [];
-        const next = reorderById(list, activeId, targetId, placement, inspectionKey);
-        return next === list ? current : { ...current, [tab.id]: next };
-      });
+      const nextOrder = reorderById(resultPanelIds, activeId, targetId, placement, (id) => id);
+      if (nextOrder === resultPanelIds) return;
+      applyResultPanelOrder(tab.id, nextOrder);
     },
   });
 
@@ -362,6 +382,9 @@ export function App() {
 
   function run(mode: RunMode, keepResults = false) {
     if (!editor.current || active.busy || schemaActive) return;
+    if (!keepResults && tab) {
+      setRenamingResultTab((current) => (current?.tabId === tab.id ? null : current));
+    }
     if (notificationPrefs.current.sound) primeQuerySound();
     void data.run({
       text: editor.current.text(),
@@ -469,6 +492,17 @@ export function App() {
     setRenamingResultTab((current) => (current && closing.has(current.tabId) ? null : current));
     setQueryToasts((current) => current.filter((item) => !closing.has(item.tabId)));
     setPinned((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const id of closing) {
+        if (id in next) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+    setResultTabOrderByTab((current) => {
       let changed = false;
       const next = { ...current };
       for (const id of closing) {
@@ -727,8 +761,8 @@ export function App() {
           settingsOpen ||
           closeWarning ||
           update.status ||
-          renamingScriptTabId !== null ||
-          renamingResultTab !== null ||
+          renamingScriptActive ||
+          renamingResultActive ||
           event.defaultPrevented
         )
           return;
@@ -1290,7 +1324,11 @@ export function App() {
                     )}
                   </div>
                 </div>
-                <ResizablePanelGroup orientation="vertical" className="editor-and-results">
+                <ResizablePanelGroup
+                  orientation="vertical"
+                  className="editor-and-results"
+                  resizeTargetMinimumSize={{ fine: 6, coarse: 12 }}
+                >
                   <ResizablePanel defaultSize="49%" minSize="100px">
                     <section className="editor" aria-label="Query text">
                       <SqlEditor
@@ -1334,98 +1372,107 @@ export function App() {
                           className="result-tabs"
                           role="tablist"
                           aria-label="Result tabs"
-                          ref={(element) => {
-                            resultTabDrag.listRef.current = element;
-                            pinnedTabDrag.listRef.current = element;
-                          }}
+                          ref={resultPanelDrag.listRef}
                         >
-                          {active.results.map((item, index) => {
-                            const defaultLabel = defaultResultTabLabel(item);
-                            const label = resultTabLabel(item);
-                            const otherClosableIds = active.results
-                              .filter(
-                                (entry) => entry.id !== item.id && entry.id !== active.fetching,
-                              )
-                              .map((entry) => entry.id);
-                            return (
-                              <ResultTabItem
-                                key={item.id}
-                                result={item}
-                                label={label}
-                                defaultLabel={defaultLabel}
-                                active={selected === item.id}
-                                renaming={
-                                  renamingResultTab?.tabId === tab.id &&
-                                  renamingResultTab.resultId === item.id
-                                }
-                                fetching={active.fetching === item.id}
-                                canMoveLeft={index > 0}
-                                canMoveRight={index < active.results.length - 1}
-                                canCloseOthers={otherClosableIds.length > 0}
-                                dragProps={resultTabDrag.getTabProps(item.id)}
-                                onSelect={() => data.setPanel(tab.id, item.id)}
-                                onStartRename={() =>
-                                  setRenamingResultTab({ tabId: tab.id, resultId: item.id })
-                                }
-                                onCommitRename={(value) => {
-                                  data.renameResult(tab.id, item.id, value);
-                                  setRenamingResultTab(null);
-                                }}
-                                onCancelRename={() => setRenamingResultTab(null)}
-                                onResetName={() => data.renameResult(tab.id, item.id, undefined)}
-                                onMoveLeft={() => data.shiftResult(tab.id, item.id, -1)}
-                                onMoveRight={() => data.shiftResult(tab.id, item.id, 1)}
-                                onClose={() => closeResultTabs(tab.id, [item.id])}
-                                onCloseOthers={() => closeResultTabs(tab.id, otherClosableIds)}
-                              />
+                          {resultPanelIds.map((panelId, index) => {
+                            const canMoveLeft = index > 0;
+                            const canMoveRight = index < resultPanelIds.length - 1;
+                            const shiftPanel = (delta: -1 | 1) => {
+                              const nextOrder = moveItemByOffset(
+                                resultPanelIds,
+                                panelId,
+                                delta,
+                                (id) => id,
+                              );
+                              if (nextOrder !== resultPanelIds) {
+                                applyResultPanelOrder(tab.id, nextOrder);
+                              }
+                            };
+
+                            if (panelId === MESSAGES_TAB_ID) {
+                              return (
+                                <MessagesTabItem
+                                  key={MESSAGES_TAB_ID}
+                                  active={selected === MESSAGES_TAB_ID || !selected}
+                                  canMoveLeft={canMoveLeft}
+                                  canMoveRight={canMoveRight}
+                                  dragProps={resultPanelDrag.getTabProps(MESSAGES_TAB_ID)}
+                                  onSelect={() => data.setPanel(tab.id, MESSAGES_TAB_ID)}
+                                  onMoveLeft={() => shiftPanel(-1)}
+                                  onMoveRight={() => shiftPanel(1)}
+                                />
+                              );
+                            }
+
+                            const resultItem = active.results.find((entry) => entry.id === panelId);
+                            if (resultItem) {
+                              const defaultLabel = defaultResultTabLabel(resultItem);
+                              const label = resultTabLabel(resultItem);
+                              const otherClosableIds = active.results
+                                .filter(
+                                  (entry) =>
+                                    entry.id !== resultItem.id && entry.id !== active.fetching,
+                                )
+                                .map((entry) => entry.id);
+                              return (
+                                <ResultTabItem
+                                  key={resultItem.id}
+                                  result={resultItem}
+                                  label={label}
+                                  defaultLabel={defaultLabel}
+                                  active={selected === resultItem.id}
+                                  renaming={
+                                    renamingResultTab?.tabId === tab.id &&
+                                    renamingResultTab.resultId === resultItem.id
+                                  }
+                                  fetching={active.fetching === resultItem.id}
+                                  canMoveLeft={canMoveLeft}
+                                  canMoveRight={canMoveRight}
+                                  canCloseOthers={otherClosableIds.length > 0}
+                                  dragProps={resultPanelDrag.getTabProps(resultItem.id)}
+                                  onSelect={() => data.setPanel(tab.id, resultItem.id)}
+                                  onStartRename={() =>
+                                    setRenamingResultTab({ tabId: tab.id, resultId: resultItem.id })
+                                  }
+                                  onCommitRename={(value) => {
+                                    data.renameResult(tab.id, resultItem.id, value);
+                                    setRenamingResultTab(null);
+                                  }}
+                                  onCancelRename={() => setRenamingResultTab(null)}
+                                  onResetName={() =>
+                                    data.renameResult(tab.id, resultItem.id, undefined)
+                                  }
+                                  onMoveLeft={() => shiftPanel(-1)}
+                                  onMoveRight={() => shiftPanel(1)}
+                                  onClose={() => closeResultTabs(tab.id, [resultItem.id])}
+                                  onCloseOthers={() => closeResultTabs(tab.id, otherClosableIds)}
+                                />
+                              );
+                            }
+
+                            const pinnedItem = pinned.find(
+                              (entry) => inspectionKey(entry) === panelId,
                             );
+                            if (pinnedItem) {
+                              return (
+                                <PinnedInspectionTabItem
+                                  key={panelId}
+                                  item={pinnedItem}
+                                  active={selected === panelId}
+                                  canMoveLeft={canMoveLeft}
+                                  canMoveRight={canMoveRight}
+                                  dragProps={resultPanelDrag.getTabProps(panelId)}
+                                  onSelect={() => data.setPanel(tab.id, panelId)}
+                                  onPromote={() => openObject(pinnedItem)}
+                                  onMoveLeft={() => shiftPanel(-1)}
+                                  onMoveRight={() => shiftPanel(1)}
+                                  onClose={() => closePinnedInspection(tab.id, panelId)}
+                                />
+                              );
+                            }
+
+                            return null;
                           })}
-                          {pinned.map((item, index) => {
-                            const key = inspectionKey(item);
-                            return (
-                              <PinnedInspectionTabItem
-                                key={key}
-                                item={item}
-                                active={selected === key}
-                                canMoveLeft={index > 0}
-                                canMoveRight={index < pinned.length - 1}
-                                dragProps={pinnedTabDrag.getTabProps(key)}
-                                onSelect={() => data.setPanel(tab.id, key)}
-                                onPromote={() => openObject(item)}
-                                onMoveLeft={() =>
-                                  setPinned((current) => ({
-                                    ...current,
-                                    [tab.id]: moveItemByOffset(
-                                      current[tab.id] ?? [],
-                                      key,
-                                      -1,
-                                      inspectionKey,
-                                    ),
-                                  }))
-                                }
-                                onMoveRight={() =>
-                                  setPinned((current) => ({
-                                    ...current,
-                                    [tab.id]: moveItemByOffset(
-                                      current[tab.id] ?? [],
-                                      key,
-                                      1,
-                                      inspectionKey,
-                                    ),
-                                  }))
-                                }
-                                onClose={() => closePinnedInspection(tab.id, key)}
-                              />
-                            );
-                          })}
-                          <Button
-                            variant="ghost"
-                            role="tab"
-                            aria-selected={selected === "messages" || !selected}
-                            onClick={() => data.setPanel(tab.id, "messages")}
-                          >
-                            Messages
-                          </Button>
                         </div>
                         {result && (
                           <div className="result-actions">

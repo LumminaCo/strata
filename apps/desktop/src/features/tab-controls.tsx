@@ -527,3 +527,43 @@ export function PinnedInspectionTabItem({
     </ContextMenu>
   );
 }
+
+export interface MessagesTabItemProps {
+  active: boolean;
+  canMoveLeft: boolean;
+  canMoveRight: boolean;
+  dragProps: TabDragBindings;
+  onSelect: () => void;
+  onMoveLeft: () => void;
+  onMoveRight: () => void;
+}
+
+export function MessagesTabItem({
+  active,
+  canMoveLeft,
+  canMoveRight,
+  dragProps,
+  onSelect,
+  onMoveLeft,
+  onMoveRight,
+}: MessagesTabItemProps) {
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger className="result-tab" data-active={active} {...dragProps}>
+        <Button variant="ghost" role="tab" aria-selected={active} onClick={onSelect}>
+          <span className="tab-label">Messages</span>
+        </Button>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem disabled={!canMoveLeft} onClick={onMoveLeft}>
+          <ArrowLeft />
+          Move left
+        </ContextMenuItem>
+        <ContextMenuItem disabled={!canMoveRight} onClick={onMoveRight}>
+          <ArrowRight />
+          Move right
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}

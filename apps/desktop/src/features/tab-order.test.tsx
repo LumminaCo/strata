@@ -311,6 +311,42 @@ describe("tab control rendering", () => {
     expect(renamingUnsavedMarkup.indexOf('class="unsaved-dot"')).toBeLessThan(
       renamingUnsavedMarkup.indexOf("db-icon"),
     );
+
+    const linkedTab = sampleTab("t2", {
+      title: "Invoices",
+      filePath: "/home/ada/Documents/Strata/invoices.sql",
+    });
+    const linkedMarkup = renderToStaticMarkup(
+      <ScriptTabItem
+        tab={linkedTab}
+        connection={connection}
+        label="Invoices"
+        defaultLabel="Analytics"
+        active
+        unsaved={false}
+        renaming={false}
+        canMoveLeft={false}
+        canMoveRight
+        canCloseOthers
+        canCloseRight
+        closeShortcut="Ctrl+W"
+        dragProps={idleDragProps}
+        onSelect={() => {}}
+        onStartRename={() => {}}
+        onCommitRename={() => {}}
+        onCancelRename={() => {}}
+        onResetName={() => {}}
+        onMoveLeft={() => {}}
+        onMoveRight={() => {}}
+        onDuplicate={() => {}}
+        onClose={() => {}}
+        onCloseOthers={() => {}}
+        onCloseRight={() => {}}
+      />,
+    );
+    expect(linkedMarkup).toContain(
+      'title="Invoices (Analytics) · /home/ada/Documents/Strata/invoices.sql"',
+    );
   });
 
   it("renders result tab with custom label and inline rename input", () => {

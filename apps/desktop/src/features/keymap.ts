@@ -27,6 +27,7 @@ export const shortcuts = {
   format: "Ctrl+Shift+F",
   openSql: "Ctrl+O",
   saveSql: "Ctrl+S",
+  saveSqlAs: "Ctrl+Shift+S",
 };
 
 // Webview shortcuts that reload the app or open devtools; blocked in production builds.
@@ -54,7 +55,7 @@ export function workspaceKeydown(event: KeyboardEvent, actions: Actions, browser
     if (event.shiftKey && key === "f") action = "format";
     if (key === "t") action = "newTab";
     if (key === "o") action = "openSql";
-    if (key === "s") action = "saveSql";
+    if (key === "s") action = event.shiftKey ? "saveSqlAs" : "saveSql";
     if (key === "w") action = "closeTab";
     if (key === "k" || key === "p") action = "palette";
     if (key === "h") action = "history";

@@ -151,6 +151,26 @@ export function removeResultTabs(current: Activity, resultIds: string[]): Activi
   return { ...current, results: remaining, selected };
 }
 
+export function updateTabFilePath(
+  tabs: readonly SavedTab[],
+  id: string,
+  filePath: string | undefined,
+): SavedTab[] {
+  const normalized = filePath?.trim() || undefined;
+  let changed = false;
+  const next = tabs.map((item) => {
+    if (item.id !== id) return item;
+    if (item.filePath === normalized) return item;
+    changed = true;
+    if (normalized === undefined) {
+      const { filePath: _removed, ...rest } = item;
+      return rest;
+    }
+    return { ...item, filePath: normalized };
+  });
+  return changed ? next : (tabs as SavedTab[]);
+}
+
 export interface UseWorkspaceOptions {
   onQueryComplete?: (completion: QueryCompletion) => void;
 }
@@ -236,12 +256,21 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
     database?: string,
     text = "",
     schema?: string,
+    filePath?: string,
   ): string | null {
     if (!workspace || workspace.tabs.length >= 100) {
       setNotice("Close a tab before opening another.");
       return null;
     }
-    const newTab: SavedTab = { id: crypto.randomUUID(), connectionId, database, schema, text };
+    const normalizedPath = filePath?.trim() || undefined;
+    const newTab: SavedTab = {
+      id: crypto.randomUUID(),
+      connectionId,
+      ...(database !== undefined ? { database } : {}),
+      ...(schema !== undefined ? { schema } : {}),
+      ...(normalizedPath !== undefined ? { filePath: normalizedPath } : {}),
+      text,
+    };
     setWorkspace((current) => current && { tabs: [...current.tabs, newTab], activeTab: newTab.id });
     return newTab.id;
   }
@@ -317,6 +346,14 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
           }),
         },
     );
+  }
+
+  function setTabFilePath(id: string, filePath: string | undefined) {
+    setWorkspace((current) => {
+      if (!current) return current;
+      const nextTabs = updateTabFilePath(current.tabs, id, filePath);
+      return nextTabs === current.tabs ? current : { ...current, tabs: nextTabs };
+    });
   }
 
   function reorderTabs(activeId: string, targetId: string, placement: DropPlacement) {
@@ -1167,6 +1204,7 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
     closeTab,
     closeTabs,
     renameTab,
+    setTabFilePath,
     reorderTabs,
     shiftTab,
     duplicateTab,

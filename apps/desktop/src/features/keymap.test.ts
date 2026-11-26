@@ -67,6 +67,7 @@ describe("workspaceKeydown", () => {
       format: vi.fn(),
       openSql: vi.fn(),
       saveSql: vi.fn(),
+      saveSqlAs: vi.fn(),
     };
   }
 
@@ -84,6 +85,24 @@ describe("workspaceKeydown", () => {
       expect(workspaceKeydown(event, handlers, false), shortcut).toBe(true);
       expect(preventDefault).toHaveBeenCalledOnce();
       expect(handlers[expected]).toHaveBeenCalledOnce();
+    }
+  });
+
+  it("maps Ctrl+S to saveSql and Ctrl+Shift+S to saveSqlAs", () => {
+    for (const [shortcut, expected] of [
+      ["Ctrl+s", "saveSql"],
+      ["Cmd+s", "saveSql"],
+      ["Ctrl+Shift+S", "saveSqlAs"],
+      ["Cmd+Shift+S", "saveSqlAs"],
+    ] as const) {
+      const handlers = actions();
+      const preventDefault = vi.fn();
+      const event = key(shortcut, preventDefault);
+      expect(workspaceKeydown(event, handlers, false), shortcut).toBe(true);
+      expect(preventDefault).toHaveBeenCalledOnce();
+      expect(handlers[expected]).toHaveBeenCalledOnce();
+      const other = expected === "saveSql" ? "saveSqlAs" : "saveSql";
+      expect(handlers[other]).not.toHaveBeenCalled();
     }
   });
 });

@@ -75,7 +75,10 @@ import {
 } from "@/features/query-notifications";
 import { playQuerySound, primeQuerySound } from "@/features/query-sound";
 import {
+  MAX_SQL_FILE_BYTES,
+  canUseNativeOpenSqlPicker,
   isSqlTabUnsaved,
+  openSqlFile as pickSqlFile,
   recordSavedSqlTab,
   removeSavedSqlTabs,
   saveSqlFile as persistSqlFile,
@@ -364,7 +367,13 @@ export function App() {
     });
   }
 
-  function openTab(id: string, database?: string, text?: string, schema?: string): string | null {
+  function openTab(
+    id: string,
+    database?: string,
+    text?: string,
+    schema?: string,
+    filePath?: string,
+  ): string | null {
     setSchemaSelected(undefined);
     const profile = data.profiles.find((entry) => entry.id === id);
     const existing = data.tabs.find(
@@ -376,7 +385,7 @@ export function App() {
       data.selectTab(existing.id);
       return existing.id;
     }
-    return data.addTab(id, database, text, schema);
+    return data.addTab(id, database, text, schema, filePath);
   }
 
   function openObject(entry: Inspection) {
@@ -586,13 +595,13 @@ export function App() {
 
   async function openSqlFile(file: File) {
     if (!profile?.id) return;
-    if (file.size > 8_000_000) {
+    if (file.size > MAX_SQL_FILE_BYTES) {
       data.setNotice("The SQL file exceeds 8 MB.");
       return;
     }
     try {
       const content = await file.text();
-      const tabId = openTab(profile.id, tab?.database, content, tab?.schema);
+      const tabId = openTab(profile.id, tab?.database, content, tab?.schema, file.name);
       if (tabId) {
         setSavedSqlByTab((current) => recordSavedSqlTab(current, tabId, content, file.name));
       }
@@ -601,19 +610,48 @@ export function App() {
     }
   }
 
-  async function saveSqlFile() {
+  async function requestOpenSqlFile() {
+    if (!profile?.id) return;
+    if (!canUseNativeOpenSqlPicker()) {
+      fileInput.current?.click();
+      return;
+    }
+    try {
+      const suggestedPath = tab ? (savedSqlByTab[tab.id]?.path ?? tab.filePath) : undefined;
+      const opened = await pickSqlFile(suggestedPath);
+      if (!opened) return;
+      const tabId = openTab(profile.id, tab?.database, opened.content, tab?.schema, opened.path);
+      if (tabId) {
+        setSavedSqlByTab((current) =>
+          recordSavedSqlTab(current, tabId, opened.content, opened.path, opened.handle),
+        );
+      }
+    } catch (error) {
+      data.setNotice(errorMessage(error));
+    }
+  }
+
+  async function saveSqlFile(saveAs = false) {
     if (!tab || !editor.current || schemaActive || savingSql.current) return;
     const tabId = tab.id;
     const content = editor.current.text();
-    const suggestedPath = savedSqlByTab[tabId]?.path;
+    const existing = savedSqlByTab[tabId];
+    const suggestedPath = existing?.path ?? tab.filePath;
     savingSql.current = true;
     try {
-      const savedPath = await persistSqlFile(content, suggestedPath);
-      if (!savedPath) return;
+      const saved = await persistSqlFile(content, {
+        suggestedPath,
+        handle: existing?.handle,
+        saveAs,
+      });
+      if (!saved) return;
       if (editors.current.has(tabId)) {
-        setSavedSqlByTab((current) => recordSavedSqlTab(current, tabId, content, savedPath));
+        setSavedSqlByTab((current) =>
+          recordSavedSqlTab(current, tabId, content, saved.path, saved.handle),
+        );
+        data.setTabFilePath(tabId, saved.path);
       }
-      data.setNotice(`Saved SQL to ${savedPath}.`);
+      data.setNotice(`Saved SQL to ${saved.path}.`);
     } catch (error) {
       data.setNotice(errorMessage(error));
     } finally {
@@ -726,10 +764,9 @@ export function App() {
             },
             explain: () => run("explain"),
             format: () => void formatSql(),
-            openSql: () => {
-              if (profile) fileInput.current?.click();
-            },
-            saveSql: () => void saveSqlFile(),
+            openSql: () => void requestOpenSqlFile(),
+            saveSql: () => void saveSqlFile(false),
+            saveSqlAs: () => void saveSqlFile(true),
           },
           browserMode,
         );
@@ -1147,9 +1184,9 @@ export function App() {
                     variant="ghost"
                     size="icon-sm"
                     aria-label="Open SQL file"
-                    title="Open SQL file (Ctrl+O)"
+                    title={`Open SQL file (${shortcuts.openSql})`}
                     disabled={!profile}
-                    onClick={() => fileInput.current?.click()}
+                    onClick={() => void requestOpenSqlFile()}
                   >
                     <FolderOpen />
                   </Button>
@@ -1157,8 +1194,12 @@ export function App() {
                     variant="ghost"
                     size="icon-sm"
                     aria-label="Save SQL file"
-                    title="Save SQL file (Ctrl+S)"
-                    onClick={() => void saveSqlFile()}
+                    title={(() => {
+                      const linkedPath = savedSqlByTab[tab.id]?.path ?? tab.filePath;
+                      const base = `Save SQL file (${shortcuts.saveSql}, Save as: ${shortcuts.saveSqlAs})`;
+                      return linkedPath ? `${base} · ${linkedPath}` : base;
+                    })()}
+                    onClick={() => void saveSqlFile(false)}
                   >
                     <Save />
                   </Button>

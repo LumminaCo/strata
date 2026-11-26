@@ -540,7 +540,7 @@ Full-height version of the table view plus a left list of FK neighbors (depth 1)
 | New SQL tab on current connection | Ctrl+T |
 | Close tab / next / previous | Ctrl+W / Ctrl+Tab / Ctrl+Shift+Tab |
 | Command palette and quick open | Ctrl+K, Ctrl+P |
-| Save file | Ctrl+S |
+| Save file / Save file as | Ctrl+S / Ctrl+Shift+S |
 | Toggle explorer / results / history | Ctrl+B / Ctrl+J / Ctrl+H |
 | Add cursor | Alt+Click |
 

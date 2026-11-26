@@ -1,4 +1,6 @@
-import type { Cell, ColumnMeta } from "@/ipc/bindings/protocol";
+import type { Cell, ColumnMeta, Connection } from "@/ipc/bindings/protocol";
+
+export type FilterDialect = Connection["kind"];
 
 export interface SortRule {
   column: number;
@@ -31,7 +33,9 @@ export type CompiledFilter =
 const NUMERIC_KINDS = new Set(["int", "float", "decimal"]);
 const INTEGER_PATTERN = /^[+-]?\d+$/;
 const NUMBER_PATTERN = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
-const SIMPLE_IDENT_PATTERN = /^[A-Za-z_][A-Za-z0-9_$]*$/;
+const TOKEN_NUMBER_PATTERN = /^-?(?:\d+\.?\d*|\.\d+)(?:[eE]-?\d+)?$/;
+const PURE_IDENT_PATTERN = /^[A-Za-z_\p{L}][A-Za-z0-9_$\p{L}\p{N}]*$/u;
+const BARE_VALUE_CHAR = /[A-Za-z0-9_$\p{L}\p{N}.:@/%-]/u;
 
 const RESERVED_KEYWORDS = new Set([
   "AND",
@@ -127,21 +131,31 @@ export function formatSortHeader(
   return sorts.length > 1 ? `${name} ${arrow}${priority + 1}` : `${name} ${arrow}`;
 }
 
-export function formatColumnIdentifier(name: string): string {
-  if (SIMPLE_IDENT_PATTERN.test(name) && !RESERVED_KEYWORDS.has(name.toUpperCase())) {
-    return name;
+export function formatColumnIdentifier(name: string, dialect?: FilterDialect): string {
+  if (dialect === "sqlserver") {
+    return `[${name.replaceAll("]", "]]")}]`;
   }
   return `"${name.replaceAll('"', '""')}"`;
 }
 
-export function formatFilterLiteral(value: Cell, kind?: string): string {
+export function formatFilterLiteral(value: Cell, kind?: string, dialect?: FilterDialect): string {
   if (value === null) return "NULL";
-  if (typeof value === "boolean") return value ? "true" : "false";
-  if (typeof value === "number") return String(value);
-  if (kind && NUMERIC_KINDS.has(kind) && NUMBER_PATTERN.test(value.trim())) {
+  if (typeof value === "boolean") {
+    if (dialect === "sqlserver") return value ? "1" : "0";
+    return value ? "true" : "false";
+  }
+  if (typeof value === "number" && (!kind || NUMERIC_KINDS.has(kind))) {
+    return String(value);
+  }
+  if (
+    typeof value === "string" &&
+    kind &&
+    NUMERIC_KINDS.has(kind) &&
+    NUMBER_PATTERN.test(value.trim())
+  ) {
     return value.trim();
   }
-  return `'${value.replaceAll("'", "''")}'`;
+  return `'${String(value).replaceAll("'", "''")}'`;
 }
 
 function parseExactInteger(value: Cell): bigint | null {
@@ -236,6 +250,7 @@ type TokenKind =
   | "quoted_ident"
   | "string"
   | "number"
+  | "bare_value"
   | "operator"
   | "lparen"
   | "rparen"
@@ -335,31 +350,32 @@ function tokenizeFilter(input: string): { tokens: Token[]; error?: string } {
         ["AND", "OR", "NOT", "BETWEEN", "IN", "LIKE", "ILIKE", "CONTAINS", "WITH"].includes(
           prev.value.toUpperCase(),
         ));
-    if (
-      (ch >= "0" && ch <= "9") ||
-      (ch === "-" &&
-        unaryMinusAllowed &&
-        i + 1 < len &&
-        input[i + 1]! >= "0" &&
-        input[i + 1]! <= "9")
-    ) {
-      const start = i;
-      if (ch === "-") i++;
-      while (i < len && input[i]! >= "0" && input[i]! <= "9") i++;
-      if (input[i] === "." && i + 1 < len && input[i + 1]! >= "0" && input[i + 1]! <= "9") {
-        i++;
-        while (i < len && input[i]! >= "0" && input[i]! <= "9") i++;
+    if (ch === "-") {
+      if (!unaryMinusAllowed || i + 1 >= len || !BARE_VALUE_CHAR.test(input[i + 1]!)) {
+        return { tokens, error: 'Unexpected character "-".' };
       }
-      const raw = input.slice(start, i);
-      tokens.push({ kind: "number", value: raw, raw, start, end: i });
-      continue;
-    }
-    if (/[A-Za-z_\p{L}]/u.test(ch)) {
       const start = i;
       i++;
-      while (i < len && /[A-Za-z0-9_$\p{L}\p{N}]/u.test(input[i]!)) i++;
+      while (i < len && BARE_VALUE_CHAR.test(input[i]!)) i++;
       const raw = input.slice(start, i);
-      tokens.push({ kind: "ident", value: raw, raw, start, end: i });
+      const kind: TokenKind = TOKEN_NUMBER_PATTERN.test(raw) ? "number" : "bare_value";
+      tokens.push({ kind, value: raw, raw, start, end: i });
+      continue;
+    }
+    if (BARE_VALUE_CHAR.test(ch)) {
+      const start = i;
+      i++;
+      while (i < len && BARE_VALUE_CHAR.test(input[i]!)) i++;
+      const raw = input.slice(start, i);
+      let kind: TokenKind;
+      if (TOKEN_NUMBER_PATTERN.test(raw)) {
+        kind = "number";
+      } else if (PURE_IDENT_PATTERN.test(raw)) {
+        kind = "ident";
+      } else {
+        kind = "bare_value";
+      }
+      tokens.push({ kind, value: raw, raw, start, end: i });
       continue;
     }
     return { tokens, error: `Unexpected character "${ch}".` };
@@ -404,7 +420,275 @@ function looksLikeExpression(tokens: readonly Token[]): boolean {
   return false;
 }
 
-type ValueOperand = { kind: "literal"; value: Cell } | { kind: "column"; columnIndex: number };
+type ComparisonOperator = "=" | "==" | "!=" | "<>" | "<" | "<=" | ">" | ">=";
+
+type ValueNode =
+  | { kind: "string"; value: string }
+  | { kind: "number"; raw: string; value: number | string }
+  | { kind: "boolean"; value: boolean }
+  | { kind: "null" }
+  | { kind: "bare"; value: string }
+  | { kind: "column"; columnIndex: number };
+
+type FilterNode =
+  | { kind: "or"; left: FilterNode; right: FilterNode }
+  | { kind: "and"; left: FilterNode; right: FilterNode }
+  | { kind: "not"; operand: FilterNode }
+  | { kind: "group"; expr: FilterNode }
+  | { kind: "is_null"; columnIndex: number; negated: boolean }
+  | { kind: "in"; columnIndex: number; negated: boolean; items: ValueNode[] }
+  | { kind: "between"; columnIndex: number; negated: boolean; low: ValueNode; high: ValueNode }
+  | {
+      kind: "like";
+      columnIndex: number;
+      negated: boolean;
+      caseInsensitive: boolean;
+      pattern: ValueNode;
+    }
+  | {
+      kind: "text_match";
+      columnIndex: number;
+      negated: boolean;
+      mode: "contains" | "starts" | "ends";
+      value: ValueNode;
+    }
+  | {
+      kind: "compare";
+      columnIndex: number;
+      operator: ComparisonOperator;
+      rhs: ValueNode;
+    }
+  | { kind: "bool_column"; columnIndex: number };
+
+function parseFilterAst(
+  tokens: readonly Token[],
+  columns: readonly ColumnMeta[],
+  options?: { allowStandaloneBoolColumn?: boolean },
+): FilterNode {
+  let pos = 0;
+
+  const peek = (offset = 0) => tokens[pos + offset];
+  const isKeyword = (token: Token | undefined, word: string) =>
+    token?.kind === "ident" && token.value.toUpperCase() === word;
+
+  function parseValue(): ValueNode {
+    const token = peek();
+    if (!token) throw new Error("Expected a value.");
+    if (token.kind === "string") {
+      pos++;
+      return { kind: "string", value: token.value };
+    }
+    if (token.kind === "number") {
+      pos++;
+      const numeric = Number(token.value);
+      return {
+        kind: "number",
+        raw: token.raw,
+        value: Number.isSafeInteger(numeric) || token.value.includes(".") ? numeric : token.value,
+      };
+    }
+    if (token.kind === "quoted_ident") {
+      pos++;
+      const columnIndex = resolveColumnIndex(columns, token.value);
+      if (columnIndex === -1) throw new Error(`Unknown column "${token.value}".`);
+      return { kind: "column", columnIndex };
+    }
+    if (token.kind === "ident") {
+      pos++;
+      const upper = token.value.toUpperCase();
+      if (upper === "NULL") return { kind: "null" };
+      if (upper === "TRUE") return { kind: "boolean", value: true };
+      if (upper === "FALSE") return { kind: "boolean", value: false };
+      const columnIndex = resolveColumnIndex(columns, token.value);
+      if (columnIndex !== -1) return { kind: "column", columnIndex };
+      return { kind: "bare", value: token.value };
+    }
+    if (token.kind === "bare_value") {
+      pos++;
+      return { kind: "bare", value: token.value };
+    }
+    throw new Error(`Expected a value near "${token.raw}".`);
+  }
+
+  function parsePredicate(): FilterNode {
+    const colToken = peek();
+    if (
+      !colToken ||
+      (colToken.kind !== "ident" &&
+        colToken.kind !== "quoted_ident" &&
+        colToken.kind !== "bare_value")
+    ) {
+      throw new Error(
+        colToken ? `Expected a column name near "${colToken.raw}".` : "Expected a column name.",
+      );
+    }
+    pos++;
+    const columnIndex = resolveColumnIndex(columns, colToken.value);
+    if (columnIndex === -1) {
+      throw new Error(`Unknown column "${colToken.value}".`);
+    }
+
+    const op = peek();
+    if (
+      options?.allowStandaloneBoolColumn &&
+      columns[columnIndex]?.kind === "bool" &&
+      (!op || op.kind === "rparen" || isKeyword(op, "AND") || isKeyword(op, "OR"))
+    ) {
+      return { kind: "bool_column", columnIndex };
+    }
+    if (!op) {
+      throw new Error(`Expected an operator after "${colToken.value}".`);
+    }
+
+    // IS [NOT] NULL
+    if (isKeyword(op, "IS")) {
+      pos++;
+      let negated = false;
+      if (isKeyword(peek(), "NOT")) {
+        negated = true;
+        pos++;
+      }
+      if (!isKeyword(peek(), "NULL")) {
+        throw new Error('Expected "NULL" after "IS".');
+      }
+      pos++;
+      return { kind: "is_null", columnIndex, negated };
+    }
+
+    // Optional NOT prefix for IN / BETWEEN / LIKE / ILIKE / CONTAINS / STARTS WITH / ENDS WITH
+    let negated = false;
+    if (isKeyword(op, "NOT")) {
+      negated = true;
+      pos++;
+    }
+    const nextOp = peek();
+    if (!nextOp) {
+      throw new Error(`Expected an operator after "${colToken.value}".`);
+    }
+
+    if (isKeyword(nextOp, "IN")) {
+      pos++;
+      if (peek()?.kind !== "lparen") {
+        throw new Error('Expected "(" after "IN".');
+      }
+      pos++;
+      const items: ValueNode[] = [];
+      if (peek()?.kind === "rparen") {
+        throw new Error("IN (...) requires at least one value.");
+      }
+      while (true) {
+        items.push(parseValue());
+        if (peek()?.kind === "comma") {
+          pos++;
+          continue;
+        }
+        if (peek()?.kind === "rparen") {
+          pos++;
+          break;
+        }
+        throw new Error('Expected "," or ")" in IN list.');
+      }
+      return { kind: "in", columnIndex, negated, items };
+    }
+
+    if (isKeyword(nextOp, "BETWEEN")) {
+      pos++;
+      const low = parseValue();
+      if (!isKeyword(peek(), "AND")) {
+        throw new Error('Expected "AND" in BETWEEN expression.');
+      }
+      pos++;
+      const high = parseValue();
+      return { kind: "between", columnIndex, negated, low, high };
+    }
+
+    if (isKeyword(nextOp, "LIKE") || isKeyword(nextOp, "ILIKE")) {
+      const caseInsensitive = nextOp.value.toUpperCase() === "ILIKE";
+      pos++;
+      const pattern = parseValue();
+      return { kind: "like", columnIndex, negated, caseInsensitive, pattern };
+    }
+
+    if (isKeyword(nextOp, "CONTAINS")) {
+      pos++;
+      const value = parseValue();
+      return { kind: "text_match", columnIndex, negated, mode: "contains", value };
+    }
+
+    if (isKeyword(nextOp, "STARTS") || isKeyword(nextOp, "ENDS")) {
+      const mode = nextOp.value.toUpperCase() === "STARTS" ? "starts" : "ends";
+      pos++;
+      if (!isKeyword(peek(), "WITH")) {
+        throw new Error(`Expected "WITH" after "${nextOp.value.toUpperCase()}".`);
+      }
+      pos++;
+      const value = parseValue();
+      return { kind: "text_match", columnIndex, negated, mode, value };
+    }
+
+    if (negated) {
+      throw new Error(`Unexpected "NOT" before "${nextOp.raw}".`);
+    }
+
+    if (nextOp.kind === "operator") {
+      const operator = nextOp.value as ComparisonOperator;
+      pos++;
+      const rhs = parseValue();
+      return { kind: "compare", columnIndex, operator, rhs };
+    }
+
+    throw new Error(`Unsupported operator "${nextOp.raw}".`);
+  }
+
+  function parsePrimary(): FilterNode {
+    if (peek()?.kind === "lparen") {
+      pos++;
+      const inner = parseOr();
+      if (peek()?.kind !== "rparen") {
+        throw new Error('Expected closing ")".');
+      }
+      pos++;
+      return { kind: "group", expr: inner };
+    }
+    return parsePredicate();
+  }
+
+  function parseNot(): FilterNode {
+    if (isKeyword(peek(), "NOT")) {
+      pos++;
+      const operand = parseNot();
+      return { kind: "not", operand };
+    }
+    return parsePrimary();
+  }
+
+  function parseAnd(): FilterNode {
+    let left = parseNot();
+    while (isKeyword(peek(), "AND")) {
+      pos++;
+      const right = parseNot();
+      left = { kind: "and", left, right };
+    }
+    return left;
+  }
+
+  function parseOr(): FilterNode {
+    let left = parseAnd();
+    while (isKeyword(peek(), "OR")) {
+      pos++;
+      const right = parseAnd();
+      left = { kind: "or", left, right };
+    }
+    return left;
+  }
+
+  const ast = parseOr();
+  const leftover = peek();
+  if (leftover) {
+    throw new Error(`Unexpected token "${leftover.raw}".`);
+  }
+  return ast;
+}
 
 function compareValuesForFilter(
   left: Cell,
@@ -450,8 +734,330 @@ function compileLikePattern(pattern: string, caseInsensitive: boolean): RegExp {
   return new RegExp(regex, caseInsensitive ? "is" : "s");
 }
 
-function resolveOperand(operand: ValueOperand, row: readonly Cell[]): Cell {
-  return operand.kind === "column" ? (row[operand.columnIndex] ?? null) : operand.value;
+function resolveValueNode(node: ValueNode, row: readonly Cell[]): Cell {
+  switch (node.kind) {
+    case "column":
+      return row[node.columnIndex] ?? null;
+    case "null":
+      return null;
+    case "boolean":
+      return node.value;
+    case "number":
+      return node.value;
+    case "string":
+    case "bare":
+      return node.value;
+  }
+}
+
+function buildPredicateFromAst(
+  node: FilterNode,
+  columns: readonly ColumnMeta[],
+): (row: Cell[]) => boolean {
+  switch (node.kind) {
+    case "or": {
+      const left = buildPredicateFromAst(node.left, columns);
+      const right = buildPredicateFromAst(node.right, columns);
+      return (row) => left(row) || right(row);
+    }
+    case "and": {
+      const left = buildPredicateFromAst(node.left, columns);
+      const right = buildPredicateFromAst(node.right, columns);
+      return (row) => left(row) && right(row);
+    }
+    case "not": {
+      const operand = buildPredicateFromAst(node.operand, columns);
+      return (row) => !operand(row);
+    }
+    case "group":
+      return buildPredicateFromAst(node.expr, columns);
+    case "bool_column":
+      return (row) => parseBooleanValue(row[node.columnIndex] ?? null) === true;
+    case "is_null":
+      return (row) => {
+        const isNull = (row[node.columnIndex] ?? null) === null;
+        return node.negated ? !isNull : isNull;
+      };
+    case "in": {
+      const columnKind = columns[node.columnIndex]?.kind;
+      return (row) => {
+        const cell = row[node.columnIndex] ?? null;
+        if (cell === null) return false;
+        const matched = node.items.some((item) => {
+          const target = resolveValueNode(item, row);
+          if (target === null) return false;
+          return compareValuesForFilter(cell, target, columnKind) === 0;
+        });
+        return node.negated ? !matched : matched;
+      };
+    }
+    case "between": {
+      const columnKind = columns[node.columnIndex]?.kind;
+      return (row) => {
+        const cell = row[node.columnIndex] ?? null;
+        if (cell === null) return false;
+        const lowVal = resolveValueNode(node.low, row);
+        const highVal = resolveValueNode(node.high, row);
+        const cmpLow = compareValuesForFilter(cell, lowVal, columnKind);
+        const cmpHigh = compareValuesForFilter(cell, highVal, columnKind);
+        if (cmpLow === null || cmpHigh === null) return false;
+        const matched = cmpLow >= 0 && cmpHigh <= 0;
+        return node.negated ? !matched : matched;
+      };
+    }
+    case "like": {
+      const staticRegex =
+        node.pattern.kind !== "column" && node.pattern.kind !== "null"
+          ? compileLikePattern(String(resolveValueNode(node.pattern, [])), node.caseInsensitive)
+          : null;
+      return (row) => {
+        const cell = row[node.columnIndex] ?? null;
+        if (cell === null) return false;
+        const regex =
+          staticRegex ??
+          (() => {
+            const val = resolveValueNode(node.pattern, row);
+            return val === null ? null : compileLikePattern(String(val), node.caseInsensitive);
+          })();
+        if (!regex) return false;
+        const matched = regex.test(String(cell));
+        return node.negated ? !matched : matched;
+      };
+    }
+    case "text_match":
+      return (row) => {
+        const cell = row[node.columnIndex] ?? null;
+        const target = resolveValueNode(node.value, row);
+        if (cell === null || target === null) return false;
+        const lhs = String(cell).toLocaleLowerCase();
+        const needle = String(target).toLocaleLowerCase();
+        const matched =
+          node.mode === "contains"
+            ? lhs.includes(needle)
+            : node.mode === "starts"
+              ? lhs.startsWith(needle)
+              : lhs.endsWith(needle);
+        return node.negated ? !matched : matched;
+      };
+    case "compare": {
+      const columnKind = columns[node.columnIndex]?.kind;
+      return (row) => {
+        const cell = row[node.columnIndex] ?? null;
+        const target = resolveValueNode(node.rhs, row);
+        const cmp = compareValuesForFilter(cell, target, columnKind);
+        if (cmp === null) return false;
+        switch (node.operator) {
+          case "=":
+          case "==":
+            return cmp === 0;
+          case "!=":
+          case "<>":
+            return cmp !== 0;
+          case "<":
+            return cmp < 0;
+          case "<=":
+            return cmp <= 0;
+          case ">":
+            return cmp > 0;
+          case ">=":
+            return cmp >= 0;
+        }
+      };
+    }
+  }
+}
+
+function quoteSqlString(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+class SqlCompileFallback extends Error {}
+
+export function compileSqlWhereExpression(
+  input: string,
+  columns: readonly ColumnMeta[],
+  dialect: FilterDialect,
+): string {
+  const trimmed = input.trim();
+  if (!trimmed || columns.length === 0) return trimmed;
+
+  const lexed = tokenizeFilter(trimmed);
+  if (lexed.error || lexed.tokens.length === 0) return trimmed;
+
+  let ast: FilterNode;
+  try {
+    ast = parseFilterAst(lexed.tokens, columns, { allowStandaloneBoolColumn: true });
+  } catch {
+    return trimmed;
+  }
+
+  function quoteColumn(columnIndex: number): string {
+    return formatColumnIdentifier(columns[columnIndex]!.name, dialect);
+  }
+
+  function textColumnExpr(columnIndex: number): string {
+    const col = columns[columnIndex]!;
+    const colSql = quoteColumn(columnIndex);
+    if (dialect === "postgres" && col.kind !== "text") {
+      return `CAST(${colSql} AS TEXT)`;
+    }
+    return colSql;
+  }
+
+  function formatPatternLiteral(
+    raw: string,
+    mode: "contains" | "starts" | "ends",
+  ): { sql: string; escapeClause: string } {
+    const needsEscape =
+      raw.includes("\\") ||
+      raw.includes("%") ||
+      raw.includes("_") ||
+      (dialect === "sqlserver" && raw.includes("["));
+    let escaped = raw.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
+    if (dialect === "sqlserver") {
+      escaped = escaped.replaceAll("[", "\\[");
+    }
+    const pattern =
+      mode === "contains" ? `%${escaped}%` : mode === "starts" ? `${escaped}%` : `%${escaped}`;
+    const normalized = dialect === "postgres" ? pattern : pattern.toLowerCase();
+    return {
+      sql: quoteSqlString(normalized),
+      escapeClause: needsEscape ? " ESCAPE '\\'" : "",
+    };
+  }
+
+  function emitValue(node: ValueNode, columnKind: string | undefined, forceString = false): string {
+    switch (node.kind) {
+      case "string":
+        return quoteSqlString(node.value);
+      case "null":
+        return "NULL";
+      case "column":
+        return quoteColumn(node.columnIndex);
+      case "boolean":
+        if (forceString || (columnKind && columnKind !== "bool")) {
+          return quoteSqlString(node.value ? "true" : "false");
+        }
+        return dialect === "sqlserver" ? (node.value ? "1" : "0") : node.value ? "true" : "false";
+      case "number":
+        if (forceString) return quoteSqlString(node.raw);
+        if (columnKind === "bool") {
+          if (node.raw === "1") return dialect === "sqlserver" ? "1" : "true";
+          if (node.raw === "0") return dialect === "sqlserver" ? "0" : "false";
+        }
+        if (!columnKind || NUMERIC_KINDS.has(columnKind)) {
+          return node.raw;
+        }
+        return quoteSqlString(node.raw);
+      case "bare":
+        if (forceString) return quoteSqlString(node.value);
+        if (columnKind && NUMERIC_KINDS.has(columnKind)) {
+          throw new SqlCompileFallback();
+        }
+        return quoteSqlString(node.value);
+    }
+  }
+
+  function emitNode(node: FilterNode): string {
+    switch (node.kind) {
+      case "or":
+        return `${emitNode(node.left)} OR ${emitNode(node.right)}`;
+      case "and":
+        return `${emitNode(node.left)} AND ${emitNode(node.right)}`;
+      case "not":
+        if (node.operand.kind === "bool_column") {
+          const colSql = quoteColumn(node.operand.columnIndex);
+          return dialect === "sqlserver" ? `${colSql} = 0` : `NOT ${colSql}`;
+        }
+        if (node.operand.kind === "group") {
+          return `NOT ${emitNode(node.operand)}`;
+        }
+        return `NOT (${emitNode(node.operand)})`;
+      case "group":
+        return `(${emitNode(node.expr)})`;
+      case "bool_column": {
+        const colSql = quoteColumn(node.columnIndex);
+        return dialect === "sqlserver" ? `${colSql} = 1` : colSql;
+      }
+      case "is_null":
+        return `${quoteColumn(node.columnIndex)} IS ${node.negated ? "NOT " : ""}NULL`;
+      case "in": {
+        const colKind = columns[node.columnIndex]?.kind;
+        const items = node.items.map((item) => emitValue(item, colKind)).join(", ");
+        return `${quoteColumn(node.columnIndex)} ${node.negated ? "NOT " : ""}IN (${items})`;
+      }
+      case "between": {
+        const colKind = columns[node.columnIndex]?.kind;
+        const low = emitValue(node.low, colKind);
+        const high = emitValue(node.high, colKind);
+        return `${quoteColumn(node.columnIndex)} ${node.negated ? "NOT " : ""}BETWEEN ${low} AND ${high}`;
+      }
+      case "like": {
+        const colKind = columns[node.columnIndex]?.kind;
+        const lhs = textColumnExpr(node.columnIndex);
+        const pattern = emitValue(node.pattern, colKind, true);
+        const notPrefix = node.negated ? "NOT " : "";
+        if (node.caseInsensitive) {
+          if (dialect === "postgres") {
+            return `${lhs} ${notPrefix}ILIKE ${pattern}`;
+          }
+          return `LOWER(${lhs}) ${notPrefix}LIKE LOWER(${pattern})`;
+        }
+        return `${lhs} ${notPrefix}LIKE ${pattern}`;
+      }
+      case "text_match": {
+        const lhs = textColumnExpr(node.columnIndex);
+        const notPrefix = node.negated ? "NOT " : "";
+        if (node.value.kind === "null") {
+          return dialect === "postgres"
+            ? `${lhs} ${notPrefix}ILIKE NULL`
+            : `LOWER(${lhs}) ${notPrefix}LIKE NULL`;
+        }
+        if (node.value.kind === "column") {
+          const rhs = textColumnExpr(node.value.columnIndex);
+          const concat =
+            node.mode === "contains"
+              ? dialect === "postgres"
+                ? `'%' || ${rhs} || '%'`
+                : `CONCAT('%', ${rhs}, '%')`
+              : node.mode === "starts"
+                ? dialect === "postgres"
+                  ? `${rhs} || '%'`
+                  : `CONCAT(${rhs}, '%')`
+                : dialect === "postgres"
+                  ? `'%' || ${rhs}`
+                  : `CONCAT('%', ${rhs})`;
+          return dialect === "postgres"
+            ? `${lhs} ${notPrefix}ILIKE (${concat})`
+            : `LOWER(${lhs}) ${notPrefix}LIKE LOWER(${concat})`;
+        }
+        const literalText =
+          node.value.kind === "number"
+            ? node.value.raw
+            : node.value.kind === "boolean"
+              ? String(node.value.value)
+              : node.value.value;
+        const { sql, escapeClause } = formatPatternLiteral(literalText, node.mode);
+        if (dialect === "postgres") {
+          return `${lhs} ${notPrefix}ILIKE ${sql}${escapeClause}`;
+        }
+        return `LOWER(${lhs}) ${notPrefix}LIKE ${sql}${escapeClause}`;
+      }
+      case "compare": {
+        const colKind = columns[node.columnIndex]?.kind;
+        const op = node.operator === "==" ? "=" : node.operator === "!=" ? "<>" : node.operator;
+        const rhs = emitValue(node.rhs, colKind);
+        return `${quoteColumn(node.columnIndex)} ${op} ${rhs}`;
+      }
+    }
+  }
+
+  try {
+    return emitNode(ast);
+  } catch (error) {
+    if (error instanceof SqlCompileFallback) return trimmed;
+    return trimmed;
+  }
 }
 
 export function compileFilterExpression(
@@ -491,293 +1097,9 @@ export function compileFilterExpression(
     return { ok: false, error: lexed.error };
   }
 
-  const tokens = lexed.tokens;
-  let pos = 0;
-
-  const peek = (offset = 0) => tokens[pos + offset];
-  const isKeyword = (token: Token | undefined, word: string) =>
-    token?.kind === "ident" && token.value.toUpperCase() === word;
-
-  function parseValue(): ValueOperand {
-    const token = peek();
-    if (!token) throw new Error("Expected a value.");
-    if (token.kind === "string") {
-      pos++;
-      return { kind: "literal", value: token.value };
-    }
-    if (token.kind === "number") {
-      pos++;
-      const numeric = Number(token.value);
-      return {
-        kind: "literal",
-        value: Number.isSafeInteger(numeric) || token.value.includes(".") ? numeric : token.value,
-      };
-    }
-    if (token.kind === "quoted_ident") {
-      pos++;
-      const columnIndex = resolveColumnIndex(columns, token.value);
-      if (columnIndex === -1) throw new Error(`Unknown column "${token.value}".`);
-      return { kind: "column", columnIndex };
-    }
-    if (token.kind === "ident") {
-      pos++;
-      const upper = token.value.toUpperCase();
-      if (upper === "NULL") return { kind: "literal", value: null };
-      if (upper === "TRUE") return { kind: "literal", value: true };
-      if (upper === "FALSE") return { kind: "literal", value: false };
-      const columnIndex = resolveColumnIndex(columns, token.value);
-      if (columnIndex !== -1) return { kind: "column", columnIndex };
-      return { kind: "literal", value: token.value };
-    }
-    throw new Error(`Expected a value near "${token.raw}".`);
-  }
-
-  function parsePredicate(): (row: Cell[]) => boolean {
-    const colToken = peek();
-    if (!colToken || (colToken.kind !== "ident" && colToken.kind !== "quoted_ident")) {
-      throw new Error(
-        colToken ? `Expected a column name near "${colToken.raw}".` : "Expected a column name.",
-      );
-    }
-    pos++;
-    const columnIndex = resolveColumnIndex(columns, colToken.value);
-    if (columnIndex === -1) {
-      throw new Error(`Unknown column "${colToken.value}".`);
-    }
-    const columnKind = columns[columnIndex]?.kind;
-
-    const op = peek();
-    if (!op) {
-      throw new Error(`Expected an operator after "${colToken.value}".`);
-    }
-
-    // IS [NOT] NULL
-    if (isKeyword(op, "IS")) {
-      pos++;
-      let negated = false;
-      if (isKeyword(peek(), "NOT")) {
-        negated = true;
-        pos++;
-      }
-      if (!isKeyword(peek(), "NULL")) {
-        throw new Error('Expected "NULL" after "IS".');
-      }
-      pos++;
-      return (row) => {
-        const isNull = (row[columnIndex] ?? null) === null;
-        return negated ? !isNull : isNull;
-      };
-    }
-
-    // Optional NOT prefix for IN / BETWEEN / LIKE / ILIKE / CONTAINS / STARTS WITH / ENDS WITH
-    let negated = false;
-    if (isKeyword(op, "NOT")) {
-      negated = true;
-      pos++;
-    }
-    const nextOp = peek();
-    if (!nextOp) {
-      throw new Error(`Expected an operator after "${colToken.value}".`);
-    }
-
-    if (isKeyword(nextOp, "IN")) {
-      pos++;
-      if (peek()?.kind !== "lparen") {
-        throw new Error('Expected "(" after "IN".');
-      }
-      pos++;
-      const items: ValueOperand[] = [];
-      if (peek()?.kind === "rparen") {
-        throw new Error("IN (...) requires at least one value.");
-      }
-      while (true) {
-        items.push(parseValue());
-        if (peek()?.kind === "comma") {
-          pos++;
-          continue;
-        }
-        if (peek()?.kind === "rparen") {
-          pos++;
-          break;
-        }
-        throw new Error('Expected "," or ")" in IN list.');
-      }
-      return (row) => {
-        const cell = row[columnIndex] ?? null;
-        if (cell === null) return false;
-        const matched = items.some((item) => {
-          const target = resolveOperand(item, row);
-          if (target === null) return false;
-          return compareValuesForFilter(cell, target, columnKind) === 0;
-        });
-        return negated ? !matched : matched;
-      };
-    }
-
-    if (isKeyword(nextOp, "BETWEEN")) {
-      pos++;
-      const low = parseValue();
-      if (!isKeyword(peek(), "AND")) {
-        throw new Error('Expected "AND" in BETWEEN expression.');
-      }
-      pos++;
-      const high = parseValue();
-      return (row) => {
-        const cell = row[columnIndex] ?? null;
-        if (cell === null) return false;
-        const lowVal = resolveOperand(low, row);
-        const highVal = resolveOperand(high, row);
-        const cmpLow = compareValuesForFilter(cell, lowVal, columnKind);
-        const cmpHigh = compareValuesForFilter(cell, highVal, columnKind);
-        if (cmpLow === null || cmpHigh === null) return false;
-        const matched = cmpLow >= 0 && cmpHigh <= 0;
-        return negated ? !matched : matched;
-      };
-    }
-
-    if (isKeyword(nextOp, "LIKE") || isKeyword(nextOp, "ILIKE")) {
-      const caseInsensitive = nextOp.value.toUpperCase() === "ILIKE";
-      pos++;
-      const rhs = parseValue();
-      const staticRegex =
-        rhs.kind === "literal" && rhs.value !== null
-          ? compileLikePattern(String(rhs.value), caseInsensitive)
-          : null;
-      return (row) => {
-        const cell = row[columnIndex] ?? null;
-        if (cell === null) return false;
-        const regex =
-          staticRegex ??
-          (() => {
-            const val = resolveOperand(rhs, row);
-            return val === null ? null : compileLikePattern(String(val), caseInsensitive);
-          })();
-        if (!regex) return false;
-        const matched = regex.test(String(cell));
-        return negated ? !matched : matched;
-      };
-    }
-
-    if (isKeyword(nextOp, "CONTAINS")) {
-      pos++;
-      const rhs = parseValue();
-      return (row) => {
-        const cell = row[columnIndex] ?? null;
-        const target = resolveOperand(rhs, row);
-        if (cell === null || target === null) return false;
-        const matched = String(cell)
-          .toLocaleLowerCase()
-          .includes(String(target).toLocaleLowerCase());
-        return negated ? !matched : matched;
-      };
-    }
-
-    if (isKeyword(nextOp, "STARTS") || isKeyword(nextOp, "ENDS")) {
-      const starts = nextOp.value.toUpperCase() === "STARTS";
-      pos++;
-      if (!isKeyword(peek(), "WITH")) {
-        throw new Error(`Expected "WITH" after "${nextOp.value.toUpperCase()}".`);
-      }
-      pos++;
-      const rhs = parseValue();
-      return (row) => {
-        const cell = row[columnIndex] ?? null;
-        const target = resolveOperand(rhs, row);
-        if (cell === null || target === null) return false;
-        const lhs = String(cell).toLocaleLowerCase();
-        const needle = String(target).toLocaleLowerCase();
-        const matched = starts ? lhs.startsWith(needle) : lhs.endsWith(needle);
-        return negated ? !matched : matched;
-      };
-    }
-
-    if (negated) {
-      throw new Error(`Unexpected "NOT" before "${nextOp.raw}".`);
-    }
-
-    if (nextOp.kind === "operator") {
-      const operator = nextOp.value;
-      pos++;
-      const rhs = parseValue();
-      return (row) => {
-        const cell = row[columnIndex] ?? null;
-        const target = resolveOperand(rhs, row);
-        const cmp = compareValuesForFilter(cell, target, columnKind);
-        if (cmp === null) return false;
-        switch (operator) {
-          case "=":
-          case "==":
-            return cmp === 0;
-          case "!=":
-          case "<>":
-            return cmp !== 0;
-          case "<":
-            return cmp < 0;
-          case "<=":
-            return cmp <= 0;
-          case ">":
-            return cmp > 0;
-          case ">=":
-            return cmp >= 0;
-          default:
-            return false;
-        }
-      };
-    }
-
-    throw new Error(`Unsupported operator "${nextOp.raw}".`);
-  }
-
-  function parsePrimary(): (row: Cell[]) => boolean {
-    if (peek()?.kind === "lparen") {
-      pos++;
-      const inner = parseOr();
-      if (peek()?.kind !== "rparen") {
-        throw new Error('Expected closing ")".');
-      }
-      pos++;
-      return inner;
-    }
-    return parsePredicate();
-  }
-
-  function parseNot(): (row: Cell[]) => boolean {
-    if (isKeyword(peek(), "NOT")) {
-      pos++;
-      const operand = parseNot();
-      return (row) => !operand(row);
-    }
-    return parsePrimary();
-  }
-
-  function parseAnd(): (row: Cell[]) => boolean {
-    let left = parseNot();
-    while (isKeyword(peek(), "AND")) {
-      pos++;
-      const right = parseNot();
-      const prev = left;
-      left = (row) => prev(row) && right(row);
-    }
-    return left;
-  }
-
-  function parseOr(): (row: Cell[]) => boolean {
-    let left = parseAnd();
-    while (isKeyword(peek(), "OR")) {
-      pos++;
-      const right = parseAnd();
-      const prev = left;
-      left = (row) => prev(row) || right(row);
-    }
-    return left;
-  }
-
   try {
-    const predicate = parseOr();
-    const leftover = peek();
-    if (leftover) {
-      return { ok: false, error: `Unexpected token "${leftover.raw}".` };
-    }
+    const ast = parseFilterAst(lexed.tokens, columns);
+    const predicate = buildPredicateFromAst(ast, columns);
     return { ok: true, mode: "expression", predicate };
   } catch (error) {
     return {
@@ -957,7 +1279,7 @@ function detectAutocompleteContext(
       last.kind !== "rparen" &&
       last.kind !== "comma"
     ) {
-      if (last.kind === "string" && !last.unterminated) {
+      if ((last.kind === "string" || last.kind === "quoted_ident") && !last.unterminated) {
         return { kind: "none" };
       }
       active = last;
@@ -966,7 +1288,11 @@ function detectAutocompleteContext(
   }
 
   const replaceStart = active ? active.start : cursor;
-  const query = active ? (active.kind === "string" ? active.value : active.raw) : "";
+  const query = active
+    ? active.kind === "string" || active.kind === "quoted_ident"
+      ? active.value
+      : active.raw
+    : "";
   const prev = prevTokens.at(-1);
   const prev2 = prevTokens.at(-2);
   const upperPrev = prev?.kind === "ident" ? prev.value.toUpperCase() : "";
@@ -1118,6 +1444,7 @@ export function getFilterSuggestions(
   columns: readonly ColumnMeta[],
   rows: readonly Cell[][],
   valueCache?: Map<number, DistinctValueEntry[]>,
+  dialect?: FilterDialect,
 ): FilterSuggestion[] {
   if (columns.length === 0) return [];
 
@@ -1144,7 +1471,7 @@ export function getFilterSuggestions(
         rank,
         suggestion: {
           label: column.name,
-          insertText: `${formatColumnIdentifier(column.name)} `,
+          insertText: `${formatColumnIdentifier(column.name, dialect)} `,
           kind: "column",
           detail: column.db_type,
           replaceStart: ctx.replaceStart,
@@ -1222,7 +1549,7 @@ export function getFilterSuggestions(
           rank,
           suggestion: {
             label: display,
-            insertText: formatFilterLiteral(entry.value, col?.kind),
+            insertText: formatFilterLiteral(entry.value, col?.kind, dialect),
             kind: "value",
             detail: entry.count === 1 ? "1 row" : `${entry.count} rows`,
             replaceStart: ctx.replaceStart,
@@ -1233,17 +1560,19 @@ export function getFilterSuggestions(
     }
 
     if (col?.kind === "bool") {
-      for (const boolLiteral of ["true", "false"]) {
-        const rank = rankMatch(boolLiteral, cleanQuery);
+      for (const boolValue of [true, false]) {
+        const boolLabel = boolValue ? "true" : "false";
+        const insertText = formatFilterLiteral(boolValue, "bool", dialect);
+        const rank = rankMatch(boolLabel, cleanQuery) ?? rankMatch(insertText, cleanQuery);
         if (
           rank !== null &&
-          !matches.some((item) => item.suggestion.insertText.toLowerCase() === boolLiteral)
+          !matches.some((item) => item.suggestion.insertText.toLowerCase() === insertText)
         ) {
           matches.push({
             rank,
             suggestion: {
-              label: boolLiteral,
-              insertText: boolLiteral,
+              label: boolLabel,
+              insertText,
               kind: "keyword",
               detail: "boolean",
               replaceStart: ctx.replaceStart,
@@ -1265,7 +1594,7 @@ export function getFilterSuggestions(
           rank: rank + 3,
           suggestion: {
             label: other.name,
-            insertText: formatColumnIdentifier(other.name),
+            insertText: formatColumnIdentifier(other.name, dialect),
             kind: "column",
             detail: other.db_type,
             replaceStart: ctx.replaceStart,

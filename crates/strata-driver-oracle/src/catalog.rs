@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use strata_core::{
-    CoreError, Definition, Introspector, Object, ObjectKind, ObjectPage, ObjectReference, Result,
-    TableColumn, TableDetail,
+    CoreError, Definition, Introspector, Object, ObjectKind, ObjectKindCount, ObjectPage,
+    ObjectReference, Result, TableColumn, TableDetail,
 };
 use strata_sql::{Dialect, relation_at};
 use tokio::sync::Mutex;
@@ -85,6 +85,26 @@ impl Introspector for Catalog {
         };
         let rows = self.query(&sql, &[json!(schema)]).await?;
         Ok(dedup_objects(rows))
+    }
+
+    async fn object_counts(&self, schema: &str) -> Result<Vec<ObjectKindCount>> {
+        let rows = self.query(object_counts_sql(), &[json!(schema)]).await?;
+        let mut counts = BTreeMap::new();
+        for row in rows {
+            let Some(kind) = parse_oracle_object_kind(&text(&row, 0)) else {
+                continue;
+            };
+            let Some(count) = number(&row, 1).and_then(|value| usize::try_from(value).ok()) else {
+                continue;
+            };
+            if count > 0 {
+                *counts.entry(kind).or_insert(0) += count;
+            }
+        }
+        Ok(counts
+            .into_iter()
+            .map(|(kind, count)| ObjectKindCount { kind, count })
+            .collect())
     }
 
     async fn objects_page(
@@ -503,6 +523,27 @@ fn like_pattern(search: &str) -> String {
     pattern
 }
 
+fn object_counts_sql() -> &'static str {
+    "SELECT object_type, COUNT(*) \
+     FROM ( \
+       SELECT object_name, \
+              MIN(object_type) KEEP (DENSE_RANK FIRST ORDER BY CASE WHEN object_type = 'MATERIALIZED VIEW' THEN 0 ELSE 1 END) AS object_type \
+       FROM all_objects \
+       WHERE owner = :1 \
+         AND object_type IN ('TABLE','VIEW','MATERIALIZED VIEW','FUNCTION','PROCEDURE','SEQUENCE','SYNONYM') \
+       GROUP BY object_name \
+     ) \
+     GROUP BY object_type"
+}
+
+fn mv_container_exclusion(kinds: &[ObjectKind]) -> &'static str {
+    if kinds.is_empty() || kinds.contains(&ObjectKind::Table) {
+        " AND NOT (o.object_type = 'TABLE' AND EXISTS (SELECT 1 FROM all_mviews mv WHERE mv.owner = o.owner AND mv.mview_name = o.object_name))"
+    } else {
+        ""
+    }
+}
+
 fn objects_list_sql(kinds: &[ObjectKind]) -> Option<String> {
     let types = oracle_object_types(kinds);
     if types.is_empty() {
@@ -511,9 +552,10 @@ fn objects_list_sql(kinds: &[ObjectKind]) -> Option<String> {
     Some(format!(
         "SELECT o.object_id, o.owner, o.object_name, o.object_type \
          FROM all_objects o \
-         WHERE o.owner = :1 AND o.object_type IN ({}) \
+         WHERE o.owner = :1 AND o.object_type IN ({}){} \
          ORDER BY o.object_name, CASE WHEN o.object_type = 'MATERIALIZED VIEW' THEN 0 ELSE 1 END",
-        types.join(",")
+        types.join(","),
+        mv_container_exclusion(kinds)
     ))
 }
 
@@ -549,7 +591,7 @@ fn objects_page_query(
            FROM ( \
              SELECT o.object_id, o.owner, o.object_name, o.object_type \
              FROM all_objects o \
-             WHERE o.owner = :1 AND o.object_type IN ({}){} \
+             WHERE o.owner = :1 AND o.object_type IN ({}){}{} \
              ORDER BY o.object_name, CASE WHEN o.object_type = 'MATERIALIZED VIEW' THEN 0 ELSE 1 END, o.object_id \
            ) inner_q \
            WHERE ROWNUM <= {} \
@@ -557,6 +599,7 @@ fn objects_page_query(
          WHERE rn > {} \
          ORDER BY rn",
         types.join(","),
+        mv_container_exclusion(kinds),
         search_clause,
         end_bind,
         start_bind
@@ -582,17 +625,21 @@ fn columns_for_objects_query(schema: &str, table_names: &[&str]) -> (String, Vec
     (sql, bind)
 }
 
+fn parse_oracle_object_kind(raw: &str) -> Option<ObjectKind> {
+    match raw {
+        "TABLE" => Some(ObjectKind::Table),
+        "VIEW" => Some(ObjectKind::View),
+        "MATERIALIZED VIEW" => Some(ObjectKind::MaterializedView),
+        "FUNCTION" => Some(ObjectKind::Function),
+        "PROCEDURE" => Some(ObjectKind::Procedure),
+        "SEQUENCE" => Some(ObjectKind::Sequence),
+        "SYNONYM" => Some(ObjectKind::Synonym),
+        _ => None,
+    }
+}
+
 fn object(row: &[Value]) -> Option<Object> {
-    let kind = match text(row, 3).as_str() {
-        "TABLE" => ObjectKind::Table,
-        "VIEW" => ObjectKind::View,
-        "MATERIALIZED VIEW" => ObjectKind::MaterializedView,
-        "FUNCTION" => ObjectKind::Function,
-        "PROCEDURE" => ObjectKind::Procedure,
-        "SEQUENCE" => ObjectKind::Sequence,
-        "SYNONYM" => ObjectKind::Synonym,
-        _ => return None,
-    };
+    let kind = parse_oracle_object_kind(text(row, 3).as_str())?;
     Some(Object {
         oid: number(row, 0)?.try_into().ok()?,
         schema: text(row, 1),
@@ -634,6 +681,16 @@ mod tests {
     }
 
     #[test]
+    fn object_counts_sql_aggregates_deduped_objects_without_heavy_joins() {
+        let sql = object_counts_sql();
+        assert!(sql.contains("FROM all_objects"));
+        assert!(sql.contains("GROUP BY object_name"));
+        assert!(sql.contains("GROUP BY object_type"));
+        assert!(!sql.contains("all_tables"));
+        assert!(!sql.contains("all_tab_comments"));
+    }
+
+    #[test]
     fn objects_page_query_uses_rownum_without_heavy_joins() {
         let (sql, bind) =
             objects_page_query("SFBZ0800", &[ObjectKind::Table], None, 0, 100).unwrap();
@@ -641,9 +698,16 @@ mod tests {
         assert!(!sql.contains("all_tables"));
         assert!(!sql.contains("all_tab_comments"));
         assert!(sql.contains("o.object_type IN ('TABLE')"));
+        assert!(sql.contains("all_mviews"));
         assert!(sql.contains("WHERE ROWNUM <= :2"));
         assert!(sql.contains("WHERE rn > :3"));
         assert_eq!(bind, vec![json!("SFBZ0800"), json!(101), json!(0)]);
+
+        let (view_sql, view_bind) =
+            objects_page_query("SFBZ0800", &[ObjectKind::View], None, 0, 100).unwrap();
+        assert!(view_sql.contains("o.object_type IN ('VIEW')"));
+        assert!(!view_sql.contains("all_mviews"));
+        assert_eq!(view_bind, vec![json!("SFBZ0800"), json!(101), json!(0)]);
 
         let (filtered_sql, filtered_bind) = objects_page_query(
             "SFBZ0800",

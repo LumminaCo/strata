@@ -204,7 +204,7 @@ describe("sidebar context menu rendering", () => {
         active="conn-1"
         revision={0}
         scope={async () => ({ connectionId: "conn-1", database: "pagila", password: null })}
-        onSnapshot={() => {}}
+        onObjects={() => {}}
         onEntries={() => {}}
         openSql={() => {}}
         onRefresh={() => {}}

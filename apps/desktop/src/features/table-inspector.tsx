@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, ArrowUpRight } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUpRight, Check, Copy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { DatabaseIcon } from "@/components/database-icon";
@@ -191,21 +191,7 @@ export function TableInspector({ subject, theme, full, credentials, promote, onV
           </div>
         );
       case "DDL":
-        return (
-          <div className="object-details">
-            <pre tabIndex={0}>{details.ddl}</pre>
-            <Button
-              variant="outline"
-              onClick={() =>
-                void navigator.clipboard
-                  .writeText(details.ddl)
-                  .catch((error: unknown) => setError(errorMessage(error)))
-              }
-            >
-              Copy DDL
-            </Button>
-          </div>
-        );
+        return <ObjectDdlView ddl={details.ddl} onError={setError} />;
       case "Info":
         return (
           <dl className="object-info">
@@ -317,6 +303,52 @@ export function TableInspector({ subject, theme, full, credentials, promote, onV
         )}
         <div className="table-inspector-content">{content}</div>
       </div>
+    </div>
+  );
+}
+
+export function ObjectDdlView({
+  ddl,
+  onError,
+}: {
+  ddl: string;
+  onError: (message: string) => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  useEffect(() => {
+    setCopied(false);
+    clearTimeout(timer.current);
+    return () => clearTimeout(timer.current);
+  }, [ddl]);
+
+  function copy() {
+    void navigator.clipboard.writeText(ddl).then(
+      () => {
+        setCopied(true);
+        clearTimeout(timer.current);
+        timer.current = setTimeout(() => setCopied(false), 2000);
+      },
+      (error: unknown) => onError(errorMessage(error)),
+    );
+  }
+
+  return (
+    <div className="object-details object-ddl">
+      <div className="object-ddl-actions">
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          className="object-ddl-copy"
+          onClick={copy}
+        >
+          {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+          {copied ? "Copied" : "Copy DDL"}
+        </Button>
+      </div>
+      <pre tabIndex={0}>{ddl}</pre>
     </div>
   );
 }

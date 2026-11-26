@@ -5,7 +5,10 @@ import type { Cell, ColumnMeta } from "@/ipc/bindings/protocol";
 import {
   applyFilterSuggestion,
   compileFilterExpression,
+  compileSqlWhereExpression,
   computeRowIndices,
+  formatColumnIdentifier,
+  formatFilterLiteral,
   formatSortHeader,
   getFilterSuggestions,
   moveSortRule,
@@ -255,5 +258,239 @@ describe("filter autocomplete", () => {
 
     // 10. Closed string literal -> no redundant value suggestions until user types space
     expect(getFilterSuggestions("department = 'Sales'", 20, columns, rows)).toEqual([]);
+
+    // 11. Column suggestions always quote identifiers for SQL safety (double quotes by default, brackets for SQL Server)
+    expect(initial[1]?.insertText).toBe('"department" ');
+    const sqlServerInitial = getFilterSuggestions("", 0, columns, rows, undefined, "sqlserver");
+    expect(sqlServerInitial[1]?.insertText).toBe("[department] ");
+
+    // 12. Partial quoted column replaces from opening quote without double-quoting
+    const partialQuotedCol = getFilterSuggestions('"dep', 4, columns, rows);
+    expect(partialQuotedCol[0]?.label).toBe("department");
+    expect(applyFilterSuggestion('"dep', partialQuotedCol[0]!)).toEqual({
+      text: '"department" ',
+      cursor: 13,
+    });
+
+    // 13. Closed quoted column suppresses redundant suggestions until user types space
+    expect(getFilterSuggestions('"department"', 12, columns, rows)).toEqual([]);
+  });
+});
+
+describe("SQL WHERE compilation and identifier/value quoting", () => {
+  const sqlColumns: ColumnMeta[] = [
+    ...columns,
+    {
+      name: "Email",
+      db_type: "varchar",
+      kind: "text",
+      nullable: true,
+      table_oid: null,
+      column_id: null,
+    },
+    {
+      name: "DocumentCode",
+      db_type: "varchar",
+      kind: "text",
+      nullable: true,
+      table_oid: null,
+      column_id: null,
+    },
+    {
+      name: "ExternalId",
+      db_type: "uuid",
+      kind: "uuid",
+      nullable: true,
+      table_oid: null,
+      column_id: null,
+    },
+    {
+      name: "CreatedAt",
+      db_type: "timestamptz",
+      kind: "timestamptz",
+      nullable: false,
+      table_oid: null,
+      column_id: null,
+    },
+    {
+      name: "UpdatedAt",
+      db_type: "timestamptz",
+      kind: "timestamptz",
+      nullable: false,
+      table_oid: null,
+      column_id: null,
+    },
+    {
+      name: "order",
+      db_type: "int4",
+      kind: "int",
+      nullable: false,
+      table_oid: null,
+      column_id: null,
+    },
+  ];
+
+  test("quotes column identifiers and literal values consistently across dialects", () => {
+    expect(formatColumnIdentifier("FirstName")).toBe('"FirstName"');
+    expect(formatColumnIdentifier('a"b', "postgres")).toBe('"a""b"');
+    expect(formatColumnIdentifier("FirstName", "oracle")).toBe('"FirstName"');
+    expect(formatColumnIdentifier("Order]Items", "sqlserver")).toBe("[Order]]Items]");
+
+    expect(formatFilterLiteral("Alice", "text")).toBe("'Alice'");
+    expect(formatFilterLiteral("O'Brien", "text")).toBe("'O''Brien'");
+    expect(formatFilterLiteral("00123", "text")).toBe("'00123'");
+    expect(formatFilterLiteral(123, "text")).toBe("'123'");
+    expect(formatFilterLiteral(123, "int")).toBe("123");
+    expect(formatFilterLiteral("120.50", "decimal")).toBe("120.50");
+    expect(formatFilterLiteral(true, "bool", "postgres")).toBe("true");
+    expect(formatFilterLiteral(true, "bool", "sqlserver")).toBe("1");
+    expect(formatFilterLiteral(false, "bool", "sqlserver")).toBe("0");
+    expect(formatFilterLiteral(null, "text")).toBe("NULL");
+  });
+
+  test("quotes unquoted column names with double quotes and string values with single quotes", () => {
+    expect(compileSqlWhereExpression("department = Engineering", sqlColumns, "postgres")).toBe(
+      "\"department\" = 'Engineering'",
+    );
+    expect(compileSqlWhereExpression("email = alice@example.com", sqlColumns, "postgres")).toBe(
+      "\"Email\" = 'alice@example.com'",
+    );
+    expect(
+      compileSqlWhereExpression(
+        "externalid = 550e8400-e29b-41d4-a716-446655440000",
+        sqlColumns,
+        "postgres",
+      ),
+    ).toBe("\"ExternalId\" = '550e8400-e29b-41d4-a716-446655440000'");
+    expect(
+      compileSqlWhereExpression("createdat >= 2026-01-15T10:30:00Z", sqlColumns, "postgres"),
+    ).toBe("\"CreatedAt\" >= '2026-01-15T10:30:00Z'");
+    expect(compileSqlWhereExpression("DocumentCode = 00123", sqlColumns, "postgres")).toBe(
+      "\"DocumentCode\" = '00123'",
+    );
+    expect(compileSqlWhereExpression("id = 42 AND order > 5", sqlColumns, "postgres")).toBe(
+      '"id" = 42 AND "order" > 5',
+    );
+    expect(compileSqlWhereExpression("UpdatedAt > CreatedAt", sqlColumns, "postgres")).toBe(
+      '"UpdatedAt" > "CreatedAt"',
+    );
+    expect(
+      compileSqlWhereExpression("department IN (Engineering, Sales)", sqlColumns, "postgres"),
+    ).toBe("\"department\" IN ('Engineering', 'Sales')");
+    expect(
+      compileSqlWhereExpression(
+        "CreatedAt BETWEEN 2026-01-01 AND 2026-12-31",
+        sqlColumns,
+        "postgres",
+      ),
+    ).toBe("\"CreatedAt\" BETWEEN '2026-01-01' AND '2026-12-31'");
+    expect(compileSqlWhereExpression("name LIKE A%", sqlColumns, "postgres")).toBe(
+      "\"name\" LIKE 'A%'",
+    );
+    expect(compileSqlWhereExpression("department == Engineering", sqlColumns, "postgres")).toBe(
+      "\"department\" = 'Engineering'",
+    );
+    expect(compileSqlWhereExpression("department != Sales", sqlColumns, "postgres")).toBe(
+      "\"department\" <> 'Sales'",
+    );
+    expect(compileSqlWhereExpression("department IS NOT NULL", sqlColumns, "postgres")).toBe(
+      '"department" IS NOT NULL',
+    );
+  });
+
+  test("translates helper operators and booleans per SQL dialect and escapes LIKE wildcards", () => {
+    expect(compileSqlWhereExpression("name CONTAINS 50%", sqlColumns, "postgres")).toBe(
+      "\"name\" ILIKE '%50\\%%' ESCAPE '\\'",
+    );
+    expect(compileSqlWhereExpression("id STARTS WITH 42", sqlColumns, "postgres")).toBe(
+      "CAST(\"id\" AS TEXT) ILIKE '42%'",
+    );
+    expect(compileSqlWhereExpression("name ENDS WITH '[a]'", sqlColumns, "sqlserver")).toBe(
+      "LOWER([name]) LIKE '%\\[a]' ESCAPE '\\'",
+    );
+    expect(compileSqlWhereExpression("name ENDS WITH [First Name]", sqlColumns, "sqlserver")).toBe(
+      "LOWER([name]) LIKE LOWER(CONCAT('%', [First Name]))",
+    );
+    expect(compileSqlWhereExpression("name ILIKE A%", sqlColumns, "oracle")).toBe(
+      "LOWER(\"name\") LIKE LOWER('A%')",
+    );
+    expect(compileSqlWhereExpression("active = true", sqlColumns, "postgres")).toBe(
+      '"active" = true',
+    );
+    expect(compileSqlWhereExpression("active = 1", sqlColumns, "postgres")).toBe('"active" = true');
+    expect(compileSqlWhereExpression("active = true", sqlColumns, "sqlserver")).toBe(
+      "[active] = 1",
+    );
+    expect(compileSqlWhereExpression("NOT active", sqlColumns, "sqlserver")).toBe("[active] = 0");
+    expect(compileSqlWhereExpression("active", sqlColumns, "postgres")).toBe('"active"');
+    expect(compileSqlWhereExpression("department = true", sqlColumns, "postgres")).toBe(
+      "\"department\" = 'true'",
+    );
+  });
+
+  test("preserves native SQL expressions and supports bare values in local filter evaluation", () => {
+    expect(compileSqlWhereExpression("LOWER(\"name\") = 'alice'", sqlColumns, "postgres")).toBe(
+      "LOWER(\"name\") = 'alice'",
+    );
+    expect(compileSqlWhereExpression("salary - 10 > 80", sqlColumns, "postgres")).toBe(
+      "salary - 10 > 80",
+    );
+    expect(compileSqlWhereExpression("ROWNUM <= 10", sqlColumns, "oracle")).toBe("ROWNUM <= 10");
+
+    const localRows: Cell[][] = [
+      [
+        1,
+        "Engineering",
+        "Alice",
+        "120",
+        true,
+        "Alice",
+        "alice@example.com",
+        "00123",
+        "550e8400-e29b-41d4-a716-446655440000",
+        "2026-01-15",
+        "2026-01-16",
+        1,
+      ],
+      [
+        2,
+        "Sales",
+        "Bob",
+        "95",
+        false,
+        "Bob",
+        "bob@example.com",
+        "00456",
+        "660e8400-e29b-41d4-a716-446655440001",
+        "2025-12-01",
+        "2025-12-02",
+        2,
+      ],
+    ];
+    const emailFilter = compileFilterExpression("email = alice@example.com", sqlColumns);
+    expect(emailFilter.ok).toBe(true);
+    if (emailFilter.ok && emailFilter.mode === "expression") {
+      expect(localRows.filter((row) => emailFilter.predicate(row)).map((row) => row[0])).toEqual([
+        1,
+      ]);
+    }
+
+    const uuidFilter = compileFilterExpression(
+      "externalid = 550e8400-e29b-41d4-a716-446655440000",
+      sqlColumns,
+    );
+    expect(uuidFilter.ok).toBe(true);
+    if (uuidFilter.ok && uuidFilter.mode === "expression") {
+      expect(localRows.filter((row) => uuidFilter.predicate(row)).map((row) => row[0])).toEqual([
+        1,
+      ]);
+    }
+
+    const emailSuggestions = getFilterSuggestions("email = alice@", 14, sqlColumns, localRows);
+    expect(emailSuggestions[0]?.insertText).toBe("'alice@example.com'");
+    expect(applyFilterSuggestion("email = alice@", emailSuggestions[0]!)).toEqual({
+      text: "email = 'alice@example.com'",
+      cursor: 27,
+    });
   });
 });

@@ -10,7 +10,7 @@ import {
 } from "react";
 
 import { Input } from "@/components/ui/input";
-import type { Cell, ColumnMeta } from "@/ipc/bindings/protocol";
+import type { Cell, ColumnMeta, Connection } from "@/ipc/bindings/protocol";
 
 import {
   applyFilterSuggestion,
@@ -31,6 +31,7 @@ interface ResultFilterInputProps {
   onEscape?: () => void;
   columns: readonly ColumnMeta[];
   rows: readonly Cell[][];
+  dialect?: Connection["kind"];
   placeholder?: string;
   ariaLabel?: string;
   invalid?: boolean;
@@ -61,6 +62,7 @@ export function ResultFilterInput({
   onEscape,
   columns,
   rows,
+  dialect,
   placeholder = "Filter results (e.g. column = 'value' AND …)",
   ariaLabel = "Filter results",
   invalid = false,
@@ -83,8 +85,9 @@ export function ResultFilterInput({
 
   const clampedCursor = Math.min(cursor, value.length);
   const suggestions = useMemo(
-    () => (open ? getFilterSuggestions(value, clampedCursor, columns, rows, valueCache) : []),
-    [open, value, clampedCursor, columns, rows, valueCache],
+    () =>
+      open ? getFilterSuggestions(value, clampedCursor, columns, rows, valueCache, dialect) : [],
+    [open, value, clampedCursor, columns, rows, valueCache, dialect],
   );
 
   const boundedActiveIndex =

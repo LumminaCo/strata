@@ -16,11 +16,31 @@ import { dispatch, errorMessage, runQuery } from "@/ipc/client";
 
 import type { CatalogEntry } from "./catalog-explorer";
 import { ResultFilterInput } from "./result-filter-input";
+import { compileSqlWhereExpression } from "./result-query";
 
 export function quoteName(name: string, kind: CatalogEntry["connection"]["kind"]) {
   return kind === "sqlserver"
     ? `[${name.replaceAll("]", "]]")}]`
     : `"${name.replaceAll('"', '""')}"`;
+}
+
+export function buildTableDataQuery(options: {
+  table: string;
+  kind: CatalogEntry["connection"]["kind"];
+  columns: readonly ColumnMeta[];
+  filter?: string;
+  order?: string;
+  countOnly?: boolean;
+}): string {
+  const compiledFilter = options.filter
+    ? compileSqlWhereExpression(options.filter, options.columns, options.kind)
+    : "";
+  const predicate = compiledFilter ? ` WHERE (${compiledFilter})` : "";
+  if (options.countOnly) {
+    return `SELECT COUNT(*) FROM ${options.table}${predicate}`;
+  }
+  const ordering = options.order ? ` ORDER BY ${quoteName(options.order, options.kind)}` : "";
+  return `SELECT * FROM ${options.table}${predicate}${ordering}`;
 }
 
 function tableName(entry: CatalogEntry) {
@@ -41,6 +61,7 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
   const [order, setOrder] = useState("");
   const [applied, setApplied] = useState({ filter: "", order: "", version: 0 });
   const [result, setResult] = useState<ResultSet>();
+  const [knownColumns, setKnownColumns] = useState<ColumnMeta[]>([]);
   const [busy, setBusy] = useState(true);
   const [fetching, setFetching] = useState(false);
   const [error, setError] = useState("");
@@ -50,10 +71,16 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
   const session = useRef<string | undefined>(undefined);
   const running = useRef(false);
   const lifetime = useRef<AbortController | null>(null);
+  const columnsRef = useRef<ColumnMeta[]>([]);
   const latest = useRef(credentials);
   latest.current = credentials;
   const name = tableName(entry);
   const kind = entry.connection.kind;
+
+  useEffect(() => {
+    columnsRef.current = [];
+    setKnownColumns([]);
+  }, [name, entry.database, entry.connection.id]);
 
   useEffect(() => {
     const lifetime = new AbortController();
@@ -75,9 +102,13 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
           return;
         }
         session.current = id;
-        const predicate = applied.filter ? ` WHERE (${applied.filter})` : "";
-        const ordering = applied.order ? ` ORDER BY ${quoteName(applied.order, kind)}` : "";
-        const text = `SELECT * FROM ${name}${predicate}${ordering}`;
+        const text = buildTableDataQuery({
+          table: name,
+          kind,
+          columns: columnsRef.current,
+          filter: applied.filter,
+          order: applied.order,
+        });
         let cursor: string | undefined;
         await loadResultGrid();
         if (lifetime.signal.aborted) return;
@@ -95,6 +126,8 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
             switch (event.type) {
               case "resultStart":
                 cursor = event.cursorId;
+                columnsRef.current = event.columns;
+                setKnownColumns(event.columns);
                 setResult({
                   id: cursor,
                   columns: event.columns,
@@ -183,8 +216,13 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
     try {
       const scope = await latest.current();
       id = (await dispatch("open_inspection_session", { scope })).id;
-      const predicate = applied.filter ? ` WHERE (${applied.filter})` : "";
-      const text = `SELECT COUNT(*) FROM ${name}${predicate}`;
+      const text = buildTableDataQuery({
+        table: name,
+        kind,
+        columns: columnsRef.current,
+        filter: applied.filter,
+        countOnly: true,
+      });
       await runQuery(
         {
           runId: crypto.randomUUID(),
@@ -220,6 +258,8 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
     }
   }
 
+  const availableColumns = result?.columns ?? knownColumns;
+
   return (
     <div className="table-data">
       <form
@@ -234,8 +274,9 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
           ariaLabel="WHERE expression"
           placeholder="WHERE expression"
           value={filter}
-          columns={result?.columns ?? []}
+          columns={availableColumns}
           rows={result?.rows ?? []}
+          dialect={kind}
           onChange={setFilter}
           onSubmit={() => {
             setApplied((state) => ({ filter: filter.trim(), order, version: state.version + 1 }));
@@ -248,7 +289,7 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
           onChange={(event) => setOrder(event.target.value)}
         >
           <NativeSelectOption value="">Order by</NativeSelectOption>
-          {result?.columns.map((column) => (
+          {availableColumns.map((column) => (
             <NativeSelectOption value={column.name} key={column.name}>
               {column.name}
             </NativeSelectOption>

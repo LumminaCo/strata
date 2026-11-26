@@ -53,7 +53,9 @@ export interface CatalogNode {
   columns?: string[];
   objectKind?: CatalogObject["kind"];
   schemaKey?: string;
+  groupKey?: string;
   position?: "top" | "bottom";
+  totalCount?: number;
   countLabel?: string;
   loading?: boolean;
   error?: string;

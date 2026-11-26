@@ -4,6 +4,7 @@ export type Cell = null | boolean | number | string;
 export type ColumnMeta = { name: string; db_type: string; kind: string; nullable: boolean | null; table_oid: number | null; column_id: number | null; foreign_key?: ForeignKeyRef | null };
 export type ForeignKeyRef = { schema: string, table: string, column: string, };
 export type ObjectKind = "table" | "view" | "materialized_view" | "foreign_table" | "function" | "procedure" | "sequence" | "synonym";
+export type ObjectKindCount = { kind: ObjectKind, count: number, };
 export type Object = { oid: number, schema: string, name: string, kind: ObjectKind, rows: number | null, comment: string | null, };
 export type ObjectPage = { objects: Array<Object>, hasMore: boolean, };
 export type ObjectReference = { schema: string, name: string, };

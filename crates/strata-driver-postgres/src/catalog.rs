@@ -1,10 +1,12 @@
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
 use deadpool_postgres::{Pool, PoolError};
 use strata_core::{
-    CoreError, Definition, ForeignKeyRef, Introspector, Object, ObjectKind, ObjectReference,
-    Result, TableColumn, TableDetail, TableForeignKey,
+    CoreError, Definition, ForeignKeyRef, Introspector, Object, ObjectKind, ObjectKindCount,
+    ObjectPage, ObjectReference, Result, TableColumn, TableDetail, TableForeignKey,
 };
-use tokio_postgres::Row;
+use tokio_postgres::{Row, types::ToSql};
 
 use crate::{connection_error, query_error};
 
@@ -59,6 +61,63 @@ impl Introspector for Catalog {
             .into_iter()
             .filter(|object| kinds.is_empty() || kinds.contains(&object.kind))
             .collect())
+    }
+
+    async fn object_counts(&self, schema: &str) -> Result<Vec<ObjectKindCount>> {
+        let client = self.client().await?;
+        let rows = client
+            .query(include_str!("queries/object_counts.sql"), &[&schema])
+            .await
+            .map_err(query_error)?;
+        let mut counts = BTreeMap::new();
+        for row in rows {
+            let raw_kind: String = row.try_get(0).map_err(query_error)?;
+            let raw_count: i64 = row.try_get(1).map_err(query_error)?;
+            let Some(kind) = parse_count_kind(&raw_kind) else {
+                continue;
+            };
+            if let Ok(count) = usize::try_from(raw_count)
+                && count > 0
+            {
+                *counts.entry(kind).or_insert(0) += count;
+            }
+        }
+        Ok(counts
+            .into_iter()
+            .map(|(kind, count)| ObjectKindCount { kind, count })
+            .collect())
+    }
+
+    async fn objects_page(
+        &self,
+        schema: &str,
+        kinds: &[ObjectKind],
+        search: Option<&str>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ObjectPage> {
+        if limit == 0 {
+            return Ok(ObjectPage::default());
+        }
+        let search = search.map(str::trim).filter(|value| !value.is_empty());
+        let Some(sql) = objects_page_sql(kinds, search.is_some()) else {
+            return Ok(ObjectPage::default());
+        };
+        let client = self.client().await?;
+        let limit_plus_one = limit.saturating_add(1) as i64;
+        let offset_i64 = offset as i64;
+        let pattern = search.map(like_pattern);
+        let mut params: Vec<&(dyn ToSql + Sync)> = vec![&schema];
+        if let Some(pattern) = &pattern {
+            params.push(pattern);
+        }
+        params.push(&limit_plus_one);
+        params.push(&offset_i64);
+        let rows = client.query(&sql, &params).await.map_err(query_error)?;
+        let mut objects = rows.iter().map(object).collect::<Result<Vec<_>>>()?;
+        let has_more = objects.len() > limit;
+        objects.truncate(limit);
+        Ok(ObjectPage { objects, has_more })
     }
 
     async fn column_names(
@@ -263,6 +322,130 @@ impl Introspector for Catalog {
     }
 }
 
+fn parse_count_kind(raw: &str) -> Option<ObjectKind> {
+    match raw {
+        "table" => Some(ObjectKind::Table),
+        "view" => Some(ObjectKind::View),
+        "materialized_view" => Some(ObjectKind::MaterializedView),
+        "foreign_table" => Some(ObjectKind::ForeignTable),
+        "sequence" => Some(ObjectKind::Sequence),
+        "function" => Some(ObjectKind::Function),
+        "procedure" => Some(ObjectKind::Procedure),
+        _ => None,
+    }
+}
+
+fn like_pattern(search: &str) -> String {
+    let mut pattern = String::with_capacity(search.len() + 2);
+    pattern.push('%');
+    for ch in search.chars() {
+        if matches!(ch, '\\' | '%' | '_') {
+            pattern.push('\\');
+        }
+        pattern.push(ch);
+    }
+    pattern.push('%');
+    pattern
+}
+
+fn objects_page_sql(kinds: &[ObjectKind], has_search: bool) -> Option<String> {
+    let mut relkinds = Vec::new();
+    let mut prokinds = Vec::new();
+    if kinds.is_empty() {
+        relkinds.extend(["'r'", "'p'", "'v'", "'m'", "'f'", "'S'"]);
+        prokinds.extend(["'f'", "'p'"]);
+    } else {
+        for kind in kinds {
+            match kind {
+                ObjectKind::Table => {
+                    for literal in ["'r'", "'p'"] {
+                        if !relkinds.contains(&literal) {
+                            relkinds.push(literal);
+                        }
+                    }
+                }
+                ObjectKind::View => {
+                    if !relkinds.contains(&"'v'") {
+                        relkinds.push("'v'");
+                    }
+                }
+                ObjectKind::MaterializedView => {
+                    if !relkinds.contains(&"'m'") {
+                        relkinds.push("'m'");
+                    }
+                }
+                ObjectKind::ForeignTable => {
+                    if !relkinds.contains(&"'f'") {
+                        relkinds.push("'f'");
+                    }
+                }
+                ObjectKind::Sequence => {
+                    if !relkinds.contains(&"'S'") {
+                        relkinds.push("'S'");
+                    }
+                }
+                ObjectKind::Function => {
+                    if !prokinds.contains(&"'f'") {
+                        prokinds.push("'f'");
+                    }
+                }
+                ObjectKind::Procedure => {
+                    if !prokinds.contains(&"'p'") {
+                        prokinds.push("'p'");
+                    }
+                }
+                ObjectKind::Synonym => {}
+            }
+        }
+    }
+    if relkinds.is_empty() && prokinds.is_empty() {
+        return None;
+    }
+
+    let (rel_search, proc_search, limit_bind, offset_bind) = if has_search {
+        (
+            " AND c.relname ILIKE $2::text ESCAPE '\\'",
+            " AND p.proname ILIKE $2::text ESCAPE '\\'",
+            "$3::bigint",
+            "$4::bigint",
+        )
+    } else {
+        ("", "", "$2::bigint", "$3::bigint")
+    };
+
+    let mut branches = Vec::new();
+    if !relkinds.is_empty() {
+        branches.push(format!(
+            "SELECT c.oid, n.nspname::text, c.relname::text, c.relkind::text, \
+             CASE WHEN c.reltuples >= 0 AND c.relkind IN ('r', 'p', 'm', 'f') THEN c.reltuples::bigint END AS row_estimate, \
+             pg_catalog.obj_description(c.oid, 'pg_class') \
+             FROM pg_catalog.pg_class AS c \
+             JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
+             WHERE n.nspname = $1::text AND c.relkind IN ({}){}",
+            relkinds.join(", "),
+            rel_search
+        ));
+    }
+    if !prokinds.is_empty() {
+        branches.push(format!(
+            "SELECT p.oid, n.nspname::text, p.proname::text, \
+             CASE p.prokind WHEN 'p' THEN 'procedure' ELSE 'function' END, \
+             NULL::bigint, pg_catalog.obj_description(p.oid, 'pg_proc') \
+             FROM pg_catalog.pg_proc AS p \
+             JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace \
+             WHERE n.nspname = $1::text AND p.prokind IN ({}){}",
+            prokinds.join(", "),
+            proc_search
+        ));
+    }
+    Some(format!(
+        "{} ORDER BY 3, 4, 1 LIMIT {} OFFSET {}",
+        branches.join(" UNION ALL "),
+        limit_bind,
+        offset_bind
+    ))
+}
+
 fn object(row: &Row) -> Result<Object> {
     let raw_kind: String = row.try_get(3).map_err(query_error)?;
     let kind = match raw_kind.as_str() {
@@ -327,4 +510,37 @@ fn column_ddl(column: TableColumn) -> String {
         definition.push_str(" NOT NULL");
     }
     definition
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn like_pattern_escapes_wildcards() {
+        assert_eq!(like_pattern("orders"), "%orders%");
+        assert_eq!(like_pattern("pay_100%\\x"), "%pay\\_100\\%\\\\x%");
+    }
+
+    #[test]
+    fn objects_page_sql_queries_only_requested_catalog_tables() {
+        let table_sql = objects_page_sql(&[ObjectKind::Table], false).unwrap();
+        assert!(table_sql.contains("FROM pg_catalog.pg_class"));
+        assert!(table_sql.contains("c.relkind IN ('r', 'p')"));
+        assert!(!table_sql.contains("pg_proc"));
+        assert!(table_sql.contains("LIMIT $2::bigint OFFSET $3::bigint"));
+
+        let proc_sql = objects_page_sql(&[ObjectKind::Procedure], true).unwrap();
+        assert!(proc_sql.contains("FROM pg_catalog.pg_proc"));
+        assert!(proc_sql.contains("p.prokind IN ('p')"));
+        assert!(proc_sql.contains("p.proname ILIKE $2::text ESCAPE '\\'"));
+        assert!(!proc_sql.contains("pg_class"));
+        assert!(proc_sql.contains("LIMIT $3::bigint OFFSET $4::bigint"));
+
+        let mixed_sql =
+            objects_page_sql(&[ObjectKind::Table, ObjectKind::Function], false).unwrap();
+        assert!(mixed_sql.contains("UNION ALL"));
+
+        assert!(objects_page_sql(&[ObjectKind::Synonym], false).is_none());
+    }
 }

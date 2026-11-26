@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, HashSet};
 
 use async_trait::async_trait;
 use strata_core::{
-    CoreError, Definition, ForeignKeyRef, Introspector, Object, ObjectKind, ObjectReference,
-    Result, TableColumn, TableDetail, TableForeignKey,
+    CoreError, Definition, ForeignKeyRef, Introspector, Object, ObjectKind, ObjectKindCount,
+    ObjectPage, ObjectReference, Result, TableColumn, TableDetail, TableForeignKey,
 };
 use tiberius::{Config, Row, ToSql};
 use tokio::sync::Mutex;
@@ -58,6 +58,66 @@ impl Introspector for Catalog {
                         .is_ok_and(|object| kinds.is_empty() || kinds.contains(&object.kind))
             })
             .collect()
+    }
+
+    async fn object_counts(&self, schema: &str) -> Result<Vec<ObjectKindCount>> {
+        let rows = self
+            .query(
+                "SELECT CAST(RTRIM(o.type) AS nvarchar(2)), COUNT_BIG(*) \
+                 FROM sys.objects AS o \
+                 JOIN sys.schemas AS s ON s.schema_id = o.schema_id \
+                 WHERE s.name = @P1 AND o.type IN ('U','V','P','FN','TF','IF','SO') \
+                 GROUP BY CAST(RTRIM(o.type) AS nvarchar(2))",
+                &[&schema],
+            )
+            .await?;
+        let mut counts = BTreeMap::new();
+        for row in rows {
+            let Some(kind) = parse_mssql_object_kind(text(&row, 0)?.as_str()) else {
+                continue;
+            };
+            let raw_count = row.get::<i64, _>(1).unwrap_or(0);
+            if let Ok(count) = usize::try_from(raw_count)
+                && count > 0
+            {
+                *counts.entry(kind).or_insert(0) += count;
+            }
+        }
+        Ok(counts
+            .into_iter()
+            .map(|(kind, count)| ObjectKindCount { kind, count })
+            .collect())
+    }
+
+    async fn objects_page(
+        &self,
+        schema: &str,
+        kinds: &[ObjectKind],
+        search: Option<&str>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ObjectPage> {
+        if limit == 0 {
+            return Ok(ObjectPage::default());
+        }
+        let search = search.map(str::trim).filter(|value| !value.is_empty());
+        let Some(sql) = objects_page_sql(kinds, search.is_some()) else {
+            return Ok(ObjectPage::default());
+        };
+        let offset_i64 = offset as i64;
+        let limit_plus_one = limit.saturating_add(1) as i64;
+        let pattern = search.map(like_pattern);
+        let rows = if let Some(pattern) = pattern.as_deref() {
+            self.query(&sql, &[&schema, &pattern, &offset_i64, &limit_plus_one])
+                .await?
+        } else {
+            self.query(&sql, &[&schema, &offset_i64, &limit_plus_one])
+                .await?
+        };
+        let mut objects = rows.iter().map(object).collect::<Result<Vec<_>>>()?;
+        let has_more = objects.len() > limit;
+        objects.truncate(limit);
+        Ok(ObjectPage { objects, has_more })
     }
 
     async fn column_names(&self, schema: &str) -> Result<BTreeMap<u32, Vec<String>>> {
@@ -262,15 +322,87 @@ impl Introspector for Catalog {
     }
 }
 
-fn object(row: &Row) -> Result<Object> {
-    let kind = match text(row, 3)?.as_str() {
-        "U" => ObjectKind::Table,
-        "V" => ObjectKind::View,
-        "P" => ObjectKind::Procedure,
-        "FN" | "TF" | "IF" => ObjectKind::Function,
-        "SO" => ObjectKind::Sequence,
-        _ => return Err(CoreError::config("Unsupported SQL Server object type")),
+fn parse_mssql_object_kind(raw: &str) -> Option<ObjectKind> {
+    match raw {
+        "U" => Some(ObjectKind::Table),
+        "V" => Some(ObjectKind::View),
+        "P" => Some(ObjectKind::Procedure),
+        "FN" | "TF" | "IF" => Some(ObjectKind::Function),
+        "SO" => Some(ObjectKind::Sequence),
+        _ => None,
+    }
+}
+
+fn mssql_object_types(kinds: &[ObjectKind]) -> Vec<&'static str> {
+    if kinds.is_empty() {
+        return vec!["'U'", "'V'", "'P'", "'FN'", "'TF'", "'IF'", "'SO'"];
+    }
+    let mut types = Vec::new();
+    for kind in kinds {
+        let literals: &[&'static str] = match kind {
+            ObjectKind::Table => &["'U'"],
+            ObjectKind::View => &["'V'"],
+            ObjectKind::Procedure => &["'P'"],
+            ObjectKind::Function => &["'FN'", "'TF'", "'IF'"],
+            ObjectKind::Sequence => &["'SO'"],
+            ObjectKind::MaterializedView | ObjectKind::ForeignTable | ObjectKind::Synonym => &[],
+        };
+        for &literal in literals {
+            if !types.contains(&literal) {
+                types.push(literal);
+            }
+        }
+    }
+    types
+}
+
+fn like_pattern(search: &str) -> String {
+    let mut pattern = String::with_capacity(search.len() + 2);
+    pattern.push('%');
+    for ch in search.chars() {
+        if matches!(ch, '\\' | '%' | '_' | '[') {
+            pattern.push('\\');
+        }
+        for lower in ch.to_lowercase() {
+            pattern.push(lower);
+        }
+    }
+    pattern.push('%');
+    pattern
+}
+
+fn objects_page_sql(kinds: &[ObjectKind], has_search: bool) -> Option<String> {
+    let types = mssql_object_types(kinds);
+    if types.is_empty() {
+        return None;
+    }
+    let (search_clause, offset_bind, limit_bind) = if has_search {
+        (" AND LOWER(o.name) LIKE @P2 ESCAPE '\\'", "@P3", "@P4")
+    } else {
+        ("", "@P2", "@P3")
     };
+    Some(format!(
+        "SELECT o.object_id, s.name, o.name, CAST(RTRIM(o.type) AS nvarchar(2)), \
+         p.rows, CONVERT(nvarchar(max), d.value) \
+         FROM sys.objects AS o \
+         JOIN sys.schemas AS s ON s.schema_id = o.schema_id \
+         OUTER APPLY (SELECT SUM(rows) AS rows FROM sys.partitions \
+                      WHERE object_id = o.object_id AND index_id IN (0, 1)) AS p \
+         LEFT JOIN sys.extended_properties AS d ON d.class = 1 AND d.major_id = o.object_id \
+              AND d.minor_id = 0 AND d.name = N'MS_Description' \
+         WHERE s.name = @P1 AND o.type IN ({}){} \
+         ORDER BY o.name, o.object_id \
+         OFFSET {} ROWS FETCH NEXT {} ROWS ONLY",
+        types.join(","),
+        search_clause,
+        offset_bind,
+        limit_bind
+    ))
+}
+
+fn object(row: &Row) -> Result<Object> {
+    let kind = parse_mssql_object_kind(text(row, 3)?.as_str())
+        .ok_or_else(|| CoreError::config("Unsupported SQL Server object type"))?;
     Ok(Object {
         oid: int(row, 0)? as u32,
         schema: text(row, 1)?,
@@ -300,4 +432,30 @@ fn optional(row: &Row, column: usize) -> Result<Option<String>> {
         .try_get::<&str, _>(column)
         .map_err(query_error)?
         .map(str::to_owned))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn like_pattern_escapes_wildcards_and_lowercases() {
+        assert_eq!(like_pattern("SalesOrder"), "%salesorder%");
+        assert_eq!(like_pattern("a_b%c[d]\\e"), "%a\\_b\\%c\\[d]\\\\e%");
+    }
+
+    #[test]
+    fn objects_page_sql_targets_requested_types_and_paginates() {
+        let table_sql = objects_page_sql(&[ObjectKind::Table], false).unwrap();
+        assert!(table_sql.contains("o.type IN ('U')"));
+        assert!(table_sql.contains("OFFSET @P2 ROWS FETCH NEXT @P3 ROWS ONLY"));
+        assert!(!table_sql.contains("LIKE"));
+
+        let fn_sql = objects_page_sql(&[ObjectKind::Function], true).unwrap();
+        assert!(fn_sql.contains("o.type IN ('FN','TF','IF')"));
+        assert!(fn_sql.contains("LOWER(o.name) LIKE @P2 ESCAPE '\\'"));
+        assert!(fn_sql.contains("OFFSET @P3 ROWS FETCH NEXT @P4 ROWS ONLY"));
+
+        assert!(objects_page_sql(&[ObjectKind::MaterializedView], false).is_none());
+    }
 }

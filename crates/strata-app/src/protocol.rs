@@ -359,6 +359,10 @@ pub enum Command {
         scope: crate::CatalogScope,
         schema: String,
     },
+    CatalogCounts {
+        scope: crate::CatalogScope,
+        schema: String,
+    },
     CatalogObjects {
         scope: crate::CatalogScope,
         schema: String,
@@ -461,6 +465,7 @@ fn typescript_bindings() {
     for decl in [
         strata_core::ForeignKeyRef::decl(&cfg),
         strata_core::ObjectKind::decl(&cfg),
+        strata_core::ObjectKindCount::decl(&cfg),
         strata_core::Object::decl(&cfg),
         strata_core::ObjectPage::decl(&cfg),
         strata_core::ObjectReference::decl(&cfg),

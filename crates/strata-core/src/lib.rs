@@ -325,7 +325,7 @@ pub trait DbConnection: Send {
     fn is_closed(&self) -> bool;
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, TS)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum ObjectKind {
     Table,
@@ -336,6 +336,13 @@ pub enum ObjectKind {
     Procedure,
     Sequence,
     Synonym,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ObjectKindCount {
+    pub kind: ObjectKind,
+    pub count: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
@@ -395,6 +402,17 @@ pub trait Introspector: Send + Sync {
     async fn databases(&self) -> Result<Vec<String>>;
     async fn schemas(&self, include_system: bool) -> Result<Vec<String>>;
     async fn objects(&self, schema: &str, kinds: &[ObjectKind]) -> Result<Vec<Object>>;
+    async fn object_counts(&self, schema: &str) -> Result<Vec<ObjectKindCount>> {
+        let mut counts = std::collections::BTreeMap::new();
+        for object in self.objects(schema, &[]).await? {
+            *counts.entry(object.kind).or_insert(0usize) += 1;
+        }
+        Ok(counts
+            .into_iter()
+            .filter(|&(_, count)| count > 0)
+            .map(|(kind, count)| ObjectKindCount { kind, count })
+            .collect())
+    }
     async fn objects_page(
         &self,
         schema: &str,

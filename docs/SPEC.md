@@ -36,7 +36,7 @@ V1 goals:
 - Tabbed SQL editor (CodeMirror 6) on top, results grid below, resizable split.
 - Run statement at cursor, selection, or whole script; cancel; multiple result sets; messages panel.
 - Schema explorer tree with lazy loading and schema-aware autocomplete.
-- **Ctrl+Click** a table name → table view (data + columns, indexes, FKs, DDL) in the *same* tab's lower panel. **Ctrl+Shift+Click** → a new *Schema* tab focused on that table.
+- **Ctrl+Click** a table name → a new *Schema* tab focused on that table. **Ctrl+Shift+Click** → table view (data + columns, indexes, FKs, DDL) in the *same* tab's lower panel.
 - Query history, environment tags (dev/staging/prod) with write confirmations on prod.
 - `strata` CLI and `strata mcp` (stdio MCP server) sharing the same core, config and keychain.
 
@@ -491,7 +491,7 @@ Dense, keyboard-first, quiet. One window: explorer on the left, tabs on the righ
 
 - Extensions: `lang-sql` with the connection's dialect (`PostgreSQL`, `MSSQL`, `PLSQL`), schema-aware completion fed by the metadata cache (schemas, tables, columns, aliases in the current statement), search/replace, bracket matching, line numbers, folding, current-statement shading (spans from `strata-sql`, refreshed 150 ms after typing), execution errors as lint diagnostics.
 - **Multi-cursor moves to Alt+Click:** set `EditorView.clickAddsSelectionRange` to `altKey`, because CodeMirror uses Ctrl/Cmd+Click for extra cursors by default and that would collide with Ctrl+Click navigation.
-- **Ctrl+Click (Cmd on macOS):** while the modifier is held, the identifier under the mouse gets an underline and pointer cursor (pure frontend decoration). Click → `resolve_at` → the table view opens as a pinned sub-tab in *this tab's* lower panel. Ctrl+Shift+Click → a new top-level Schema tab. F4 does the same from the keyboard.
+- **Ctrl+Click (Cmd on macOS):** while the modifier is held, the identifier under the mouse gets an underline and pointer cursor (pure frontend decoration). Click → `resolve_at` → a new top-level Schema tab. Ctrl+Shift+Click → the table view opens as a pinned sub-tab in *this tab's* lower panel. F4 does the same as Ctrl+Click from the keyboard.
 - Format SQL with `sql-formatter` (`postgresql`, `transactsql`, `plsql`); open/save `.sql` files; dirty dot on tabs; scratch tabs autosave to `workspace`.
 
 ### 11.3 Results panel
@@ -510,7 +510,7 @@ Dense, keyboard-first, quiet. One window: explorer on the left, tabs on the righ
 - Double-click a table → Schema tab. Context menu: Open data, Open schema, Copy name, Generate SELECT, Refresh (F5). Drag a node into the editor to insert its qualified name.
 - Auto-refresh a schema's node after DDL runs against it.
 
-### 11.5 Table view (Ctrl+Click target)
+### 11.5 Table view (Ctrl+Shift+Click target)
 
 - Segmented sections: **Data | Columns | Keys & Indexes | References | DDL | Info**.
 - Data: streamed `SELECT *` with a server-side WHERE box and ORDER BY from header clicks (re-query), infinite scroll, estimated rows + **Count rows** button.
@@ -520,7 +520,7 @@ Dense, keyboard-first, quiet. One window: explorer on the left, tabs on the righ
 - DDL: read-only CodeMirror + copy. Info: owner, rows estimate, size, comment, created/modified where available.
 - **Open as tab** promotes it to a Schema tab.
 
-### 11.6 Schema tab (Ctrl+Shift+Click target)
+### 11.6 Schema tab (Ctrl+Click target)
 
 Full-height version of the table view plus a left list of FK neighbors (depth 1) and back/forward history (Alt+← / Alt+→). V2's ER diagram lives here.
 
@@ -533,7 +533,7 @@ Full-height version of the table view plus a left list of FK neighbors (depth 1)
 | Run script (all, or selection) | Alt+X |
 | Stop | Ctrl+. |
 | Explain plan (text) | Ctrl+Shift+E |
-| Table view / Schema tab | Ctrl+Click / Ctrl+Shift+Click, F4 |
+| Schema tab / Table view | Ctrl+Click, F4 / Ctrl+Shift+Click |
 | Autocomplete | Ctrl+Space |
 | Format SQL | Ctrl+Shift+F |
 | Toggle comment | Ctrl+/ |

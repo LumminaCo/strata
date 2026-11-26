@@ -1,9 +1,9 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use async_trait::async_trait;
 use strata_core::{
-    CoreError, Definition, Introspector, Object, ObjectKind, ObjectKindCount, ObjectPage,
-    ObjectReference, Result, TableColumn, TableDetail,
+    CoreError, Definition, ForeignKeyRef, Introspector, Object, ObjectKind, ObjectKindCount,
+    ObjectPage, ObjectReference, Result, TableColumn, TableDetail, TableForeignKey,
 };
 use tiberius::{Config, Row, ToSql};
 use tokio::sync::Mutex;
@@ -224,6 +224,30 @@ impl Introspector for Catalog {
             referenced_by,
             size_bytes,
         })
+    }
+
+    async fn foreign_keys(&self, object: &Object) -> Result<Vec<TableForeignKey>> {
+        let id = object.oid as i32;
+        let rows = self
+            .query(include_str!("queries/foreign_keys.sql"), &[&id])
+            .await?;
+        let mut seen = HashSet::new();
+        let mut keys = Vec::new();
+        for row in rows {
+            let column = text(&row, 0)?;
+            if !seen.insert(column.to_ascii_lowercase()) {
+                continue;
+            }
+            keys.push(TableForeignKey {
+                column,
+                target: ForeignKeyRef {
+                    schema: text(&row, 1)?,
+                    table: text(&row, 2)?,
+                    column: text(&row, 3)?,
+                },
+            });
+        }
+        Ok(keys)
     }
 
     async fn ddl(&self, object: &Object) -> Result<String> {

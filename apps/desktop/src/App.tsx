@@ -50,6 +50,11 @@ import {
   ResizablePanelGroup,
   usePanelRef,
 } from "@/components/ui/resizable";
+import {
+  buildForeignKeyQuery,
+  foreignKeyTabTitle,
+  needsFullCellRead,
+} from "@/features/foreign-key-query";
 import { type FilterInputHandle } from "@/features/result-filter-input";
 import { formatColumnIdentifier, type ResultFilter, type SortRule } from "@/features/result-query";
 import { ResultToolbar } from "@/features/result-toolbar";
@@ -118,7 +123,7 @@ import { shortcuts, workspaceKeydown } from "@/features/keymap";
 import { useTabDrag } from "@/features/use-tab-drag";
 import { useWorkspace } from "@/features/use-workspace";
 import { useAppUpdate } from "@/features/use-app-update";
-import type { Cell, Connection, RunMode } from "@/ipc/bindings/protocol";
+import type { Cell, Connection, ForeignKeyRef, RunMode } from "@/ipc/bindings/protocol";
 import { browserMode, dispatch, errorMessage } from "@/ipc/client";
 import strataLogo from "../../../dev/strata-logo.png";
 
@@ -718,6 +723,57 @@ export function App() {
     }
   }
 
+  function openForeignKeyQuery(options: {
+    connection: Connection;
+    database?: string;
+    schema?: string;
+    target: ForeignKeyRef;
+    value: Cell;
+    columnKind?: string;
+  }) {
+    if (options.value === null || !options.connection.id) return;
+    const text = buildForeignKeyQuery(
+      options.target,
+      options.value,
+      options.columnKind,
+      options.connection.kind,
+    );
+    const title = foreignKeyTabTitle(options.target, options.value);
+    setSchemaSelected(undefined);
+    data.openAndRunTab({
+      connectionId: options.connection.id,
+      database: options.database ?? options.connection.database,
+      schema: options.schema,
+      text,
+      title,
+    });
+  }
+
+  async function followResultForeignKey(item: ResultSet, row: number, column: number) {
+    if (!profile) return;
+    const meta = item.columns[column];
+    const target = meta?.foreign_key;
+    if (!meta || !target) return;
+    let value = item.rows[row]?.[column] ?? null;
+    if (value === null) return;
+    if (needsFullCellRead(value, meta.kind)) {
+      try {
+        value = await data.getCell(item, row, column);
+      } catch (error) {
+        data.setNotice(errorMessage(error));
+        return;
+      }
+    }
+    openForeignKeyQuery({
+      connection: profile,
+      database: active.session?.database ?? tab?.database ?? profile.database,
+      schema: active.session?.schema ?? tab?.schema,
+      target,
+      value,
+      columnKind: meta.kind,
+    });
+  }
+
   function inspectionCredentials(entry: CatalogEntry) {
     return data.scope(entry.connection, entry.database, true);
   }
@@ -1161,6 +1217,15 @@ export function App() {
                   full
                   credentials={inspectionCredentials}
                   onValue={showCell}
+                  onFollowForeignKey={({ entry, target, value, columnKind }) =>
+                    openForeignKeyQuery({
+                      connection: entry.connection,
+                      database: entry.database,
+                      target,
+                      value,
+                      columnKind,
+                    })
+                  }
                 />
               </section>
             ) : tab && state ? (
@@ -1505,6 +1570,15 @@ export function App() {
                           credentials={inspectionCredentials}
                           promote={openObject}
                           onValue={showCell}
+                          onFollowForeignKey={({ entry, target, value, columnKind }) =>
+                            openForeignKeyQuery({
+                              connection: entry.connection,
+                              database: entry.database,
+                              target,
+                              value,
+                              columnKind,
+                            })
+                          }
                         />
                       ) : result ? (
                         <div className="result-view">
@@ -1592,6 +1666,9 @@ export function App() {
                             }
                             onMore={() => void data.fetchRows(result)}
                             onCell={(row, column) => void openCell(result, row, column)}
+                            onFollowForeignKey={(row, column) =>
+                              void followResultForeignKey(result, row, column)
+                            }
                             readCell={(row, column) => data.getCell(result, row, column)}
                           />
                         </div>

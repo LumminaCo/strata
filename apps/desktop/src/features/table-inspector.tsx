@@ -7,6 +7,7 @@ import type {
   CatalogScope,
   Cell,
   Definition,
+  ForeignKeyRef,
   ObjectDetails,
   ObjectKind,
   ObjectReference,
@@ -62,9 +63,23 @@ interface Props {
   credentials: (entry: CatalogEntry) => Promise<CatalogScope>;
   promote?: (entry: Inspection) => void;
   onValue: (name: string, value: Cell, kind?: string) => void;
+  onFollowForeignKey?: (options: {
+    entry: CatalogEntry;
+    target: ForeignKeyRef;
+    value: Cell;
+    columnKind?: string;
+  }) => void;
 }
 
-export function TableInspector({ subject, theme, full, credentials, promote, onValue }: Props) {
+export function TableInspector({
+  subject,
+  theme,
+  full,
+  credentials,
+  promote,
+  onValue,
+  onFollowForeignKey,
+}: Props) {
   const [path, setPath] = useState({ items: [subject], index: 0 });
   const current = path.items[path.index] ?? subject;
   const table = isRelationObject(current.object.kind);
@@ -143,6 +158,7 @@ export function TableInspector({ subject, theme, full, credentials, promote, onV
           theme={theme}
           credentials={() => controls.current(current)}
           onValue={onValue}
+          onFollowForeignKey={onFollowForeignKey}
         />
       );
     if (error)

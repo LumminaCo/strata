@@ -989,6 +989,7 @@ mod tests {
             nullable: Some(false),
             table_oid: None,
             column_id: None,
+            foreign_key: None,
         }
     }
 

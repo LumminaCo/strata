@@ -317,6 +317,7 @@ impl From<Columns> for ColumnMeta {
             nullable: None,
             table_oid: None,
             column_id: None,
+            foreign_key: None,
         }
     }
 }

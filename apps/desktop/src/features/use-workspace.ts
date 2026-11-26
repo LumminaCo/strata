@@ -276,6 +276,38 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
     return newTab.id;
   }
 
+  function openAndRunTab(options: {
+    connectionId: string;
+    database?: string;
+    schema?: string;
+    text: string;
+    title?: string;
+  }): string | null {
+    if (!workspace || workspace.tabs.length >= 100) {
+      setNotice("Close a tab before opening another.");
+      return null;
+    }
+    const connection = profiles.find((entry) => entry.id === options.connectionId);
+    if (!connection) return null;
+    const normalizedTitle =
+      options.title === undefined ? undefined : normalizeTabTitle(options.title);
+    const newTab: SavedTab = {
+      id: crypto.randomUUID(),
+      connectionId: options.connectionId,
+      ...(normalizedTitle !== undefined ? { title: normalizedTitle } : {}),
+      database: options.database,
+      schema: options.schema,
+      text: options.text,
+    };
+    setWorkspace((current) => current && { tabs: [...current.tabs, newTab], activeTab: newTab.id });
+    void execute(newTab, connection, {
+      text: options.text,
+      target: { selection: [0, options.text.length] },
+      mode: "statement",
+    });
+    return newTab.id;
+  }
+
   function moveTab(direction: number) {
     if (!tab || tabs.length < 2) return;
     const index = tabs.indexOf(tab);
@@ -1208,6 +1240,7 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
     retry: () => setLoadAttempt((value) => value + 1),
     selectTab,
     addTab,
+    openAndRunTab,
     moveTab,
     closeTab,
     closeTabs,

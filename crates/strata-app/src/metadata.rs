@@ -5,7 +5,9 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use strata_core::{Introspector, Object, ObjectKind, ObjectKindCount, ObjectPage, Result, Secret};
+use strata_core::{
+    Introspector, Object, ObjectKind, ObjectKindCount, ObjectPage, Result, Secret, TableForeignKey,
+};
 use strata_store::Database;
 use tokio::sync::{Mutex, OnceCell};
 use ts_rs::TS;
@@ -45,14 +47,17 @@ pub struct CatalogSnapshot {
 
 type CatalogKey = (Uuid, String);
 type SnapshotKey = (Uuid, String, String);
+type ForeignKeyKey = (Uuid, String, String, String);
 type CatalogSlot = Arc<OnceCell<Arc<dyn Introspector>>>;
 type SnapshotSlot = Arc<OnceCell<Arc<CatalogSnapshot>>>;
+type ForeignKeySlot = Arc<OnceCell<Arc<Vec<TableForeignKey>>>>;
 type CountsSlot = Arc<OnceCell<Arc<Vec<ObjectKindCount>>>>;
 
 #[derive(Default)]
 pub struct Metadata {
     catalogs: Mutex<HashMap<CatalogKey, (Instant, CatalogSlot)>>,
     snapshots: Mutex<HashMap<SnapshotKey, (Instant, SnapshotSlot)>>,
+    foreign_keys: Mutex<HashMap<ForeignKeyKey, (Instant, ForeignKeySlot)>>,
     counts: Mutex<HashMap<SnapshotKey, (Instant, CountsSlot)>>,
     changes: Mutex<()>,
 }
@@ -208,9 +213,47 @@ impl Metadata {
             .await
     }
 
+    pub async fn foreign_keys_for_object(
+        &self,
+        engine: &Engine,
+        scope: &CatalogScope,
+        object: &Object,
+    ) -> Result<Arc<Vec<TableForeignKey>>> {
+        let database = database(engine, scope)?;
+        let cache_key = (
+            scope.connection_id,
+            database,
+            object.schema.clone(),
+            object.name.clone(),
+        );
+        let slot = {
+            let mut foreign_keys = self.foreign_keys.lock().await;
+            let (_, slot) = foreign_keys
+                .entry(cache_key)
+                .and_modify(|entry| {
+                    if entry.0.elapsed() >= TTL {
+                        *entry = (Instant::now(), Arc::default());
+                    }
+                })
+                .or_insert_with(|| (Instant::now(), Arc::default()));
+            slot.clone()
+        };
+        let keys = slot
+            .get_or_try_init(|| async {
+                let catalog = self.catalog(engine, scope).await?;
+                Ok::<_, strata_core::CoreError>(Arc::new(catalog.foreign_keys(object).await?))
+            })
+            .await?;
+        Ok(keys.clone())
+    }
+
     pub async fn invalidate(&self, engine: &Engine, connection_id: Uuid) -> Result<()> {
         let _changes = self.changes.lock().await;
         self.snapshots
+            .lock()
+            .await
+            .retain(|key, _| key.0 != connection_id);
+        self.foreign_keys
             .lock()
             .await
             .retain(|key, _| key.0 != connection_id);

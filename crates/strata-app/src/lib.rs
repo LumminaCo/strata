@@ -35,6 +35,9 @@ pub struct AppService {
 struct Session {
     kind: DbKind,
     connection_id: Uuid,
+    database: RwLock<String>,
+    schema: RwLock<Option<String>>,
+    password: Option<Secret>,
     production: bool,
     lifetime: CancellationToken,
     control: Mutex<RunControl>,
@@ -188,7 +191,9 @@ impl AppService {
                 if control.active.is_some() {
                     return Err(CoreError::config("Wait for the running query to finish"));
                 }
-                json(self.engine.core().set_schema(session_id, &schema).await?)
+                let applied = self.engine.core().set_schema(session_id, &schema).await?;
+                *session.schema.write().await = applied.clone().or(Some(schema));
+                json(applied)
             }
             Command::NextResult {
                 session_id,
@@ -565,6 +570,7 @@ impl AppService {
         let kind = profile.kind;
         let production = profile.env == Environment::Prod;
         let started = Instant::now();
+        let stored_password = password.clone().map(Secret::new);
         let id = self
             .engine
             .open_profile(profile, password.map(Secret::new))
@@ -585,11 +591,18 @@ impl AppService {
             self.engine.core().close_session(id).await?;
             return info.and(Err(CoreError::Cancelled));
         }
+        let (session_database, session_schema) = match &info {
+            Ok(session_info) => (session_info.database.clone(), session_info.schema.clone()),
+            Err(_) => unreachable!(),
+        };
         sessions.insert(
             id,
             Arc::new(Session {
                 kind,
                 connection_id,
+                database: RwLock::new(session_database),
+                schema: RwLock::new(session_schema),
+                password: stored_password,
                 production,
                 lifetime,
                 control: Mutex::default(),

@@ -25,6 +25,7 @@ import { errorMessage } from "@/ipc/client";
 import type { Cell, ColumnMeta } from "@/ipc/bindings/protocol";
 import { gridTheme } from "@/theme/glide";
 
+import { fkCellRenderer, isPointInFkButton } from "./fk-cell-renderer";
 import { summarizeSelection, type NumericAggregateSummary } from "./numeric-aggregate";
 
 export interface ResultSet {
@@ -38,6 +39,7 @@ export interface ResultSet {
 }
 
 const numeric = new Set(["int", "float", "decimal"]);
+const customRenderers = [fkCellRenderer];
 
 interface HeaderMenuState {
   column: number;
@@ -52,6 +54,7 @@ export function ResultGrid({
   fetching = false,
   onMore,
   onCell,
+  onFollowForeignKey,
   readCell,
   onAggregateChange,
   filter,
@@ -67,6 +70,7 @@ export function ResultGrid({
   fetching?: boolean;
   onMore: () => void;
   onCell: (row: number, column: number) => void;
+  onFollowForeignKey?: (row: number, column: number) => void;
   readCell?: (row: number, column: number) => Promise<Cell>;
   onAggregateChange?: (summary: NumericAggregateSummary | null) => void;
   filter: string;
@@ -122,12 +126,16 @@ export function ResultGrid({
 
   const columns = useMemo(
     () =>
-      result.columns.map((column, index) => ({
-        id: String(index),
-        title: formatSortHeader(column.name, sorts, index),
-        width: widths[index] ?? Math.min(360, Math.max(115, column.name.length * 9 + 34)),
-      })),
-    [result.columns, sorts, widths],
+      result.columns.map((column, index) => {
+        const fkExtra = onFollowForeignKey && column.foreign_key ? 24 : 0;
+        return {
+          id: String(index),
+          title: formatSortHeader(column.name, sorts, index),
+          width:
+            widths[index] ?? Math.min(360, Math.max(115, column.name.length * 9 + 34 + fkExtra)),
+        };
+      }),
+    [onFollowForeignKey, result.columns, sorts, widths],
   );
 
   const { indices: rowIndices, activeFilterCount } = useMemo(
@@ -142,21 +150,38 @@ export function ResultGrid({
 
   const getCell = useCallback(
     ([column, row]: Item): GridCell => {
+      const columnMeta = result.columns[column];
       const value = result.rows[rowIndices?.[row] ?? row]?.[column] ?? null;
       const displayData = value === null ? "NULL" : String(value);
+      const align = numeric.has(columnMeta?.kind ?? "") ? "right" : "left";
+      if (onFollowForeignKey && columnMeta?.foreign_key && value !== null) {
+        return {
+          kind: GridCellKind.Custom,
+          allowOverlay: false,
+          readonly: true,
+          copyData: displayData,
+          contentAlign: align,
+          data: {
+            kind: "foreign-key" as const,
+            displayData,
+            target: columnMeta.foreign_key,
+            align,
+          },
+        };
+      }
       return {
         kind: GridCellKind.Text,
         data: value === null ? "" : displayData,
         displayData,
         readonly: true,
         allowOverlay: false,
-        contentAlign: numeric.has(result.columns[column]?.kind ?? "") ? "right" : "left",
+        contentAlign: align,
         ...(value === null
           ? { themeOverride: { textDark: theme.textLight, baseFontStyle: "italic 12px" } }
           : {}),
       };
     },
-    [result.rows, result.columns, rowIndices, theme.textLight],
+    [onFollowForeignKey, result.rows, result.columns, rowIndices, theme.textLight],
   );
 
   const rows = rowIndices?.length ?? result.rows.length;
@@ -273,6 +298,7 @@ export function ResultGrid({
         headerHeight={29}
         rowMarkers={{ kind: "both", width: 58 }}
         getCellContent={getCell}
+        customRenderers={customRenderers}
         getCellsForSelection={true}
         rangeSelect="multi-rect"
         gridSelection={selection}
@@ -285,12 +311,57 @@ export function ResultGrid({
         onColumnResize={(_, width, index) =>
           setWidths((current) => ({ ...current, [index]: width }))
         }
+        onCellClicked={([column, row], event) => {
+          if (!onFollowForeignKey || event.button !== 0) return;
+          const columnMeta = result.columns[column];
+          if (!columnMeta?.foreign_key) return;
+          const sourceRow = rowIndices?.[row] ?? row;
+          const value = result.rows[sourceRow]?.[column] ?? null;
+          if (value === null) return;
+          if (
+            isPointInFkButton(
+              event.localEventX,
+              event.localEventY,
+              event.bounds.width,
+              event.bounds.height,
+            )
+          ) {
+            event.preventDefault();
+            onFollowForeignKey(sourceRow, column);
+          }
+        }}
         onCellActivated={([column, row]) => onCell(rowIndices?.[row] ?? row, column)}
-        onItemHovered={(item) =>
-          setNativeType(
-            item.kind === "header" ? (result.columns[item.location[0]]?.db_type ?? "") : "",
-          )
-        }
+        onItemHovered={(item) => {
+          if (item.kind === "header") {
+            const col = result.columns[item.location[0]];
+            if (!col) {
+              setNativeType("");
+              return;
+            }
+            setNativeType(
+              col.foreign_key
+                ? `${col.db_type} · FK -> ${col.foreign_key.schema}.${col.foreign_key.table}.${col.foreign_key.column}`
+                : col.db_type,
+            );
+            return;
+          }
+          if (item.kind === "cell" && onFollowForeignKey) {
+            const [colIndex, rowIndex] = item.location;
+            const col = result.columns[colIndex];
+            const fk = col?.foreign_key;
+            if (fk) {
+              const sourceRow = rowIndices?.[rowIndex] ?? rowIndex;
+              const value = result.rows[sourceRow]?.[colIndex] ?? null;
+              if (value !== null) {
+                setNativeType(
+                  `Open ${fk.schema}.${fk.table} where ${fk.column} = ${String(value)}`,
+                );
+                return;
+              }
+            }
+          }
+          setNativeType("");
+        }}
         onHeaderClicked={(column) => {
           setHeaderMenu(null);
           updateSorts((current) => toggleColumnSort(current, column));

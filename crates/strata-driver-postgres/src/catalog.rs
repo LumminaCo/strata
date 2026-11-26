@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use async_trait::async_trait;
 use deadpool_postgres::{Pool, PoolError};
 use strata_core::{
-    CoreError, Definition, Introspector, Object, ObjectKind, ObjectKindCount, ObjectPage,
-    ObjectReference, Result, TableColumn, TableDetail,
+    CoreError, Definition, ForeignKeyRef, Introspector, Object, ObjectKind, ObjectKindCount,
+    ObjectPage, ObjectReference, Result, TableColumn, TableDetail, TableForeignKey,
 };
 use tokio_postgres::{Row, types::ToSql};
 
@@ -198,6 +198,27 @@ impl Introspector for Catalog {
             referenced_by,
             size_bytes,
         })
+    }
+
+    async fn foreign_keys(&self, object: &Object) -> Result<Vec<TableForeignKey>> {
+        let client = self.client().await?;
+        let id = object.oid;
+        let rows = client
+            .query(include_str!("queries/table_foreign_keys.sql"), &[&id])
+            .await
+            .map_err(query_error)?;
+        rows.iter()
+            .map(|row| {
+                Ok(TableForeignKey {
+                    column: row.try_get(0).map_err(query_error)?,
+                    target: ForeignKeyRef {
+                        schema: row.try_get(1).map_err(query_error)?,
+                        table: row.try_get(2).map_err(query_error)?,
+                        column: row.try_get(3).map_err(query_error)?,
+                    },
+                })
+            })
+            .collect()
     }
 
     async fn ddl(&self, object: &Object) -> Result<String> {

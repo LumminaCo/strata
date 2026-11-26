@@ -1,4 +1,6 @@
-use strata_core::{Cell, CellKind, ColumnMeta};
+use std::collections::HashSet;
+
+use strata_core::{Cell, CellKind, ColumnMeta, ForeignKeyRef};
 use tokio_postgres::{
     Client, Column, SimpleColumn,
     types::{Kind, Type},
@@ -17,14 +19,20 @@ pub(crate) async fn columns(
             nullable: None,
             table_oid: column.table_oid(),
             column_id: column.column_id(),
+            foreign_key: None,
         })
         .collect::<Vec<_>>();
     let mut tables = Vec::new();
     let mut attributes = Vec::new();
+    let mut unique_tables = Vec::new();
+    let mut seen_tables = HashSet::new();
     for column in columns {
         if let (Some(table), Some(attribute)) = (column.table_oid(), column.column_id()) {
             tables.push(table);
             attributes.push(attribute);
+            if seen_tables.insert(table) {
+                unique_tables.push(table);
+            }
         }
     }
     if !tables.is_empty() {
@@ -41,6 +49,43 @@ pub(crate) async fn columns(
                 if (column.table_oid, column.column_id) == (Some(table), Some(attribute)) {
                     column.db_type = row.try_get(2)?;
                     // A result can make a NOT NULL column nullable (for example an outer join).
+                }
+            }
+        }
+        if let Ok(fk_rows) = client
+            .query(
+                include_str!("queries/column_foreign_keys.sql"),
+                &[&unique_tables],
+            )
+            .await
+        {
+            for row in fk_rows {
+                let Ok(table) = row.try_get::<_, u32>(0) else {
+                    continue;
+                };
+                let Ok(attribute) = row.try_get::<_, i16>(1) else {
+                    continue;
+                };
+                let Ok(target_schema) = row.try_get::<_, String>(2) else {
+                    continue;
+                };
+                let Ok(target_table) = row.try_get::<_, String>(3) else {
+                    continue;
+                };
+                let Ok(target_column) = row.try_get::<_, String>(4) else {
+                    continue;
+                };
+                let target = ForeignKeyRef {
+                    schema: target_schema,
+                    table: target_table,
+                    column: target_column,
+                };
+                for column in &mut metadata {
+                    if column.foreign_key.is_none()
+                        && (column.table_oid, column.column_id) == (Some(table), Some(attribute))
+                    {
+                        column.foreign_key = Some(target.clone());
+                    }
                 }
             }
         }
@@ -70,6 +115,7 @@ pub(crate) fn describe(
             nullable: None,
             table_oid: None,
             column_id: None,
+            foreign_key: None,
         })
         .collect()
 }

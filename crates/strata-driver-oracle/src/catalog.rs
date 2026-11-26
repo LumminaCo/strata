@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use strata_core::{
-    CoreError, Definition, Introspector, Object, ObjectKind, ObjectKindCount, ObjectPage,
-    ObjectReference, Result, TableColumn, TableDetail,
+    CoreError, Definition, ForeignKeyRef, Introspector, Object, ObjectKind, ObjectKindCount,
+    ObjectPage, ObjectReference, Result, TableColumn, TableDetail, TableForeignKey,
 };
 use strata_sql::{Dialect, relation_at};
 use tokio::sync::Mutex;
@@ -299,6 +299,30 @@ impl Introspector for Catalog {
             referenced_by,
             size_bytes: 0,
         })
+    }
+
+    async fn foreign_keys(&self, object: &Object) -> Result<Vec<TableForeignKey>> {
+        let key = [json!(object.schema), json!(object.name)];
+        let rows = self
+            .query(include_str!("queries/foreign_keys.sql"), &key)
+            .await?;
+        let mut seen = HashSet::new();
+        let mut keys = Vec::new();
+        for row in rows {
+            let column = text(&row, 0);
+            if column.is_empty() || !seen.insert(column.clone()) {
+                continue;
+            }
+            keys.push(TableForeignKey {
+                column,
+                target: ForeignKeyRef {
+                    schema: text(&row, 1),
+                    table: text(&row, 2),
+                    column: text(&row, 3),
+                },
+            });
+        }
+        Ok(keys)
     }
 
     async fn ddl(&self, object: &Object) -> Result<String> {

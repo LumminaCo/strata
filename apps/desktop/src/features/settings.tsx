@@ -314,8 +314,14 @@ function keybindingEntries(): KeybindingEntry[] {
     {
       group: "Tabs & files",
       label: "Save SQL file",
-      description: "Save the active editor contents to a SQL file.",
+      description: "Save the active editor contents to its linked file, or choose a new SQL file.",
       keys: shortcuts.saveSql,
+    },
+    {
+      group: "Tabs & files",
+      label: "Save SQL file as",
+      description: "Save the active editor contents to a new SQL file.",
+      keys: shortcuts.saveSqlAs,
     },
   ];
 }

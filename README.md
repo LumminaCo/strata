@@ -31,7 +31,7 @@ Set `COMPOSE_PROFILES=legacy` to include Oracle 11g. Use Oracle fixture password
 
 ## Working with SQL
 
-Use Ctrl+Enter for the current statement, Ctrl+Shift+Enter to open the statement's results in a new result tab, Alt+X for the script, and Ctrl+. to stop. On macOS, Cmd replaces Ctrl. Ctrl+Click opens a pinned table inspector. Ctrl+Shift+Click opens a dedicated Schema tab. Ctrl+K opens the catalog palette. Ctrl+O opens a SQL file in a scratch tab and Ctrl+S saves a copy.
+Use Ctrl+Enter for the current statement, Ctrl+Shift+Enter to open the statement's results in a new result tab, Alt+X for the script, and Ctrl+. to stop. On macOS, Cmd replaces Ctrl. Ctrl+Click opens a dedicated Schema tab. Ctrl+Shift+Click opens a pinned table inspector. Ctrl+K opens the catalog palette. Ctrl+O opens a SQL file in a tab, Ctrl+S saves it (overwriting its linked file once saved), and Ctrl+Shift+S saves to a new file.
 
 Session controls let you choose auto-commit or enter manual mode. Strata prompts before closing a tab or native window with an open manual transaction. Read-only profiles reject writes and production profiles ask before potentially mutating statements. Settings persist in `config.toml`.
 

@@ -8,6 +8,7 @@ import {
   moveItemByOffset,
   normalizeTabTitle,
   reorderById,
+  reorderByOrder,
   scriptTabLabel,
   type DropPlacement,
 } from "@/features/tab-order";
@@ -151,6 +152,26 @@ export function removeResultTabs(current: Activity, resultIds: string[]): Activi
   return { ...current, results: remaining, selected };
 }
 
+export function updateTabFilePath(
+  tabs: readonly SavedTab[],
+  id: string,
+  filePath: string | undefined,
+): SavedTab[] {
+  const normalized = filePath?.trim() || undefined;
+  let changed = false;
+  const next = tabs.map((item) => {
+    if (item.id !== id) return item;
+    if (item.filePath === normalized) return item;
+    changed = true;
+    if (normalized === undefined) {
+      const { filePath: _removed, ...rest } = item;
+      return rest;
+    }
+    return { ...item, filePath: normalized };
+  });
+  return changed ? next : (tabs as SavedTab[]);
+}
+
 export interface UseWorkspaceOptions {
   onQueryComplete?: (completion: QueryCompletion) => void;
 }
@@ -236,19 +257,19 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
     database?: string,
     text = "",
     schema?: string,
-    title?: string,
+    filePath?: string,
   ): string | null {
     if (!workspace || workspace.tabs.length >= 100) {
       setNotice("Close a tab before opening another.");
       return null;
     }
-    const normalizedTitle = title === undefined ? undefined : normalizeTabTitle(title);
+    const normalizedPath = filePath?.trim() || undefined;
     const newTab: SavedTab = {
       id: crypto.randomUUID(),
       connectionId,
-      ...(normalizedTitle !== undefined ? { title: normalizedTitle } : {}),
-      database,
-      schema,
+      ...(database !== undefined ? { database } : {}),
+      ...(schema !== undefined ? { schema } : {}),
+      ...(normalizedPath !== undefined ? { filePath: normalizedPath } : {}),
       text,
     };
     setWorkspace((current) => current && { tabs: [...current.tabs, newTab], activeTab: newTab.id });
@@ -360,6 +381,14 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
     );
   }
 
+  function setTabFilePath(id: string, filePath: string | undefined) {
+    setWorkspace((current) => {
+      if (!current) return current;
+      const nextTabs = updateTabFilePath(current.tabs, id, filePath);
+      return nextTabs === current.tabs ? current : { ...current, tabs: nextTabs };
+    });
+  }
+
   function reorderTabs(activeId: string, targetId: string, placement: DropPlacement) {
     setWorkspace((current) => {
       if (!current) return current;
@@ -435,6 +464,13 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
   function shiftResult(tabId: string, resultId: string, delta: -1 | 1) {
     update(tabId, (current) => {
       const nextResults = moveItemByOffset(current.results, resultId, delta, (item) => item.id);
+      return nextResults === current.results ? current : { ...current, results: nextResults };
+    });
+  }
+
+  function syncResultOrder(tabId: string, orderedIds: readonly string[]) {
+    update(tabId, (current) => {
+      const nextResults = reorderByOrder(current.results, orderedIds, (item) => item.id);
       return nextResults === current.results ? current : { ...current, results: nextResults };
     });
   }
@@ -1209,12 +1245,14 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
     closeTab,
     closeTabs,
     renameTab,
+    setTabFilePath,
     reorderTabs,
     shiftTab,
     duplicateTab,
     renameResult,
     reorderResults,
     shiftResult,
+    syncResultOrder,
     closeResults,
     editText,
     setPanel,

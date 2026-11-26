@@ -6,7 +6,7 @@ mod updater;
 
 use benchmark::{Benchmark, benchmark_sample};
 use serde_json::Value;
-use sql_file::save_sql_file;
+use sql_file::{open_sql_file, save_sql_file};
 use strata_app::{AppService, Command, ErrorDto, Health, RunEvent, RunRequest};
 #[cfg(target_os = "linux")]
 use tauri::Manager;
@@ -137,6 +137,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             health,
             dispatch,
             run_query,
+            open_sql_file,
             save_sql_file,
             check_update,
             install_update,

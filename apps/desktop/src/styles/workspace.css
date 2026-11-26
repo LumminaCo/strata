@@ -283,6 +283,10 @@ body {
   color: var(--muted-foreground);
   font-weight: 400;
 }
+.query-tab:not([data-renaming="true"]),
+.result-tab:not([data-renaming="true"]) {
+  user-select: none;
+}
 .query-tab[data-dragging="true"],
 .result-tab[data-dragging="true"] {
   opacity: 0.45;
@@ -1458,6 +1462,30 @@ body[data-tab-dragging="true"] * {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   margin: 4px 0;
+}
+.object-ddl {
+  position: relative;
+  min-height: 100%;
+}
+.object-ddl-actions {
+  position: sticky;
+  top: 8px;
+  z-index: 1;
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-start;
+  height: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.object-ddl-copy {
+  pointer-events: auto;
+  background: var(--popover);
+  border-color: var(--border);
+  box-shadow: var(--elevation-popover);
+}
+.object-ddl-copy:hover {
+  background: var(--muted);
 }
 .object-info {
   display: grid;

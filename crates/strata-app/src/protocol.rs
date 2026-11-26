@@ -64,6 +64,9 @@ pub struct SavedTab {
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub file_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub database: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -516,15 +519,26 @@ fn saved_tab_title_is_optional_and_roundtrips() {
     });
     let parsed: SavedTab = serde_json::from_value(legacy).expect("legacy saved tab");
     assert_eq!(parsed.title, None);
+    assert_eq!(parsed.file_path, None);
     let encoded = serde_json::to_value(&parsed).expect("encode legacy tab");
     assert!(encoded.get("title").is_none());
+    assert!(encoded.get("filePath").is_none());
 
     let renamed = SavedTab {
         title: Some("Monthly report".into()),
+        file_path: Some("/home/ada/Documents/Strata/monthly_report.sql".into()),
         ..parsed
     };
     let encoded_renamed = serde_json::to_value(&renamed).expect("encode renamed tab");
     assert_eq!(encoded_renamed["title"], "Monthly report");
+    assert_eq!(
+        encoded_renamed["filePath"],
+        "/home/ada/Documents/Strata/monthly_report.sql"
+    );
     let roundtrip: SavedTab = serde_json::from_value(encoded_renamed).expect("decode renamed tab");
     assert_eq!(roundtrip.title.as_deref(), Some("Monthly report"));
+    assert_eq!(
+        roundtrip.file_path.as_deref(),
+        Some("/home/ada/Documents/Strata/monthly_report.sql")
+    );
 }

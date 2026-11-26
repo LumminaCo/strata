@@ -153,7 +153,8 @@ export function ScriptTabItem({
 }: ScriptTabItemProps) {
   const skipFinalFocusRef = useRef(false);
   const baseTitle = tab.title ? `${label} (${defaultLabel})` : label;
-  const title = unsaved ? `${baseTitle} · Unsaved` : baseTitle;
+  const withPath = tab.filePath ? `${baseTitle} · ${tab.filePath}` : baseTitle;
+  const title = unsaved ? `${withPath} · Unsaved` : withPath;
 
   return (
     <ContextMenu>
@@ -521,6 +522,46 @@ export function PinnedInspectionTabItem({
         <ContextMenuItem onClick={onClose}>
           <X />
           Close
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+export interface MessagesTabItemProps {
+  active: boolean;
+  canMoveLeft: boolean;
+  canMoveRight: boolean;
+  dragProps: TabDragBindings;
+  onSelect: () => void;
+  onMoveLeft: () => void;
+  onMoveRight: () => void;
+}
+
+export function MessagesTabItem({
+  active,
+  canMoveLeft,
+  canMoveRight,
+  dragProps,
+  onSelect,
+  onMoveLeft,
+  onMoveRight,
+}: MessagesTabItemProps) {
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger className="result-tab" data-active={active} {...dragProps}>
+        <Button variant="ghost" role="tab" aria-selected={active} onClick={onSelect}>
+          <span className="tab-label">Messages</span>
+        </Button>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem disabled={!canMoveLeft} onClick={onMoveLeft}>
+          <ArrowLeft />
+          Move left
+        </ContextMenuItem>
+        <ContextMenuItem disabled={!canMoveRight} onClick={onMoveRight}>
+          <ArrowRight />
+          Move right
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>

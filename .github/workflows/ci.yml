@@ -2,7 +2,11 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches:
+      - main
+      - "release/**"
+    tags:
+      - "v*"
   pull_request:
 
 permissions:
@@ -37,11 +41,16 @@ jobs:
             HOST_UID=${{ env.STRATA_UID }}
             HOST_GID=${{ env.STRATA_GID }}
           cache-from: type=gha,scope=strata-dev
-          cache-to: type=gha,scope=strata-dev,mode=max
-      - run: ./x ci
-      - run: ./x test-int
+          cache-to: ${{ github.event_name == 'push' && 'type=gha,scope=strata-dev,mode=max' || '' }}
+      - name: Verify builds and unit tests
+        run: ./x ci
+      - id: test-int
+        name: Run integration tests
+        if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/tags/v')) }}
+        run: ./x test-int
       - name: Show fixture logs on failure
-        if: failure()
+        if: ${{ failure() && steps.test-int.outcome == 'failure' }}
         run: docker compose logs --tail 40 postgres mssql oracle
-      - if: always()
+      - name: Tear down containers
+        if: always()
         run: ./x down

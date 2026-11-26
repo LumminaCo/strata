@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
+import type {
+  DragEvent as ReactDragEvent,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 
 import {
   computeDropTarget,
@@ -20,10 +24,16 @@ interface DragSession {
   dropTarget: TabDropTarget | null;
 }
 
+export interface TabDragState {
+  draggingId: string | null;
+  dropTarget: TabDropTarget | null;
+}
+
 export interface TabDragBindings {
   ref: (element: HTMLElement | null) => void;
   onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
   onClickCapture: (event: ReactMouseEvent<HTMLElement>) => void;
+  onDragStart: (event: ReactDragEvent<HTMLElement>) => void;
   "data-dragging": "true" | undefined;
   "data-drop-position": DropPlacement | undefined;
 }
@@ -33,52 +43,103 @@ export interface UseTabDragOptions {
   onReorder: (activeId: string, targetId: string, placement: DropPlacement) => void;
 }
 
-export function useTabDrag({ disabled = false, onReorder }: UseTabDragOptions) {
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [dropTarget, setDropTarget] = useState<TabDropTarget | null>(null);
+interface PointerDownLike {
+  button: number;
+  clientX: number;
+  clientY: number;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+  defaultPrevented?: boolean;
+  target: EventTarget | null;
+}
 
-  const listRef = useRef<HTMLDivElement>(null);
-  const itemRefs = useRef(new Map<string, HTMLElement>());
-  const sessionRef = useRef<DragSession | null>(null);
-  const suppressClickRef = useRef(false);
-  const onReorderRef = useRef(onReorder);
-  onReorderRef.current = onReorder;
+interface PreventableEventLike {
+  preventDefault: () => void;
+  stopPropagation: () => void;
+}
 
-  const stopSession = useCallback((commit: boolean) => {
-    const session = sessionRef.current;
-    if (!session) return;
-    sessionRef.current = null;
-    delete document.body.dataset.tabDragging;
+interface DragStartLike {
+  preventDefault: () => void;
+}
 
-    if (session.started) {
-      suppressClickRef.current = true;
-      window.setTimeout(() => {
-        suppressClickRef.current = false;
-      }, 0);
-      if (commit && session.dropTarget) {
-        onReorderRef.current(session.id, session.dropTarget.id, session.dropTarget.placement);
+export interface TabDragControllerOptions {
+  getDisabled: () => boolean;
+  getList: () => HTMLElement | null;
+  onReorder: (activeId: string, targetId: string, placement: DropPlacement) => void;
+  onStateChange: (state: TabDragState) => void;
+}
+
+export function createTabDragController({
+  getDisabled,
+  getList,
+  onReorder,
+  onStateChange,
+}: TabDragControllerOptions) {
+  const itemRefs = new Map<string, HTMLElement>();
+  const refCallbacks = new Map<string, (element: HTMLElement | null) => void>();
+
+  let session: DragSession | null = null;
+  let cleanupListeners: (() => void) | null = null;
+  let suppressClick = false;
+  let suppressClickTimer: number | null = null;
+  let state: TabDragState = { draggingId: null, dropTarget: null };
+
+  function emitState(nextDraggingId: string | null, nextDropTarget: TabDropTarget | null) {
+    if (
+      state.draggingId === nextDraggingId &&
+      state.dropTarget?.id === nextDropTarget?.id &&
+      state.dropTarget?.placement === nextDropTarget?.placement
+    ) {
+      return;
+    }
+    state = { draggingId: nextDraggingId, dropTarget: nextDropTarget };
+    onStateChange(state);
+  }
+
+  function clearBodyDragFlag() {
+    if (typeof document !== "undefined" && document.body) {
+      delete document.body.dataset.tabDragging;
+    }
+  }
+
+  function clearListeners() {
+    if (!cleanupListeners) return;
+    cleanupListeners();
+    cleanupListeners = null;
+  }
+
+  function stopSession(commit: boolean) {
+    clearListeners();
+    const active = session;
+    if (!active) return;
+    session = null;
+    clearBodyDragFlag();
+
+    if (active.started) {
+      suppressClick = true;
+      if (suppressClickTimer !== null && typeof window !== "undefined") {
+        window.clearTimeout(suppressClickTimer);
+      }
+      if (typeof window !== "undefined") {
+        suppressClickTimer = window.setTimeout(() => {
+          suppressClick = false;
+          suppressClickTimer = null;
+        }, 0);
+      } else {
+        suppressClick = false;
+      }
+      if (commit && active.dropTarget) {
+        onReorder(active.id, active.dropTarget.id, active.dropTarget.placement);
       }
     }
 
-    setDraggingId(null);
-    setDropTarget(null);
-  }, []);
+    emitState(null, null);
+  }
 
-  useEffect(() => {
-    return () => {
-      delete document.body.dataset.tabDragging;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (disabled && sessionRef.current) {
-      stopSession(false);
-    }
-  }, [disabled, stopSession]);
-
-  const measureRects = useCallback((): TabRect[] => {
+  function measureRects(): TabRect[] {
     const rects: TabRect[] = [];
-    for (const [id, element] of itemRefs.current.entries()) {
+    for (const [id, element] of itemRefs.entries()) {
       if (!element.isConnected) continue;
       const box = element.getBoundingClientRect();
       if (box.width <= 0) continue;
@@ -86,116 +147,201 @@ export function useTabDrag({ disabled = false, onReorder }: UseTabDragOptions) {
     }
     rects.sort((a, b) => a.left - b.left);
     return rects;
-  }, []);
+  }
 
-  const startTracking = useCallback(
-    (id: string, event: ReactPointerEvent<HTMLElement>) => {
-      if (disabled || event.button !== 0 || event.ctrlKey || event.metaKey || event.altKey) return;
-      const target = event.target as HTMLElement | null;
-      if (target?.closest("[data-no-drag='true'], input, textarea")) return;
+  function startTracking(id: string, event: PointerDownLike) {
+    if (
+      getDisabled() ||
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.altKey
+    ) {
+      return;
+    }
+    const target = event.target as HTMLElement | null;
+    if (target?.closest?.("[data-no-drag='true'], input, textarea")) return;
 
-      const session: DragSession = {
-        id,
-        startX: event.clientX,
-        startY: event.clientY,
-        started: false,
-        dropTarget: null,
-      };
-      sessionRef.current = session;
+    if (session) {
+      stopSession(false);
+    }
 
-      const handlePointerMove = (moveEvent: PointerEvent) => {
-        const current = sessionRef.current;
-        if (!current) return;
-        const dx = moveEvent.clientX - current.startX;
-        const dy = moveEvent.clientY - current.startY;
-        if (!current.started) {
-          if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
-          current.started = true;
+    session = {
+      id,
+      startX: event.clientX,
+      startY: event.clientY,
+      started: false,
+      dropTarget: null,
+    };
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const current = session;
+      if (!current) return;
+      const dx = moveEvent.clientX - current.startX;
+      const dy = moveEvent.clientY - current.startY;
+      if (!current.started) {
+        if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+        current.started = true;
+        if (typeof document !== "undefined" && document.body) {
           document.body.dataset.tabDragging = "true";
-          setDraggingId(current.id);
         }
-
-        const list = listRef.current;
-        if (list) {
-          const listRect = list.getBoundingClientRect();
-          if (moveEvent.clientX < listRect.left + EDGE_SCROLL_ZONE_PX) {
-            list.scrollLeft -= EDGE_SCROLL_STEP_PX;
-          } else if (moveEvent.clientX > listRect.right - EDGE_SCROLL_ZONE_PX) {
-            list.scrollLeft += EDGE_SCROLL_STEP_PX;
-          }
+        if (typeof window !== "undefined") {
+          window.getSelection?.()?.removeAllRanges();
         }
+      }
 
-        const nextTarget = computeDropTarget(moveEvent.clientX, current.id, measureRects());
-        current.dropTarget = nextTarget;
-        setDropTarget((previous) => {
-          if (previous?.id === nextTarget?.id && previous?.placement === nextTarget?.placement) {
-            return previous;
-          }
-          return nextTarget;
-        });
-      };
+      const list = getList();
+      if (list) {
+        const listRect = list.getBoundingClientRect();
+        if (moveEvent.clientX < listRect.left + EDGE_SCROLL_ZONE_PX) {
+          list.scrollLeft -= EDGE_SCROLL_STEP_PX;
+        } else if (moveEvent.clientX > listRect.right - EDGE_SCROLL_ZONE_PX) {
+          list.scrollLeft += EDGE_SCROLL_STEP_PX;
+        }
+      }
 
-      const cleanup = () => {
+      const nextTarget = computeDropTarget(moveEvent.clientX, current.id, measureRects());
+      current.dropTarget = nextTarget;
+      emitState(current.id, nextTarget);
+    };
+
+    const handlePointerUp = () => {
+      stopSession(true);
+    };
+
+    const handlePointerCancel = () => {
+      stopSession(false);
+    };
+
+    const handleKeyDown = (keyEvent: KeyboardEvent) => {
+      if (keyEvent.key !== "Escape") return;
+      keyEvent.preventDefault();
+      stopSession(false);
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", handlePointerUp);
+      window.addEventListener("pointercancel", handlePointerCancel);
+      window.addEventListener("keydown", handleKeyDown);
+      cleanupListeners = () => {
         window.removeEventListener("pointermove", handlePointerMove);
         window.removeEventListener("pointerup", handlePointerUp);
         window.removeEventListener("pointercancel", handlePointerCancel);
         window.removeEventListener("keydown", handleKeyDown);
       };
+    }
+  }
 
-      const handlePointerUp = () => {
-        cleanup();
-        stopSession(true);
-      };
+  function registerRef(id: string): (element: HTMLElement | null) => void {
+    const existing = refCallbacks.get(id);
+    if (existing) return existing;
+    const callback = (element: HTMLElement | null) => {
+      if (element) {
+        itemRefs.set(id, element);
+      } else {
+        itemRefs.delete(id);
+      }
+    };
+    refCallbacks.set(id, callback);
+    return callback;
+  }
 
-      const handlePointerCancel = () => {
-        cleanup();
-        stopSession(false);
-      };
-
-      const handleKeyDown = (keyEvent: KeyboardEvent) => {
-        if (keyEvent.key !== "Escape") return;
-        keyEvent.preventDefault();
-        cleanup();
-        stopSession(false);
-      };
-
-      window.addEventListener("pointermove", handlePointerMove);
-      window.addEventListener("pointerup", handlePointerUp);
-      window.addEventListener("pointercancel", handlePointerCancel);
-      window.addEventListener("keydown", handleKeyDown);
-    },
-    [disabled, measureRects, stopSession],
-  );
-
-  const registerRef = useCallback(
-    (id: string) => (element: HTMLElement | null) => {
-      if (element) itemRefs.current.set(id, element);
-      else itemRefs.current.delete(id);
-    },
-    [],
-  );
-
-  const handleClickCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
-    if (!suppressClickRef.current) return;
+  function handleClickCapture(event: PreventableEventLike) {
+    if (!suppressClick) return;
     event.preventDefault();
     event.stopPropagation();
+  }
+
+  function handleDragStart(event: DragStartLike) {
+    event.preventDefault();
+  }
+
+  function cancel() {
+    stopSession(false);
+  }
+
+  function dispose() {
+    stopSession(false);
+    if (suppressClickTimer !== null && typeof window !== "undefined") {
+      window.clearTimeout(suppressClickTimer);
+      suppressClickTimer = null;
+    }
+    suppressClick = false;
+    clearBodyDragFlag();
+    itemRefs.clear();
+    refCallbacks.clear();
+  }
+
+  return {
+    registerRef,
+    startTracking,
+    handleClickCapture,
+    handleDragStart,
+    cancel,
+    dispose,
+  };
+}
+
+export function useTabDrag({ disabled = false, onReorder }: UseTabDragOptions) {
+  const [dragState, setDragState] = useState<TabDragState>({
+    draggingId: null,
+    dropTarget: null,
+  });
+
+  const listRef = useRef<HTMLDivElement>(null);
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
+  const onReorderRef = useRef(onReorder);
+  onReorderRef.current = onReorder;
+
+  const controllerRef = useRef<ReturnType<typeof createTabDragController> | null>(null);
+  if (!controllerRef.current) {
+    controllerRef.current = createTabDragController({
+      getDisabled: () => disabledRef.current,
+      getList: () => listRef.current,
+      onReorder: (activeId, targetId, placement) =>
+        onReorderRef.current(activeId, targetId, placement),
+      onStateChange: setDragState,
+    });
+  }
+
+  useEffect(() => {
+    const controller = controllerRef.current;
+    return () => {
+      controller?.dispose();
+    };
   }, []);
 
+  useEffect(() => {
+    if (disabled) {
+      controllerRef.current?.cancel();
+    }
+  }, [disabled]);
+
   const getTabProps = useCallback(
-    (id: string): TabDragBindings => ({
-      ref: registerRef(id),
-      onPointerDown: (event: ReactPointerEvent<HTMLElement>) => startTracking(id, event),
-      onClickCapture: handleClickCapture,
-      "data-dragging": draggingId === id ? "true" : undefined,
-      "data-drop-position": dropTarget?.id === id ? dropTarget.placement : undefined,
-    }),
-    [draggingId, dropTarget, handleClickCapture, registerRef, startTracking],
+    (id: string): TabDragBindings => {
+      const controller = controllerRef.current;
+      return {
+        ref: controller ? controller.registerRef(id) : () => {},
+        onPointerDown: (event: ReactPointerEvent<HTMLElement>) =>
+          controller?.startTracking(id, event),
+        onClickCapture: (event: ReactMouseEvent<HTMLElement>) =>
+          controller?.handleClickCapture(event),
+        onDragStart: (event: ReactDragEvent<HTMLElement>) => controller?.handleDragStart(event),
+        "data-dragging": dragState.draggingId === id ? "true" : undefined,
+        "data-drop-position":
+          dragState.dropTarget?.id === id ? dragState.dropTarget.placement : undefined,
+      };
+    },
+    [dragState.draggingId, dragState.dropTarget],
   );
 
   return {
     listRef,
-    draggingId,
-    dropTarget,
+    draggingId: dragState.draggingId,
+    dropTarget: dragState.dropTarget,
     getTabProps,
   };
 }

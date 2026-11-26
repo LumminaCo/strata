@@ -2,16 +2,24 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { ResultSet } from "@/components/result-grid";
-import { ResultTabItem, ScriptTabItem, type TabDragBindings } from "@/features/tab-controls";
+import {
+  MessagesTabItem,
+  ResultTabItem,
+  ScriptTabItem,
+  type TabDragBindings,
+} from "@/features/tab-controls";
 import {
   MAX_TAB_TITLE_LENGTH,
+  MESSAGES_TAB_ID,
   computeDropTarget,
   defaultResultTabLabel,
   defaultScriptTabLabel,
   moveItemByOffset,
   normalizeTabTitle,
   reorderById,
+  reorderByOrder,
   reorderItems,
+  resolveResultPanelOrder,
   resultTabLabel,
   scriptTabLabel,
 } from "@/features/tab-order";
@@ -21,6 +29,7 @@ const idleDragProps: TabDragBindings = {
   ref: () => {},
   onPointerDown: () => {},
   onClickCapture: () => {},
+  onDragStart: () => {},
   "data-dragging": undefined,
   "data-drop-position": undefined,
 };
@@ -160,6 +169,58 @@ describe("tab reordering helpers", () => {
     // Left half of "b" drops before "b", right half of "b" is a no-op.
     expect(computeDropTarget(120, "c", rects)).toEqual({ id: "b", placement: "before" });
     expect(computeDropTarget(190, "c", rects)).toBeNull();
+  });
+
+  it("syncs item arrays to an explicit order and keeps reference when already ordered", () => {
+    const items = [
+      { id: "cursor-1", name: "Result 1" },
+      { id: "cursor-2", name: "Result 2" },
+      { id: "cursor-3", name: "Result 3" },
+    ];
+    const getId = (item: { id: string }) => item.id;
+
+    expect(reorderByOrder(items, ["cursor-1", "pinned:users", "cursor-2", "cursor-3"], getId)).toBe(
+      items,
+    );
+    expect(
+      reorderByOrder(items, ["cursor-3", "messages", "cursor-1", "cursor-2"], getId).map(getId),
+    ).toEqual(["cursor-3", "cursor-1", "cursor-2"]);
+  });
+
+  it("resolves unified result panel order across results, pinned inspections, and Messages", () => {
+    const pinnedUsers = JSON.stringify(["conn-1", "pagila", "public", 101, "users"]);
+    const pinnedOrders = JSON.stringify(["conn-1", "pagila", "public", 102, "orders"]);
+
+    // Default order places results, then pinned inspections, then Messages.
+    expect(resolveResultPanelOrder(undefined, ["cursor-1", "cursor-2"], [pinnedUsers])).toEqual([
+      "cursor-1",
+      "cursor-2",
+      pinnedUsers,
+      MESSAGES_TAB_ID,
+    ]);
+
+    // Preserves custom order when dragging results past pinned inspections and Messages.
+    const customOrder = [pinnedUsers, MESSAGES_TAB_ID, "cursor-2", "cursor-1"];
+    expect(resolveResultPanelOrder(customOrder, ["cursor-1", "cursor-2"], [pinnedUsers])).toEqual(
+      customOrder,
+    );
+
+    // Appends a new result tab (Ctrl+Shift+Enter) right after the last existing result tab.
+    expect(
+      resolveResultPanelOrder(customOrder, ["cursor-1", "cursor-2", "cursor-3"], [pinnedUsers]),
+    ).toEqual([pinnedUsers, MESSAGES_TAB_ID, "cursor-2", "cursor-1", "cursor-3"]);
+
+    // Appends a newly pinned table inspection right after the last pinned tab.
+    expect(
+      resolveResultPanelOrder(customOrder, ["cursor-1", "cursor-2"], [pinnedUsers, pinnedOrders]),
+    ).toEqual([pinnedUsers, pinnedOrders, MESSAGES_TAB_ID, "cursor-2", "cursor-1"]);
+
+    // Replaces old results on a normal run while preserving pinned and Messages order.
+    expect(resolveResultPanelOrder(customOrder, ["cursor-9"], [pinnedUsers])).toEqual([
+      "cursor-9",
+      pinnedUsers,
+      MESSAGES_TAB_ID,
+    ]);
   });
 });
 
@@ -311,6 +372,42 @@ describe("tab control rendering", () => {
     expect(renamingUnsavedMarkup.indexOf('class="unsaved-dot"')).toBeLessThan(
       renamingUnsavedMarkup.indexOf("db-icon"),
     );
+
+    const linkedTab = sampleTab("t2", {
+      title: "Invoices",
+      filePath: "/home/ada/Documents/Strata/invoices.sql",
+    });
+    const linkedMarkup = renderToStaticMarkup(
+      <ScriptTabItem
+        tab={linkedTab}
+        connection={connection}
+        label="Invoices"
+        defaultLabel="Analytics"
+        active
+        unsaved={false}
+        renaming={false}
+        canMoveLeft={false}
+        canMoveRight
+        canCloseOthers
+        canCloseRight
+        closeShortcut="Ctrl+W"
+        dragProps={idleDragProps}
+        onSelect={() => {}}
+        onStartRename={() => {}}
+        onCommitRename={() => {}}
+        onCancelRename={() => {}}
+        onResetName={() => {}}
+        onMoveLeft={() => {}}
+        onMoveRight={() => {}}
+        onDuplicate={() => {}}
+        onClose={() => {}}
+        onCloseOthers={() => {}}
+        onCloseRight={() => {}}
+      />,
+    );
+    expect(linkedMarkup).toContain(
+      'title="Invoices (Analytics) · /home/ada/Documents/Strata/invoices.sql"',
+    );
   });
 
   it("renders result tab with custom label and inline rename input", () => {
@@ -371,5 +468,25 @@ describe("tab control rendering", () => {
     expect(renameMarkup).toContain('class="tab-rename-input"');
     expect(renameMarkup).toContain('value="Top customers"');
     expect(renameMarkup).toContain('placeholder="Result 2"');
+  });
+
+  it("renders Messages tab with draggable result-tab wrapper and drop indicator attributes", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTabItem
+        active
+        canMoveLeft
+        canMoveRight={false}
+        dragProps={{ ...idleDragProps, "data-drop-position": "before" }}
+        onSelect={() => {}}
+        onMoveLeft={() => {}}
+        onMoveRight={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("Messages");
+    expect(markup).toContain('class="result-tab"');
+    expect(markup).toContain('data-drop-position="before"');
+    expect(markup).toContain('data-slot="context-menu-trigger"');
+    expect(markup).toContain('aria-selected="true"');
   });
 });

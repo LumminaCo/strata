@@ -2,6 +2,7 @@ import type { ResultSet } from "@/components/result-grid";
 import type { SavedTab } from "@/ipc/bindings/protocol";
 
 export const MAX_TAB_TITLE_LENGTH = 80;
+export const MESSAGES_TAB_ID = "messages";
 
 export type DropPlacement = "before" | "after";
 
@@ -74,6 +75,101 @@ export function moveItemByOffset<T>(
   const nextIndex = index + delta;
   if (nextIndex < 0 || nextIndex >= items.length) return items as T[];
   return reorderItems(items, index, nextIndex);
+}
+
+export function reorderByOrder<T>(
+  items: readonly T[],
+  order: readonly string[],
+  getId: (item: T) => string,
+): T[] {
+  if (items.length < 2) return items as T[];
+  const byId = new Map<string, T>();
+  for (const item of items) {
+    byId.set(getId(item), item);
+  }
+  const ordered: T[] = [];
+  const seen = new Set<string>();
+  for (const id of order) {
+    const item = byId.get(id);
+    if (!item || seen.has(id)) continue;
+    seen.add(id);
+    ordered.push(item);
+  }
+  for (const item of items) {
+    const id = getId(item);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    ordered.push(item);
+  }
+  if (ordered.length === items.length && ordered.every((item, index) => item === items[index])) {
+    return items as T[];
+  }
+  return ordered;
+}
+
+export function resolveResultPanelOrder(
+  savedOrder: readonly string[] | undefined,
+  resultIds: readonly string[],
+  pinnedKeys: readonly string[],
+): string[] {
+  const resultSet = new Set(resultIds);
+  const pinnedSet = new Set(pinnedKeys);
+
+  if (!savedOrder || savedOrder.length === 0) {
+    return [...resultIds, ...pinnedKeys, MESSAGES_TAB_ID];
+  }
+
+  const resolved: string[] = [];
+  const seen = new Set<string>();
+  for (const id of savedOrder) {
+    if (seen.has(id)) continue;
+    if (id === MESSAGES_TAB_ID || resultSet.has(id) || pinnedSet.has(id)) {
+      seen.add(id);
+      resolved.push(id);
+    }
+  }
+
+  const missingResults = resultIds.filter((id) => !seen.has(id));
+  if (missingResults.length > 0) {
+    let lastResultIndex = -1;
+    for (let index = resolved.length - 1; index >= 0; index -= 1) {
+      const id = resolved[index];
+      if (id !== undefined && resultSet.has(id)) {
+        lastResultIndex = index;
+        break;
+      }
+    }
+    const insertAt = lastResultIndex >= 0 ? lastResultIndex + 1 : 0;
+    resolved.splice(insertAt, 0, ...missingResults);
+    for (const id of missingResults) seen.add(id);
+  }
+
+  const missingPinned = pinnedKeys.filter((id) => !seen.has(id));
+  if (missingPinned.length > 0) {
+    let lastPinnedIndex = -1;
+    for (let index = resolved.length - 1; index >= 0; index -= 1) {
+      const id = resolved[index];
+      if (id !== undefined && pinnedSet.has(id)) {
+        lastPinnedIndex = index;
+        break;
+      }
+    }
+    const messagesIndex = resolved.indexOf(MESSAGES_TAB_ID);
+    const insertAt =
+      lastPinnedIndex >= 0
+        ? lastPinnedIndex + 1
+        : messagesIndex >= 0
+          ? messagesIndex
+          : resolved.length;
+    resolved.splice(insertAt, 0, ...missingPinned);
+    for (const id of missingPinned) seen.add(id);
+  }
+
+  if (!seen.has(MESSAGES_TAB_ID)) {
+    resolved.push(MESSAGES_TAB_ID);
+  }
+
+  return resolved;
 }
 
 export function computeDropTarget(

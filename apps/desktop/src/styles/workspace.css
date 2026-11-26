@@ -283,6 +283,10 @@ body {
   color: var(--muted-foreground);
   font-weight: 400;
 }
+.query-tab:not([data-renaming="true"]),
+.result-tab:not([data-renaming="true"]) {
+  user-select: none;
+}
 .query-tab[data-dragging="true"],
 .result-tab[data-dragging="true"] {
   opacity: 0.45;

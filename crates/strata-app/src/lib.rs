@@ -277,6 +277,12 @@ impl AppService {
                     .await?
                     .as_ref(),
             ),
+            Command::CatalogCounts { scope, schema } => json(
+                self.metadata
+                    .object_counts(&self.engine, &scope, schema)
+                    .await?
+                    .as_ref(),
+            ),
             Command::CatalogObjects {
                 scope,
                 schema,

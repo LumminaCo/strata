@@ -17,10 +17,10 @@ import { CatalogRowMenu, type CatalogNode } from "@/features/catalog-context-men
 import type { Inspection } from "@/features/table-inspector";
 import type {
   CatalogScope,
-  CatalogSnapshot,
   Connection,
   Object as CatalogObject,
   ObjectKind,
+  ObjectKindCount,
 } from "@/ipc/bindings/protocol";
 import { dispatch, errorMessage } from "@/ipc/client";
 
@@ -30,18 +30,21 @@ export interface CatalogEntry {
   object: CatalogObject;
 }
 
-export const TABLE_PAGE_SIZE = 100;
+export const OBJECT_PAGE_SIZE = 100;
+export const TABLE_PAGE_SIZE = OBJECT_PAGE_SIZE;
 export const FILTERABLE_KINDS: ReadonlySet<ObjectKind> = new Set(["table", "procedure"]);
 const FILTER_DEBOUNCE_MS = 250;
 
-export interface TablePaginationState {
+export interface GroupPaginationState {
   hasMore: boolean;
   nextOffset: number;
   loading: boolean;
   error: string;
 }
 
-export interface FilteredTablesState {
+export type TablePaginationState = GroupPaginationState;
+
+export interface FilteredGroupState {
   query: string;
   objects: CatalogObject[];
   hasMore: boolean;
@@ -71,7 +74,7 @@ export function nodeKey(...parts: string[]) {
   return JSON.stringify(parts);
 }
 
-export function mergeTables(
+export function mergeObjects(
   existing: CatalogObject[],
   incoming: CatalogObject[],
   excludedNames: ReadonlySet<string> = new Set(),
@@ -88,49 +91,50 @@ export function mergeTables(
   return merged;
 }
 
-function makeObjectNode(
-  schemaNode: CatalogNode,
+export const mergeTables = mergeObjects;
+
+export function makeObjectNode(
+  parentNode: CatalogNode,
   object: CatalogObject,
   columns?: string[],
 ): CatalogNode {
+  const schema = parentNode.schema ?? parentNode.label;
+  const schemaKey = parentNode.schemaKey ?? parentNode.key;
   return {
     columns,
-    connection: schemaNode.connection,
-    database: schemaNode.database,
-    schema: schemaNode.schema ?? schemaNode.label,
-    schemaKey: schemaNode.key,
+    connection: parentNode.connection,
+    database: parentNode.database,
+    schema,
+    schemaKey,
     object,
-    key: nodeKey(schemaNode.key, String(object.oid), object.name),
+    key: nodeKey(schemaKey, String(object.oid), object.name),
     label: object.name,
     kind: "object",
   };
 }
 
-export function buildSchemaGroups(
+export function buildSchemaGroupsFromCounts(
   schemaNode: CatalogNode,
-  objects: CatalogObject[],
-  columns: Record<string, string[]> = {},
+  counts: ObjectKindCount[],
 ): CatalogNode[] {
-  const categories = new Map<ObjectKind, CatalogNode[]>();
-  for (const object of objects) {
-    const items = categories.get(object.kind) ?? [];
-    items.push(makeObjectNode(schemaNode, object, columns[object.oid]));
-    categories.set(object.kind, items);
-  }
-  return [...categories].map(([objectKind, items]) => {
-    const label = groups[objectKind];
-    return {
-      connection: schemaNode.connection,
-      database: schemaNode.database,
-      schema: schemaNode.schema ?? schemaNode.label,
-      schemaKey: schemaNode.key,
-      objectKind,
-      kind: "group",
-      label,
-      key: nodeKey(schemaNode.key, label),
-      children: items,
-    };
-  });
+  const schema = schemaNode.schema ?? schemaNode.label;
+  return counts
+    .filter((entry) => entry.count > 0)
+    .map((entry) => {
+      const label = groups[entry.kind];
+      return {
+        connection: schemaNode.connection,
+        database: schemaNode.database,
+        schema,
+        schemaKey: schemaNode.key,
+        objectKind: entry.kind,
+        totalCount: entry.count,
+        countLabel: String(entry.count),
+        kind: "group",
+        label,
+        key: nodeKey(schemaNode.key, label),
+      };
+    });
 }
 
 function loadMoreNode(
@@ -138,23 +142,63 @@ function loadMoreNode(
   position: "top" | "bottom",
   state: { loading: boolean; error: string },
 ): CatalogNode {
+  const groupLabel = groupNode.label.toLowerCase();
   return {
     connection: groupNode.connection,
     database: groupNode.database,
     schema: groupNode.schema,
     schemaKey: groupNode.schemaKey,
-    objectKind: "table",
+    groupKey: groupNode.key,
+    objectKind: groupNode.objectKind,
     position,
     kind: "load_more",
     label: state.loading
-      ? "Fetching more tables…"
+      ? `Fetching more ${groupLabel}…`
       : state.error
-        ? "Retry fetching more tables"
-        : "Fetch more tables",
+        ? `Retry fetching more ${groupLabel}`
+        : `Fetch more ${groupLabel}`,
     loading: state.loading,
     error: state.error,
     key: nodeKey(groupNode.key, "load-more", position),
   };
+}
+
+function formatGroupCount(
+  groupNode: CatalogNode,
+  loadedItems: CatalogNode[] | undefined,
+  pagination: { hasMore: boolean } | undefined,
+): string | undefined {
+  if (loadedItems === undefined) {
+    return groupNode.totalCount !== undefined ? String(groupNode.totalCount) : groupNode.countLabel;
+  }
+  if (!pagination?.hasMore) {
+    return String(loadedItems.length);
+  }
+  if (groupNode.totalCount !== undefined && groupNode.totalCount > loadedItems.length) {
+    return String(groupNode.totalCount);
+  }
+  return `${loadedItems.length}+`;
+}
+
+export function isNodeVisibleAndExpanded(
+  node: CatalogNode,
+  expanded: ReadonlySet<string>,
+): boolean {
+  if (!expanded.has(node.key)) return false;
+  const connectionId = node.connection.id;
+  if (!connectionId) return false;
+  if (node.connection.folder && !expanded.has(nodeKey("folder", node.connection.folder))) {
+    return false;
+  }
+  const connectionKey = nodeKey(connectionId);
+  if (node.kind === "connection") return true;
+  if (!expanded.has(connectionKey)) return false;
+  const databaseKey = nodeKey(connectionKey, node.database);
+  if (node.kind === "database") return true;
+  if (!expanded.has(databaseKey)) return false;
+  if (node.kind === "schema") return true;
+  const schemaKey = node.schemaKey ?? nodeKey(databaseKey, node.schema ?? "");
+  return expanded.has(schemaKey);
 }
 
 export function buildExplorerRows(params: {
@@ -162,30 +206,30 @@ export function buildExplorerRows(params: {
   expanded: ReadonlySet<string>;
   children: Record<string, CatalogNode[]>;
   filter: string;
-  tablePages: Record<string, TablePaginationState>;
-  filteredTables: Record<string, FilteredTablesState>;
+  groupPages: Record<string, GroupPaginationState>;
+  filteredGroups: Record<string, FilteredGroupState>;
 }): ExplorerRow[] {
-  const { roots, expanded, children, filter, tablePages, filteredTables } = params;
+  const { roots, expanded, children, filter, groupPages, filteredGroups } = params;
   const needle = filter.trim().toLowerCase();
   const rows: ExplorerRow[] = [];
 
-  function appendTableGroup(
+  function appendGroupRows(
     groupNode: CatalogNode,
-    items: CatalogNode[],
+    items: CatalogNode[] | undefined,
     depth: number,
     pagination: { hasMore: boolean; loading: boolean; error: string } | undefined,
     forceExpanded: boolean,
   ) {
-    const countLabel = pagination?.hasMore ? `${items.length}+` : String(items.length);
+    const countLabel = formatGroupCount(groupNode, items, pagination);
     rows.push({
       node: {
         ...groupNode,
         countLabel,
-        children: items,
       },
       depth,
     });
     if (!forceExpanded && !expanded.has(groupNode.key)) return;
+    if (items === undefined) return;
     if (pagination?.hasMore) {
       rows.push({
         node: loadMoreNode(groupNode, "top", pagination),
@@ -211,84 +255,52 @@ export function buildExplorerRows(params: {
     rows.push({ node: schemaNode, depth });
     let matched = false;
 
-    const tablePage = tablePages[schemaNode.key];
-    const existingTableGroup = schemaGroups.find((group) => group.objectKind === "table");
-    const remote = filteredTables[schemaNode.key];
-    const remoteReady = !!remote && remote.query === needle;
-    const remoteHasObjects = remoteReady && remote.objects.length > 0;
-    const remoteInitialLoading =
-      !!tablePage?.hasMore && (!remoteReady || (remote.loading && !remoteHasObjects));
-    const remoteInitialError = remoteReady && !remoteHasObjects ? remote.error : "";
+    for (const group of schemaGroups) {
+      if (!group.objectKind || !FILTERABLE_KINDS.has(group.objectKind)) continue;
+      const loadedItems = children[group.key] ?? group.children;
+      const pageState = groupPages[group.key];
+      const isCompleteLocally = loadedItems !== undefined && !pageState?.hasMore;
+      const needsRemote = !isCompleteLocally;
+      const remote = filteredGroups[group.key];
+      const remoteReady = !!remote && remote.query === needle;
+      const remoteHasObjects = remoteReady && remote.objects.length > 0;
+      const remoteInitialLoading =
+        needsRemote && (!remoteReady || (remote.loading && !remoteHasObjects));
+      const remoteInitialError =
+        needsRemote && remoteReady && !remoteHasObjects ? remote.error : "";
 
-    let tableItems: CatalogNode[];
-    let tablePagination: { hasMore: boolean; loading: boolean; error: string } | undefined;
-    if (
-      tablePage?.hasMore &&
-      remoteReady &&
-      (remoteHasObjects || (!remote.loading && !remote.error))
-    ) {
-      tableItems = remote.objects.map((object) => makeObjectNode(schemaNode, object));
-      tablePagination = {
-        hasMore: remote.hasMore,
-        loading: remote.loading,
-        error: remote.error,
-      };
-    } else {
-      tableItems = (existingTableGroup?.children ?? []).filter(
-        (item) =>
-          item.object &&
-          FILTERABLE_KINDS.has(item.object.kind) &&
-          item.object.kind === "table" &&
-          item.label.toLowerCase().includes(needle),
-      );
-    }
+      let items: CatalogNode[];
+      let pagination: { hasMore: boolean; loading: boolean; error: string } | undefined;
+      if (needsRemote && remoteReady && (remoteHasObjects || (!remote.loading && !remote.error))) {
+        items = remote.objects.map((object) => makeObjectNode(group, object));
+        pagination = {
+          hasMore: remote.hasMore,
+          loading: remote.loading,
+          error: remote.error,
+        };
+      } else {
+        items = (loadedItems ?? []).filter(
+          (item) =>
+            item.object &&
+            item.object.kind === group.objectKind &&
+            item.label.toLowerCase().includes(needle),
+        );
+      }
 
-    if (tableItems.length > 0 || remoteInitialLoading || remoteInitialError) {
-      const tableGroup: CatalogNode = existingTableGroup ?? {
-        connection: schemaNode.connection,
-        database: schemaNode.database,
-        schema: schemaNode.schema ?? schemaNode.label,
-        schemaKey: schemaNode.key,
-        objectKind: "table",
-        kind: "group",
-        label: groups.table,
-        key: nodeKey(schemaNode.key, groups.table),
-      };
-      appendTableGroup(
-        {
-          ...tableGroup,
-          loading: remoteInitialLoading,
-          error: remoteInitialError || undefined,
-        },
-        tableItems,
-        depth + 1,
-        tablePagination,
-        true,
-      );
-      matched = true;
-    }
-
-    const procedureGroup = schemaGroups.find((group) => group.objectKind === "procedure");
-    if (procedureGroup) {
-      const procItems = (procedureGroup.children ?? []).filter(
-        (item) =>
-          item.object &&
-          FILTERABLE_KINDS.has(item.object.kind) &&
-          item.object.kind === "procedure" &&
-          item.label.toLowerCase().includes(needle),
-      );
-      if (procItems.length > 0) {
-        rows.push({
-          node: {
-            ...procedureGroup,
-            countLabel: String(procItems.length),
-            children: procItems,
+      if (items.length > 0 || remoteInitialLoading || remoteInitialError) {
+        appendGroupRows(
+          {
+            ...group,
+            totalCount: undefined,
+            countLabel: undefined,
+            loading: remoteInitialLoading,
+            error: remoteInitialError || undefined,
           },
-          depth: depth + 1,
-        });
-        for (const item of procItems) {
-          rows.push({ node: item, depth: depth + 2 });
-        }
+          items,
+          depth + 1,
+          pagination,
+          true,
+        );
         matched = true;
       }
     }
@@ -317,10 +329,10 @@ export function buildExplorerRows(params: {
       return false;
     }
 
-    if (node.kind === "group" && node.objectKind === "table") {
-      const items = node.children ?? [];
-      const pagination = node.schemaKey ? tablePages[node.schemaKey] : undefined;
-      appendTableGroup(node, items, depth, pagination, false);
+    if (node.kind === "group") {
+      const items = children[node.key] ?? node.children;
+      const pagination = groupPages[node.key];
+      appendGroupRows(node, items, depth, pagination, false);
       return true;
     }
 
@@ -344,11 +356,11 @@ interface Props {
   canPin?: boolean;
   canInsertInEditor?: boolean;
   scope: (connection: Connection, database?: string, prompt?: boolean) => Promise<CatalogScope>;
-  onSnapshot: (
+  onObjects?: (
     connectionId: string,
     database: string,
     schema: string,
-    snapshot: CatalogSnapshot,
+    objects: CatalogObject[],
   ) => void;
   onEntries: (entries: CatalogEntry[]) => void;
   openSql: (connectionId: string, database?: string, text?: string, schema?: string) => void;
@@ -370,7 +382,7 @@ export function CatalogExplorer({
   canPin = false,
   canInsertInEditor = false,
   scope,
-  onSnapshot,
+  onObjects,
   onEntries,
   openSql,
   onRefresh,
@@ -388,20 +400,24 @@ export function CatalogExplorer({
   const [children, setChildren] = useState<Record<string, CatalogNode[]>>({});
   const [loading, setLoading] = useState(new Set<string>());
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [tablePages, setTablePages] = useState<Record<string, TablePaginationState>>({});
-  const [filteredTables, setFilteredTables] = useState<Record<string, FilteredTablesState>>({});
+  const [groupPages, setGroupPages] = useState<Record<string, GroupPaginationState>>({});
+  const [filteredGroups, setFilteredGroups] = useState<Record<string, FilteredGroupState>>({});
   const [area, setArea] = useState({ y: 0, height: 300 });
   const scroller = useRef<HTMLDivElement>(null);
   const requests = useRef(new Map<string, object>());
   const loads = useRef(new Map<string, CatalogNode>());
-  const tablePagesRef = useRef(tablePages);
-  tablePagesRef.current = tablePages;
+  const expandedRef = useRef(expanded);
+  expandedRef.current = expanded;
+  const groupPagesRef = useRef(groupPages);
+  groupPagesRef.current = groupPages;
   const childrenRef = useRef(children);
   childrenRef.current = children;
-  const filteredTablesRef = useRef(filteredTables);
-  filteredTablesRef.current = filteredTables;
+  const filteredGroupsRef = useRef(filteredGroups);
+  filteredGroupsRef.current = filteredGroups;
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
+  const onObjectsRef = useRef(onObjects);
+  onObjectsRef.current = onObjects;
   const filterGeneration = useRef(0);
   const paginationGeneration = useRef(0);
   const roots = useMemo(() => {
@@ -447,20 +463,26 @@ export function CatalogExplorer({
     return () => observer.disconnect();
   }, []);
 
-  function excludedMvNames(schemaKey: string): Set<string> {
-    const schemaGroups = childrenRef.current[schemaKey] ?? [];
-    const mvGroup = schemaGroups.find((group) => group.objectKind === "materialized_view");
-    return new Set((mvGroup?.children ?? []).map((item) => item.label));
+  function findGroupNode(groupKey: string): CatalogNode | undefined {
+    const loaded = loads.current.get(groupKey);
+    if (loaded && loaded.kind === "group") return loaded;
+    for (const list of Object.values(childrenRef.current)) {
+      for (const node of list) {
+        if (node.kind === "group" && node.key === groupKey) return node;
+      }
+    }
+    return undefined;
+  }
+
+  function excludedMvNames(schemaKey: string | undefined, objectKind: ObjectKind): Set<string> {
+    if (!schemaKey || objectKind !== "table") return new Set();
+    const mvGroupKey = nodeKey(schemaKey, groups.materialized_view);
+    const mvItems = childrenRef.current[mvGroupKey] ?? [];
+    return new Set(mvItems.map((item) => item.label));
   }
 
   async function load(node: CatalogNode, prompt: boolean) {
-    if (
-      node.kind === "folder" ||
-      node.kind === "group" ||
-      node.kind === "object" ||
-      node.kind === "load_more"
-    )
-      return;
+    if (node.kind === "folder" || node.kind === "object" || node.kind === "load_more") return;
     const request = {};
     loads.current.set(node.key, node);
     requests.current.set(node.key, request);
@@ -494,16 +516,34 @@ export function CatalogExplorer({
         }
         case "schema": {
           const schema = node.schema ?? node.label;
-          const snapshot = await dispatch("catalog_snapshot", { scope: args, schema });
+          const counts = await dispatch("catalog_counts", { scope: args, schema });
           if (requests.current.get(node.key) !== request) return;
-          if (node.connection.id) onSnapshot(node.connection.id, node.database, schema, snapshot);
-          nodes = buildSchemaGroups(node, snapshot.objects, snapshot.columns);
-          const loadedTables = snapshot.objects.filter((item) => item.kind === "table").length;
-          setTablePages((current) => ({
+          nodes = buildSchemaGroupsFromCounts(node, counts);
+          break;
+        }
+        case "group": {
+          const schema = node.schema ?? "";
+          const objectKind = node.objectKind;
+          if (!schema || !objectKind) return;
+          const page = await dispatch("catalog_objects", {
+            scope: args,
+            schema,
+            kinds: [objectKind],
+            offset: 0,
+            limit: OBJECT_PAGE_SIZE,
+          });
+          if (requests.current.get(node.key) !== request) return;
+          const excluded = excludedMvNames(node.schemaKey, objectKind);
+          const objects = mergeObjects([], page.objects, excluded);
+          if (node.connection.id) {
+            onObjectsRef.current?.(node.connection.id, node.database, schema, objects);
+          }
+          nodes = objects.map((object) => makeObjectNode(node, object));
+          setGroupPages((current) => ({
             ...current,
             [node.key]: {
-              hasMore: snapshot.hasMoreTables,
-              nextOffset: snapshot.hasMoreTables ? TABLE_PAGE_SIZE : loadedTables,
+              hasMore: page.hasMore,
+              nextOffset: page.objects.length,
               loading: false,
               error: "",
             },
@@ -528,41 +568,44 @@ export function CatalogExplorer({
     }
   }
 
-  async function fetchMoreTables(schemaKey: string) {
-    const schemaNode = loads.current.get(schemaKey);
-    if (!schemaNode || schemaNode.kind !== "schema") return;
-    const schema = schemaNode.schema ?? schemaNode.label;
+  async function fetchMoreObjects(groupKey: string) {
+    const groupNode = findGroupNode(groupKey);
+    if (!groupNode || groupNode.kind !== "group" || !groupNode.objectKind || !groupNode.schema) {
+      return;
+    }
+    const schema = groupNode.schema;
+    const objectKind = groupNode.objectKind;
     const trimmed = filter.trim();
     const needle = trimmed.toLowerCase();
 
     if (needle) {
-      const current = filteredTablesRef.current[schemaKey];
+      const current = filteredGroupsRef.current[groupKey];
       if (!current || current.query !== needle || current.loading || !current.hasMore) return;
       const gen = filterGeneration.current;
-      setFilteredTables((state) => ({
+      setFilteredGroups((state) => ({
         ...state,
-        [schemaKey]: { ...current, loading: true, error: "" },
+        [groupKey]: { ...current, loading: true, error: "" },
       }));
       try {
-        const args = await scopeRef.current(schemaNode.connection, schemaNode.database, true);
+        const args = await scopeRef.current(groupNode.connection, groupNode.database, true);
         const page = await dispatch("catalog_objects", {
           scope: args,
           schema,
-          kinds: ["table"],
+          kinds: [objectKind],
           search: trimmed,
           offset: current.nextOffset,
-          limit: TABLE_PAGE_SIZE,
+          limit: OBJECT_PAGE_SIZE,
         });
         if (filterGeneration.current !== gen) return;
-        const excluded = excludedMvNames(schemaKey);
-        setFilteredTables((state) => {
-          const latest = state[schemaKey];
+        const excluded = excludedMvNames(groupNode.schemaKey, objectKind);
+        setFilteredGroups((state) => {
+          const latest = state[groupKey];
           if (!latest || latest.query !== needle) return state;
           return {
             ...state,
-            [schemaKey]: {
+            [groupKey]: {
               query: needle,
-              objects: mergeTables(latest.objects, page.objects, excluded),
+              objects: mergeObjects(latest.objects, page.objects, excluded),
               hasMore: page.hasMore,
               nextOffset: current.nextOffset + page.objects.length,
               loading: false,
@@ -572,73 +615,54 @@ export function CatalogExplorer({
         });
       } catch (error) {
         if (filterGeneration.current !== gen) return;
-        setFilteredTables((state) => {
-          const latest = state[schemaKey];
+        setFilteredGroups((state) => {
+          const latest = state[groupKey];
           if (!latest || latest.query !== needle) return state;
           return {
             ...state,
-            [schemaKey]: { ...latest, loading: false, error: errorMessage(error) },
+            [groupKey]: { ...latest, loading: false, error: errorMessage(error) },
           };
         });
       }
       return;
     }
 
-    const current = tablePagesRef.current[schemaKey];
+    const current = groupPagesRef.current[groupKey];
     if (!current || current.loading || !current.hasMore) return;
     const gen = paginationGeneration.current;
-    setTablePages((state) => ({
+    setGroupPages((state) => ({
       ...state,
-      [schemaKey]: { ...current, loading: true, error: "" },
+      [groupKey]: { ...current, loading: true, error: "" },
     }));
     try {
-      const args = await scopeRef.current(schemaNode.connection, schemaNode.database, true);
+      const args = await scopeRef.current(groupNode.connection, groupNode.database, true);
       const page = await dispatch("catalog_objects", {
         scope: args,
         schema,
-        kinds: ["table"],
+        kinds: [objectKind],
         offset: current.nextOffset,
-        limit: TABLE_PAGE_SIZE,
+        limit: OBJECT_PAGE_SIZE,
       });
       if (paginationGeneration.current !== gen) return;
-      const excluded = excludedMvNames(schemaKey);
+      const excluded = excludedMvNames(groupNode.schemaKey, objectKind);
+      const incoming = mergeObjects([], page.objects, excluded);
+      if (groupNode.connection.id && incoming.length > 0) {
+        onObjectsRef.current?.(groupNode.connection.id, groupNode.database, schema, incoming);
+      }
       setChildren((state) => {
-        const schemaGroups = state[schemaKey];
-        if (!schemaGroups) return state;
-        let updated = false;
-        const nextGroups = schemaGroups.map((group) => {
-          if (group.objectKind !== "table") return group;
-          updated = true;
-          const existingObjects = (group.children ?? [])
-            .map((item) => item.object)
-            .filter((item): item is CatalogObject => Boolean(item));
-          const merged = mergeTables(existingObjects, page.objects, excluded);
-          return {
-            ...group,
-            children: merged.map((object) => makeObjectNode(schemaNode, object)),
-          };
-        });
-        if (!updated && page.objects.length > 0) {
-          const merged = mergeTables([], page.objects, excluded);
-          if (merged.length > 0) {
-            nextGroups.unshift({
-              connection: schemaNode.connection,
-              database: schemaNode.database,
-              schema,
-              schemaKey,
-              objectKind: "table",
-              kind: "group",
-              label: groups.table,
-              key: nodeKey(schemaKey, groups.table),
-              children: merged.map((object) => makeObjectNode(schemaNode, object)),
-            });
-          }
-        }
-        return { ...state, [schemaKey]: nextGroups };
+        const existingNodes = state[groupKey] ?? [];
+        const existingObjects = existingNodes
+          .map((item) => item.object)
+          .filter((item): item is CatalogObject => Boolean(item));
+        const merged = mergeObjects(existingObjects, incoming);
+        return {
+          ...state,
+          [groupKey]: merged.map((object) => makeObjectNode(groupNode, object)),
+        };
       });
-      setTablePages((state) => ({
+      setGroupPages((state) => ({
         ...state,
-        [schemaKey]: {
+        [groupKey]: {
           hasMore: page.hasMore,
           nextOffset: current.nextOffset + page.objects.length,
           loading: false,
@@ -647,19 +671,21 @@ export function CatalogExplorer({
       }));
     } catch (error) {
       if (paginationGeneration.current !== gen) return;
-      setTablePages((state) => ({
+      setGroupPages((state) => ({
         ...state,
-        [schemaKey]: { ...current, loading: false, error: errorMessage(error) },
+        [groupKey]: { ...current, loading: false, error: errorMessage(error) },
       }));
     }
   }
 
-  async function searchSchemaTables(schemaNode: CatalogNode, trimmed: string, gen: number) {
-    const schema = schemaNode.schema ?? schemaNode.label;
+  async function searchGroupObjects(groupNode: CatalogNode, trimmed: string, gen: number) {
+    if (!groupNode.schema || !groupNode.objectKind) return;
+    const schema = groupNode.schema;
+    const objectKind = groupNode.objectKind;
     const needle = trimmed.toLowerCase();
-    setFilteredTables((state) => ({
+    setFilteredGroups((state) => ({
       ...state,
-      [schemaNode.key]: {
+      [groupNode.key]: {
         query: needle,
         objects: [],
         hasMore: false,
@@ -669,21 +695,21 @@ export function CatalogExplorer({
       },
     }));
     try {
-      const args = await scopeRef.current(schemaNode.connection, schemaNode.database, false);
+      const args = await scopeRef.current(groupNode.connection, groupNode.database, false);
       const page = await dispatch("catalog_objects", {
         scope: args,
         schema,
-        kinds: ["table"],
+        kinds: [objectKind],
         search: trimmed,
         offset: 0,
-        limit: TABLE_PAGE_SIZE,
+        limit: OBJECT_PAGE_SIZE,
       });
       if (filterGeneration.current !== gen) return;
-      const excluded = excludedMvNames(schemaNode.key);
-      const objects = mergeTables([], page.objects, excluded);
-      setFilteredTables((state) => ({
+      const excluded = excludedMvNames(groupNode.schemaKey, objectKind);
+      const objects = mergeObjects([], page.objects, excluded);
+      setFilteredGroups((state) => ({
         ...state,
-        [schemaNode.key]: {
+        [groupNode.key]: {
           query: needle,
           objects,
           hasMore: page.hasMore,
@@ -694,9 +720,9 @@ export function CatalogExplorer({
       }));
     } catch (error) {
       if (filterGeneration.current !== gen) return;
-      setFilteredTables((state) => ({
+      setFilteredGroups((state) => ({
         ...state,
-        [schemaNode.key]: {
+        [groupNode.key]: {
           query: needle,
           objects: [],
           hasMore: false,
@@ -713,65 +739,111 @@ export function CatalogExplorer({
   useEffect(() => {
     paginationGeneration.current += 1;
     filterGeneration.current += 1;
-    setFilteredTables({});
-    for (const node of loads.current.values()) {
+    setFilteredGroups({});
+
+    const currentExpanded = expandedRef.current;
+    const keysToEvict = new Set<string>();
+    const nodesToReload: CatalogNode[] = [];
+
+    for (const [key, node] of loads.current.entries()) {
       const current = profiles.find((connection) => connection.id === node.connection.id);
-      if (current) void latest.current({ ...node, connection: current }, false);
+      if (!current || !isNodeVisibleAndExpanded(node, currentExpanded)) {
+        keysToEvict.add(key);
+      } else {
+        nodesToReload.push({ ...node, connection: current });
+      }
+    }
+
+    if (keysToEvict.size > 0) {
+      for (const key of keysToEvict) {
+        loads.current.delete(key);
+        requests.current.delete(key);
+      }
+      setChildren((state) => {
+        const next = { ...state };
+        for (const key of keysToEvict) delete next[key];
+        return next;
+      });
+      setGroupPages((state) => {
+        const next = { ...state };
+        for (const key of keysToEvict) delete next[key];
+        return next;
+      });
+      setErrors((state) => {
+        const next = { ...state };
+        for (const key of keysToEvict) delete next[key];
+        return next;
+      });
+      setLoading((state) => {
+        const next = new Set(state);
+        for (const key of keysToEvict) next.delete(key);
+        return next;
+      });
+    }
+
+    for (const node of nodesToReload) {
+      void latest.current(node, false);
     }
   }, [revision, profiles]);
 
-  const paginatedSchemaKeys = useMemo(
-    () =>
-      Object.entries(tablePages)
-        .filter(([, state]) => state.hasMore)
-        .map(([key]) => key)
-        .sort()
-        .join("\0"),
-    [tablePages],
-  );
+  const remoteFilterGroupKeys = useMemo(() => {
+    const keys: string[] = [];
+    for (const list of Object.values(children)) {
+      for (const node of list) {
+        if (node.kind !== "group" || !node.objectKind || !FILTERABLE_KINDS.has(node.objectKind)) {
+          continue;
+        }
+        const loadedItems = children[node.key] ?? node.children;
+        const isCompleteLocally = loadedItems !== undefined && !groupPages[node.key]?.hasMore;
+        if (!isCompleteLocally) {
+          keys.push(node.key);
+        }
+      }
+    }
+    return keys.sort().join("\0");
+  }, [children, groupPages]);
 
   useEffect(() => {
     const trimmed = filter.trim();
     const gen = ++filterGeneration.current;
     if (!trimmed) {
-      setFilteredTables({});
+      setFilteredGroups({});
       return;
     }
-    const targets = paginatedSchemaKeys
-      ? paginatedSchemaKeys
+    const targets = remoteFilterGroupKeys
+      ? remoteFilterGroupKeys
           .split("\0")
-          .map((key) => loads.current.get(key))
-          .filter((node): node is CatalogNode => Boolean(node && node.kind === "schema"))
+          .map((key) => findGroupNode(key))
+          .filter((node): node is CatalogNode => Boolean(node && node.kind === "group"))
       : [];
     if (targets.length === 0) return;
 
     const timer = setTimeout(() => {
-      for (const schemaNode of targets) {
-        void searchSchemaTables(schemaNode, trimmed, gen);
+      for (const groupNode of targets) {
+        void searchGroupObjects(groupNode, trimmed, gen);
       }
     }, FILTER_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [filter, paginatedSchemaKeys, revision]);
+  }, [filter, remoteFilterGroupKeys, revision]);
 
   useEffect(() => {
     const entries: CatalogEntry[] = [];
     for (const loaded of Object.values(children)) {
-      for (const group of loaded) {
-        if (!profiles.some((connection) => connection.id === group.connection.id)) continue;
-        for (const item of group.children ?? []) {
-          if (item.object)
-            entries.push({
-              connection: item.connection,
-              database: item.database,
-              object: item.object,
-            });
-        }
+      for (const item of loaded) {
+        if (item.kind !== "object" || !item.object) continue;
+        if (!profiles.some((connection) => connection.id === item.connection.id)) continue;
+        entries.push({
+          connection: item.connection,
+          database: item.database,
+          object: item.object,
+        });
       }
     }
     onEntries(entries);
   }, [children, profiles, onEntries]);
 
   function toggle(node: CatalogNode) {
+    if (filter.trim()) return;
     if (
       !expanded.has(node.key) &&
       !node.children &&
@@ -794,8 +866,8 @@ export function CatalogExplorer({
     expanded,
     children,
     filter,
-    tablePages,
-    filteredTables,
+    groupPages,
+    filteredGroups,
   });
   const first = Math.max(0, Math.floor(area.y / rowHeight) - 5);
   const end = Math.min(rows.length, Math.ceil((area.y + area.height) / rowHeight) + 5);
@@ -868,6 +940,9 @@ export function CatalogExplorer({
         <div className="catalog-extent" style={{ height: rows.length * rowHeight }}>
           {rows.slice(first, end).map(({ node, depth }, index) => {
             if (node.kind === "load_more") {
+              const groupLabel = node.objectKind
+                ? groups[node.objectKind].toLowerCase()
+                : "objects";
               return (
                 <div
                   className="catalog-row"
@@ -886,9 +961,9 @@ export function CatalogExplorer({
                     className="catalog-load-more"
                     data-error={Boolean(node.error) || undefined}
                     disabled={node.loading}
-                    title={node.error || "Fetch next 100 tables"}
+                    title={node.error || `Fetch next ${OBJECT_PAGE_SIZE} ${groupLabel}`}
                     onClick={() => {
-                      if (node.schemaKey) void fetchMoreTables(node.schemaKey);
+                      if (node.groupKey) void fetchMoreObjects(node.groupKey);
                     }}
                   >
                     {node.loading ? <RefreshCw className="update-check-spin" /> : <ChevronsDown />}
@@ -1002,15 +1077,8 @@ export function CatalogExplorer({
                     title={error}
                     aria-label={`Retry ${node.label}`}
                     onClick={() => {
-                      if (node.kind === "group" && node.schemaKey && needle) {
-                        const schemaNode = loads.current.get(node.schemaKey);
-                        if (schemaNode) {
-                          void searchSchemaTables(
-                            schemaNode,
-                            filter.trim(),
-                            filterGeneration.current,
-                          );
-                        }
+                      if (node.kind === "group" && needle) {
+                        void searchGroupObjects(node, filter.trim(), filterGeneration.current);
                       } else {
                         void load(node, true);
                       }

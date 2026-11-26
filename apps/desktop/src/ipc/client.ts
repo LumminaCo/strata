@@ -5,6 +5,7 @@ import type {
   AuditEntry,
   Object as CatalogObject,
   ObjectKind,
+  ObjectKindCount,
   ObjectPage,
   NextResult,
   ObjectReference,
@@ -54,6 +55,7 @@ interface Commands {
   list_databases: [{ scope: CatalogScope }, string[]];
   list_schemas: [{ scope: CatalogScope }, string[]];
   catalog_snapshot: [{ scope: CatalogScope; schema: string }, CatalogSnapshot];
+  catalog_counts: [{ scope: CatalogScope; schema: string }, ObjectKindCount[]];
   catalog_objects: [
     {
       scope: CatalogScope;

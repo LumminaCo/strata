@@ -5,6 +5,7 @@ import type {
   CatalogScope,
   CatalogSnapshot,
   Connection,
+  Object as CatalogObject,
   ObjectKind,
   SavedTab,
 } from "@/ipc/bindings/protocol";
@@ -107,6 +108,44 @@ export function useCatalogSchema(
     },
     [revision],
   );
+
+  const captureObjects = useCallback(
+    (connectionId: string, database: string, name: string, objects: CatalogObject[]) => {
+      if (objects.length === 0) return;
+      const key = JSON.stringify([connectionId, database, name]);
+      setCache((current) => {
+        const existing = current.revision === revision ? current.entries[key] : undefined;
+        const merged = existing ? [...existing.snapshot.objects] : [];
+        const seen = new Set(merged.map((item) => `${item.oid}:${item.name}`));
+        let added = false;
+        for (const item of objects) {
+          const id = `${item.oid}:${item.name}`;
+          if (seen.has(id)) continue;
+          seen.add(id);
+          merged.push(item);
+          added = true;
+        }
+        if (!added && existing) return current;
+        return {
+          revision,
+          entries: {
+            ...(current.revision === revision ? current.entries : {}),
+            [key]: {
+              connectionId,
+              database,
+              name,
+              snapshot: {
+                objects: merged,
+                columns: existing?.snapshot.columns ?? {},
+                hasMoreTables: existing?.snapshot.hasMoreTables ?? false,
+              },
+            },
+          },
+        };
+      });
+    },
+    [revision],
+  );
   const latest = useRef(scope);
   latest.current = scope;
   const database = tab?.database ?? connection?.database;
@@ -167,5 +206,5 @@ export function useCatalogSchema(
     return buildCompletionNamespace(Object.values(cache.entries), connection?.id, database);
   }, [cache, revision, connection?.id, database]);
 
-  return { capture, completion };
+  return { capture, captureObjects, completion };
 }

@@ -5,7 +5,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use strata_core::{Introspector, Object, ObjectKind, ObjectPage, Result, Secret};
+use strata_core::{Introspector, Object, ObjectKind, ObjectKindCount, ObjectPage, Result, Secret};
 use strata_store::Database;
 use tokio::sync::{Mutex, OnceCell};
 use ts_rs::TS;
@@ -47,11 +47,13 @@ type CatalogKey = (Uuid, String);
 type SnapshotKey = (Uuid, String, String);
 type CatalogSlot = Arc<OnceCell<Arc<dyn Introspector>>>;
 type SnapshotSlot = Arc<OnceCell<Arc<CatalogSnapshot>>>;
+type CountsSlot = Arc<OnceCell<Arc<Vec<ObjectKindCount>>>>;
 
 #[derive(Default)]
 pub struct Metadata {
     catalogs: Mutex<HashMap<CatalogKey, (Instant, CatalogSlot)>>,
     snapshots: Mutex<HashMap<SnapshotKey, (Instant, SnapshotSlot)>>,
+    counts: Mutex<HashMap<SnapshotKey, (Instant, CountsSlot)>>,
     changes: Mutex<()>,
 }
 
@@ -161,6 +163,34 @@ impl Metadata {
         Ok(snapshot.clone())
     }
 
+    pub async fn object_counts(
+        &self,
+        engine: &Engine,
+        scope: &CatalogScope,
+        schema: String,
+    ) -> Result<Arc<Vec<ObjectKindCount>>> {
+        let database = database(engine, scope)?;
+        let slot = {
+            let mut counts = self.counts.lock().await;
+            let (_, slot) = counts
+                .entry((scope.connection_id, database, schema.clone()))
+                .and_modify(|entry| {
+                    if entry.0.elapsed() >= TTL {
+                        *entry = (Instant::now(), Arc::default());
+                    }
+                })
+                .or_insert_with(|| (Instant::now(), Arc::default()));
+            slot.clone()
+        };
+        let counts = slot
+            .get_or_try_init(|| async {
+                let catalog = self.catalog(engine, scope).await?;
+                catalog.object_counts(&schema).await.map(Arc::new)
+            })
+            .await?;
+        Ok(counts.clone())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn objects_page(
         &self,
@@ -181,6 +211,10 @@ impl Metadata {
     pub async fn invalidate(&self, engine: &Engine, connection_id: Uuid) -> Result<()> {
         let _changes = self.changes.lock().await;
         self.snapshots
+            .lock()
+            .await
+            .retain(|key, _| key.0 != connection_id);
+        self.counts
             .lock()
             .await
             .retain(|key, _| key.0 != connection_id);
@@ -372,5 +406,36 @@ mod tests {
         assert!(!snapshot.has_more_tables);
         assert_eq!(snapshot.objects.len(), 2);
         assert_eq!(snapshot.columns.get(&1), Some(&vec!["ID".to_owned()]));
+    }
+
+    #[tokio::test]
+    async fn object_counts_groups_by_kind_in_canonical_order() {
+        let catalog = FakeCatalog {
+            objects: vec![
+                make_object(1, "SP_SYNC", ObjectKind::Procedure),
+                make_object(2, "USERS", ObjectKind::Table),
+                make_object(3, "ORDERS", ObjectKind::Table),
+                make_object(4, "V_ACTIVE", ObjectKind::View),
+            ],
+            fail_columns: false,
+        };
+        let counts = catalog.object_counts("SFBZ0800").await.expect("counts");
+        assert_eq!(
+            counts,
+            vec![
+                ObjectKindCount {
+                    kind: ObjectKind::Table,
+                    count: 2,
+                },
+                ObjectKindCount {
+                    kind: ObjectKind::View,
+                    count: 1,
+                },
+                ObjectKindCount {
+                    kind: ObjectKind::Procedure,
+                    count: 1,
+                },
+            ]
+        );
     }
 }

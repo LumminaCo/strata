@@ -966,7 +966,7 @@ export function App() {
               canPin={!!tab}
               canInsertInEditor={Boolean(tab && !schemaActive)}
               scope={data.scope}
-              onSnapshot={catalog.capture}
+              onObjects={catalog.captureObjects}
               onEntries={setEntries}
               openSql={openTab}
               onRefresh={data.invalidateCatalog}

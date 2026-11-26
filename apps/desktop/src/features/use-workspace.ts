@@ -236,13 +236,54 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
     database?: string,
     text = "",
     schema?: string,
+    title?: string,
   ): string | null {
     if (!workspace || workspace.tabs.length >= 100) {
       setNotice("Close a tab before opening another.");
       return null;
     }
-    const newTab: SavedTab = { id: crypto.randomUUID(), connectionId, database, schema, text };
+    const normalizedTitle = title === undefined ? undefined : normalizeTabTitle(title);
+    const newTab: SavedTab = {
+      id: crypto.randomUUID(),
+      connectionId,
+      ...(normalizedTitle !== undefined ? { title: normalizedTitle } : {}),
+      database,
+      schema,
+      text,
+    };
     setWorkspace((current) => current && { tabs: [...current.tabs, newTab], activeTab: newTab.id });
+    return newTab.id;
+  }
+
+  function openAndRunTab(options: {
+    connectionId: string;
+    database?: string;
+    schema?: string;
+    text: string;
+    title?: string;
+  }): string | null {
+    if (!workspace || workspace.tabs.length >= 100) {
+      setNotice("Close a tab before opening another.");
+      return null;
+    }
+    const connection = profiles.find((entry) => entry.id === options.connectionId);
+    if (!connection) return null;
+    const normalizedTitle =
+      options.title === undefined ? undefined : normalizeTabTitle(options.title);
+    const newTab: SavedTab = {
+      id: crypto.randomUUID(),
+      connectionId: options.connectionId,
+      ...(normalizedTitle !== undefined ? { title: normalizedTitle } : {}),
+      database: options.database,
+      schema: options.schema,
+      text: options.text,
+    };
+    setWorkspace((current) => current && { tabs: [...current.tabs, newTab], activeTab: newTab.id });
+    void execute(newTab, connection, {
+      text: options.text,
+      target: { selection: [0, options.text.length] },
+      mode: "statement",
+    });
     return newTab.id;
   }
 
@@ -1163,6 +1204,7 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
     retry: () => setLoadAttempt((value) => value + 1),
     selectTab,
     addTab,
+    openAndRunTab,
     moveTab,
     closeTab,
     closeTabs,

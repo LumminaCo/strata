@@ -48,6 +48,7 @@ pub fn column(column: &Column) -> ColumnMeta {
         nullable: None,
         table_oid: None,
         column_id: None,
+        foreign_key: None,
     }
 }
 

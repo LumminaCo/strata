@@ -3,11 +3,13 @@
 mod agent;
 mod identifier;
 mod lexer;
+mod sources;
 pub use agent::{
     agent_dml, agent_read_allowed, audit_sql, sql_server_dml_without_output, strict_statement,
 };
 
 pub use identifier::{RelationAt, relation_at};
+pub use sources::{ProjectionSource, QueryColumnSources, TableSource, query_column_sources};
 
 use lexer::{Kind, lex};
 use sqlparser::{

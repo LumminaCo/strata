@@ -1,4 +1,4 @@
-import type { GridCell, Item, Rectangle } from "@glideapps/glide-data-grid";
+import type { CellClickedEventArgs, GridCell, Item, Rectangle } from "@glideapps/glide-data-grid";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, test, vi } from "vite-plus/test";
 
@@ -10,15 +10,17 @@ interface MockEditorProps {
   columns: { id: string; title: string; width: number }[];
   rows: number;
   getCellContent: (cell: Item) => GridCell;
+  customRenderers?: readonly unknown[];
   onVisibleRegionChanged?: (region: Rectangle) => void;
   onHeaderClicked?: (col: number) => void;
+  onCellClicked?: (cell: Item, event: CellClickedEventArgs) => void;
   rangeSelect?: string;
 }
 
 let capturedProps: MockEditorProps | undefined;
 
 vi.mock("@glideapps/glide-data-grid", () => ({
-  GridCellKind: { Text: "text" },
+  GridCellKind: { Text: "text", Custom: "custom" },
   DataEditor: (props: MockEditorProps) => {
     capturedProps = props;
     return <div data-testid="data-editor" />;
@@ -182,4 +184,131 @@ test("enables multi-rect cell range selection for numeric aggregation", () => {
     />,
   );
   expect(capturedProps?.rangeSelect).toBe("multi-rect");
+});
+
+test("renders FK button cells for non-null FK values and follows FK clicks using source row indices", () => {
+  const onFollowForeignKey = vi.fn();
+  const rentalResult: ResultSet = {
+    id: "cursor-fk",
+    index: 0,
+    columns: [
+      {
+        name: "rental_id",
+        db_type: "int4",
+        kind: "int",
+        nullable: false,
+        table_oid: 16400,
+        column_id: 1,
+      },
+      {
+        name: "customer_id",
+        db_type: "int4",
+        kind: "int",
+        nullable: true,
+        table_oid: 16400,
+        column_id: 4,
+        foreign_key: { schema: "public", table: "customer", column: "customer_id" },
+      },
+    ],
+    rows: [
+      [1, 130],
+      [2, null],
+      [3, 459],
+    ],
+    more: false,
+    capped: false,
+  };
+
+  renderToStaticMarkup(
+    <ResultGrid
+      result={rentalResult}
+      themeVersion="false"
+      canFetch={false}
+      fetching={false}
+      filter=""
+      sorts={[{ column: 0, descending: true }]}
+      onMore={vi.fn()}
+      onCell={vi.fn()}
+      onFollowForeignKey={onFollowForeignKey}
+    />,
+  );
+
+  expect(capturedProps?.customRenderers).toHaveLength(1);
+
+  // Sorted DESC by rental_id: row 0 -> rental 3 (customer 459), row 1 -> rental 2 (null), row 2 -> rental 1 (customer 130)
+  const fkCell = capturedProps?.getCellContent([1, 0]);
+  expect(fkCell?.kind).toBe("custom");
+  expect(fkCell?.copyData).toBe("459");
+
+  const nullFkCell = capturedProps?.getCellContent([1, 1]);
+  expect(nullFkCell?.kind).toBe("text");
+
+  const plainCell = capturedProps?.getCellContent([0, 0]);
+  expect(plainCell?.kind).toBe("text");
+
+  // Click inside the FK button rect (width=140, height=25 => button x: 118..136, y: 4..22)
+  const preventDefault = vi.fn();
+  capturedProps?.onCellClicked?.([1, 0], {
+    kind: "cell",
+    location: [1, 0],
+    bounds: { x: 200, y: 40, width: 140, height: 25 },
+    localEventX: 126,
+    localEventY: 12,
+    button: 0,
+    buttons: 1,
+    shiftKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    isTouch: false,
+    isEdge: false,
+    isFillHandle: false,
+    scrollEdge: [0, 0],
+    preventDefault,
+  });
+  expect(preventDefault).toHaveBeenCalledOnce();
+  // Display row 0 maps to source row 2 (rental_id = 3, customer_id = 459)
+  expect(onFollowForeignKey).toHaveBeenCalledWith(2, 1);
+
+  // Clicking cell text outside the button does not trigger FK navigation
+  onFollowForeignKey.mockClear();
+  preventDefault.mockClear();
+  capturedProps?.onCellClicked?.([1, 0], {
+    kind: "cell",
+    location: [1, 0],
+    bounds: { x: 200, y: 40, width: 140, height: 25 },
+    localEventX: 40,
+    localEventY: 12,
+    button: 0,
+    buttons: 1,
+    shiftKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    isTouch: false,
+    isEdge: false,
+    isFillHandle: false,
+    scrollEdge: [0, 0],
+    preventDefault,
+  });
+  expect(preventDefault).not.toHaveBeenCalled();
+  expect(onFollowForeignKey).not.toHaveBeenCalled();
+
+  // Clicking a NULL cell in an FK column does not trigger FK navigation
+  capturedProps?.onCellClicked?.([1, 1], {
+    kind: "cell",
+    location: [1, 1],
+    bounds: { x: 200, y: 65, width: 140, height: 25 },
+    localEventX: 126,
+    localEventY: 12,
+    button: 0,
+    buttons: 1,
+    shiftKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    isTouch: false,
+    isEdge: false,
+    isFillHandle: false,
+    scrollEdge: [0, 0],
+    preventDefault,
+  });
+  expect(onFollowForeignKey).not.toHaveBeenCalled();
 });

@@ -11,10 +11,11 @@ import { NumericAggregateBar } from "@/components/numeric-aggregate-bar";
 import type { ResultSet } from "@/components/result-grid";
 import { Button } from "@/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
-import type { CatalogScope, Cell, ColumnMeta } from "@/ipc/bindings/protocol";
+import type { CatalogScope, Cell, ColumnMeta, ForeignKeyRef } from "@/ipc/bindings/protocol";
 import { dispatch, errorMessage, runQuery } from "@/ipc/client";
 
 import type { CatalogEntry } from "./catalog-explorer";
+import { needsFullCellRead } from "./foreign-key-query";
 import { ResultFilterInput } from "./result-filter-input";
 
 export function quoteName(name: string, kind: CatalogEntry["connection"]["kind"]) {
@@ -34,9 +35,15 @@ interface Props {
   theme: string;
   credentials: () => Promise<CatalogScope>;
   onValue: (name: string, value: Cell, kind?: string) => void;
+  onFollowForeignKey?: (options: {
+    entry: CatalogEntry;
+    target: ForeignKeyRef;
+    value: Cell;
+    columnKind?: string;
+  }) => void;
 }
 
-export function TableData({ entry, theme, credentials, onValue }: Props) {
+export function TableData({ entry, theme, credentials, onValue, onFollowForeignKey }: Props) {
   const [filter, setFilter] = useState("");
   const [order, setOrder] = useState("");
   const [applied, setApplied] = useState({ filter: "", order: "", version: 0 });
@@ -220,6 +227,26 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
     }
   }
 
+  async function followForeignKey(row: number, column: number) {
+    if (!onFollowForeignKey || !result) return;
+    const meta: ColumnMeta | undefined = result.columns[column];
+    const target = meta?.foreign_key;
+    if (!meta || !target) return;
+    let cell = result.rows[row]?.[column] ?? null;
+    if (cell === null) return;
+    const sessionId = session.current;
+    if (sessionId && needsFullCellRead(cell, meta.kind)) {
+      try {
+        cell = await dispatch("get_cell", { sessionId, cursorId: result.id, row, column });
+      } catch (error) {
+        setError(errorMessage(error));
+        return;
+      }
+    }
+    if (cell === null) return;
+    onFollowForeignKey({ entry, target, value: cell, columnKind: meta.kind });
+  }
+
   return (
     <div className="table-data">
       <form
@@ -275,6 +302,9 @@ export function TableData({ entry, theme, credentials, onValue }: Props) {
           themeVersion={theme}
           onMore={() => void fetchRows()}
           onCell={(row, column) => void value(row, column)}
+          onFollowForeignKey={
+            onFollowForeignKey ? (row, column) => void followForeignKey(row, column) : undefined
+          }
           onAggregateChange={setGridAggregate}
         />
       ) : (

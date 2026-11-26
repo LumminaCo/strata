@@ -234,6 +234,19 @@ pub enum CellKind {
     Other,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, TS)]
+pub struct ForeignKeyRef {
+    pub schema: String,
+    pub table: String,
+    pub column: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct TableForeignKey {
+    pub column: String,
+    pub target: ForeignKeyRef,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct ColumnMeta {
     pub name: String,
@@ -242,6 +255,8 @@ pub struct ColumnMeta {
     pub nullable: Option<bool>,
     pub table_oid: Option<u32>,
     pub column_id: Option<i16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foreign_key: Option<ForeignKeyRef>,
 }
 
 #[derive(Debug)]
@@ -471,6 +486,9 @@ pub trait Introspector: Send + Sync {
         Ok(columns)
     }
     async fn table_detail(&self, object: &Object) -> Result<TableDetail>;
+    async fn foreign_keys(&self, _object: &Object) -> Result<Vec<TableForeignKey>> {
+        Ok(Vec::new())
+    }
     async fn ddl(&self, object: &Object) -> Result<String>;
     async fn resolve(&self, identifier: &str) -> Result<Option<Object>>;
 }

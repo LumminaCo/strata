@@ -80,6 +80,13 @@ export const statementMarks = StateField.define<{
   provide: (field) => EditorView.decorations.from(field, (value) => value.decorations),
 });
 
+export function navigationClickFull(
+  event: Pick<MouseEvent, "button" | "altKey" | "ctrlKey" | "metaKey" | "shiftKey">,
+): boolean | null {
+  if (event.button !== 0 || event.altKey || !(event.ctrlKey || event.metaKey)) return null;
+  return !event.shiftKey;
+}
+
 export interface EditorHandle {
   target: () => Target;
   text: () => string;
@@ -217,11 +224,12 @@ export function SqlEditor({
           if (event.key === "Control" || event.key === "Meta") mark(editor, false);
         },
         mousedown(event, editor) {
-          if (event.button !== 0 || event.altKey || !(event.ctrlKey || event.metaKey)) return false;
+          const full = navigationClickFull(event);
+          if (full === null) return false;
           const offset = editor.posAtCoords({ x: event.clientX, y: event.clientY });
           if (offset === null) return false;
           event.preventDefault();
-          latest.current.onNavigate?.(offset, event.shiftKey);
+          latest.current.onNavigate?.(offset, full);
           return true;
         },
       }),

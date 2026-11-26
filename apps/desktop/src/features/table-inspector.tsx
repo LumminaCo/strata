@@ -8,6 +8,7 @@ import type {
   Cell,
   Definition,
   ObjectDetails,
+  ObjectKind,
   ObjectReference,
 } from "@/ipc/bindings/protocol";
 import { dispatch, errorMessage } from "@/ipc/client";
@@ -47,6 +48,11 @@ export function resolveInspectionSection(subject: Inspection): InspectionSection
     }
   }
   return relation ? (subject.column ? "Columns" : "Data") : "DDL";
+}
+
+export function resolveNavigationTarget(kind: ObjectKind, full: boolean): "tab" | "pinned" {
+  if (full || kind === "function" || kind === "procedure") return "tab";
+  return "pinned";
 }
 
 interface Props {

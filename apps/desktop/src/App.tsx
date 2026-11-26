@@ -104,7 +104,11 @@ import {
   resultTabLabel,
   scriptTabLabel,
 } from "@/features/tab-order";
-import { TableInspector, type Inspection } from "@/features/table-inspector";
+import {
+  TableInspector,
+  resolveNavigationTarget,
+  type Inspection,
+} from "@/features/table-inspector";
 import { useCatalogSchema } from "@/features/use-catalog-schema";
 import { shortcuts, workspaceKeydown } from "@/features/keymap";
 import { useTabDrag } from "@/features/use-tab-drag";
@@ -555,7 +559,7 @@ export function App() {
         object: object.object,
         column: object.column ?? undefined,
       };
-      if (full || ["function", "procedure"].includes(entry.object.kind)) {
+      if (resolveNavigationTarget(entry.object.kind, full) === "tab") {
         openObject(entry);
       } else {
         pinObject(entry);
@@ -760,7 +764,7 @@ export function App() {
             navigate: () => {
               const target = editor.current?.target();
               if (target)
-                void navigate("cursor" in target ? target.cursor : target.selection[0], false);
+                void navigate("cursor" in target ? target.cursor : target.selection[0], true);
             },
             explain: () => run("explain"),
             format: () => void formatSql(),

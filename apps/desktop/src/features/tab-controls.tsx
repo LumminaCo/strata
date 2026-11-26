@@ -153,7 +153,8 @@ export function ScriptTabItem({
 }: ScriptTabItemProps) {
   const skipFinalFocusRef = useRef(false);
   const baseTitle = tab.title ? `${label} (${defaultLabel})` : label;
-  const title = unsaved ? `${baseTitle} · Unsaved` : baseTitle;
+  const withPath = tab.filePath ? `${baseTitle} · ${tab.filePath}` : baseTitle;
+  const title = unsaved ? `${withPath} · Unsaved` : withPath;
 
   return (
     <ContextMenu>

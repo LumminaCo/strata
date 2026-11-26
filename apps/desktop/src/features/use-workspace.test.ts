@@ -6,9 +6,10 @@ import {
   finishQueryActivity,
   idle,
   removeResultTabs,
+  updateTabFilePath,
   type Activity,
 } from "@/features/use-workspace";
-import type { SessionInfo } from "@/ipc/bindings/protocol";
+import type { SavedTab, SessionInfo } from "@/ipc/bindings/protocol";
 
 const session: SessionInfo = {
   id: "session-1",
@@ -158,5 +159,29 @@ describe("result tab activity transitions", () => {
     const afterClosingAll = removeResultTabs(afterClosingThird, ["cursor-1", "cursor-2"]);
     expect(afterClosingAll.results).toEqual([]);
     expect(afterClosingAll.selected).toBe("messages");
+  });
+});
+
+describe("tab file path persistence helper", () => {
+  it("stores, updates, and clears a tab file path without mutating unrelated tabs", () => {
+    const tabs: SavedTab[] = [
+      { id: "t1", connectionId: "c1", text: "SELECT 1;" },
+      { id: "t2", connectionId: "c1", text: "SELECT 2;" },
+    ];
+
+    const linked = updateTabFilePath(tabs, "t1", "/home/ada/Documents/Strata/report.sql");
+    expect(linked[0]?.filePath).toBe("/home/ada/Documents/Strata/report.sql");
+    expect(linked[1]).toBe(tabs[1]);
+
+    // Re-saving to the same path is a no-op and preserves reference equality.
+    expect(updateTabFilePath(linked, "t1", " /home/ada/Documents/Strata/report.sql ")).toBe(linked);
+
+    // Save As updates only the targeted tab to the new file path.
+    const moved = updateTabFilePath(linked, "t1", "/home/ada/Documents/Strata/report_v2.sql");
+    expect(moved[0]?.filePath).toBe("/home/ada/Documents/Strata/report_v2.sql");
+
+    // Clearing removes the optional field cleanly.
+    const cleared = updateTabFilePath(moved, "t1", "   ");
+    expect("filePath" in (cleared[0] ?? {})).toBe(false);
   });
 });

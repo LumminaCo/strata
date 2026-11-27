@@ -11,7 +11,7 @@ import "@glideapps/glide-data-grid/dist/index.css";
 import { ArrowDown, ArrowUp, Filter, LoaderCircle, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Select } from "@/components/ui/select";
 import {
   computeRowIndices,
   formatSortHeader,
@@ -503,19 +503,18 @@ export function ResultGrid({
       )}
       {readCell && rows > 0 && (
         <div className="grid-copy">
-          <NativeSelect
+          <Select
             aria-label="Copy as"
             size="sm"
-            value=""
-            onChange={(event) => void copy(event.target.value)}
-          >
-            <NativeSelectOption value="" disabled>
-              Copy as
-            </NativeSelectOption>
-            <NativeSelectOption value="csv">CSV</NativeSelectOption>
-            <NativeSelectOption value="json">JSON</NativeSelectOption>
-            <NativeSelectOption value="markdown">Markdown</NativeSelectOption>
-          </NativeSelect>
+            value={null}
+            placeholder="Copy as"
+            onValueChange={(format) => void copy(format)}
+            items={[
+              { value: "csv", label: "CSV" },
+              { value: "json", label: "JSON" },
+              { value: "markdown", label: "Markdown" },
+            ]}
+          />
           {copyError && <span role="alert">{copyError}</span>}
         </div>
       )}

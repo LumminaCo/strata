@@ -1,6 +1,7 @@
-import { Check, ChevronDown } from "lucide-react";
+import { Check } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { Select } from "@/components/ui/select";
 import {
   aggregateFunctions,
   type AggregateFunction,
@@ -47,21 +48,13 @@ export function NumericAggregateBar({ summary, fn, onChangeFn }: NumericAggregat
 
   return (
     <div className="status-aggregation" data-testid="numeric-aggregation">
-      <div className="status-aggregation-picker">
-        <select
-          className="status-aggregation-select"
-          aria-label="Aggregate function"
-          value={fn}
-          onChange={(event) => onChangeFn(event.target.value as AggregateFunction)}
-        >
-          {aggregateFunctions.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.label}
-            </option>
-          ))}
-        </select>
-        <ChevronDown className="status-aggregation-chevron" aria-hidden="true" />
-      </div>
+      <Select
+        className="status-aggregation-select"
+        aria-label="Aggregate function"
+        value={fn}
+        onValueChange={onChangeFn}
+        items={aggregateFunctions.map((item) => ({ value: item.id, label: item.label }))}
+      />
       <button
         type="button"
         className="status-aggregation-value"

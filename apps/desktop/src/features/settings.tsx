@@ -24,7 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { ConnectionForm, emptyConnection } from "@/features/connections";
 import { shortcuts } from "@/features/keymap";
@@ -750,15 +750,16 @@ export function SettingsDialog({
             <p className="settings-row-desc">{meta.description}</p>
           </div>
           <div className="settings-row-control">
-            <NativeSelect
+            <Select
               id="settings-theme"
               value={draft.theme}
-              onChange={(event) => updateSetting("theme", event.target.value as Settings["theme"])}
-            >
-              <NativeSelectOption value="system">System</NativeSelectOption>
-              <NativeSelectOption value="light">Light</NativeSelectOption>
-              <NativeSelectOption value="dark">Dark</NativeSelectOption>
-            </NativeSelect>
+              onValueChange={(theme) => updateSetting("theme", theme)}
+              items={[
+                { value: "system", label: "System" },
+                { value: "light", label: "Light" },
+                { value: "dark", label: "Dark" },
+              ]}
+            />
           </div>
         </div>
       );

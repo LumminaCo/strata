@@ -5,6 +5,12 @@ import type { Cell, ColumnMeta } from "@/ipc/bindings/protocol";
 
 import { ResultToolbar } from "./result-toolbar";
 
+// The real popup only mounts in a DOM; print the offered items instead.
+vi.mock("@/components/ui/select", () => ({
+  Select: ({ items, placeholder }: { items: { label: string }[]; placeholder?: string }) =>
+    `${placeholder}: ${items.map((item) => item.label).join(", ")}`,
+}));
+
 const columns: ColumnMeta[] = [
   { name: "id", db_type: "int4", kind: "int", nullable: false, table_oid: null, column_id: null },
   {
@@ -64,8 +70,7 @@ test("renders filter chips, nested sort chips with priority controls, and clear 
   expect(html).toContain('aria-label="Move sort total earlier"');
   expect(html).toContain("Clear sort");
   // Already sorted columns (status, total) are excluded from "+ Then by", leaving only id
-  expect(html).toContain("+ Then by");
-  expect(html).toContain(">id</option>");
+  expect(html).toContain("+ Then by: id<");
 });
 
 test("omits chips bar when no filters or sorts are active", () => {
@@ -88,5 +93,5 @@ test("omits chips bar when no filters or sorts are active", () => {
 
   expect(html).not.toContain("result-chips-bar");
   expect(html).not.toContain("Clear sort");
-  expect(html).toContain("+ Sort by");
+  expect(html).toContain("+ Sort by: id, status, total<");
 });

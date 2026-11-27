@@ -1,13 +1,18 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { ResultSet } from "@/components/result-grid";
 import {
   MessagesTabItem,
   ResultTabItem,
   ScriptTabItem,
+  UnsavedTabCloseDialog,
+  createMiddleClickCloseController,
+  describeUnsavedClosePrompt,
+  type MiddleClickEventLike,
   type TabDragBindings,
 } from "@/features/tab-controls";
+import { selectUnsavedTabsToClose } from "@/features/save-sql-file";
 import {
   MAX_TAB_TITLE_LENGTH,
   MESSAGES_TAB_ID,
@@ -488,5 +493,222 @@ describe("tab control rendering", () => {
     expect(markup).toContain('data-drop-position="before"');
     expect(markup).toContain('data-slot="context-menu-trigger"');
     expect(markup).toContain('aria-selected="true"');
+  });
+});
+
+function middleClickEvent(button: number, overrides: Partial<MiddleClickEventLike> = {}) {
+  const preventDefault = vi.fn<() => void>();
+  const stopPropagation = vi.fn<() => void>();
+  return {
+    button,
+    defaultPrevented: false,
+    target: { closest: () => null } as unknown as EventTarget,
+    preventDefault,
+    stopPropagation,
+    ...overrides,
+  };
+}
+
+describe("middle-click tab close controller", () => {
+  it("closes once on middle mousedown + mouseup and suppresses duplicate auxclick", () => {
+    const onClose = vi.fn();
+    const controller = createMiddleClickCloseController({
+      getDisabled: () => false,
+      onClose,
+    });
+
+    const down = middleClickEvent(1);
+    const up = middleClickEvent(1);
+    const aux = middleClickEvent(1);
+
+    controller.onMouseDown(down);
+    expect(down.preventDefault).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+
+    controller.onMouseUp(up);
+    expect(up.preventDefault).toHaveBeenCalledTimes(1);
+    expect(up.stopPropagation).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    controller.onAuxClick(aux);
+    expect(aux.preventDefault).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    // Subsequent middle-clicks still fire even if auxclick never arrives (e.g. older WebKitGTK).
+    controller.onMouseDown(middleClickEvent(1));
+    controller.onMouseUp(middleClickEvent(1));
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it("supports standalone auxclick while ignoring left/right clicks and cancelled gestures", () => {
+    const onClose = vi.fn();
+    const controller = createMiddleClickCloseController({
+      getDisabled: () => false,
+      onClose,
+    });
+
+    // Left and right buttons are ignored.
+    for (const button of [0, 2]) {
+      const event = middleClickEvent(button);
+      controller.onMouseDown(event);
+      controller.onMouseUp(event);
+      controller.onAuxClick(event);
+      expect(event.preventDefault).not.toHaveBeenCalled();
+    }
+    expect(onClose).not.toHaveBeenCalled();
+
+    // Dragging off the tab before releasing cancels the middle-click close.
+    controller.onMouseDown(middleClickEvent(1));
+    controller.onMouseLeave();
+    controller.onMouseUp(middleClickEvent(1));
+    expect(onClose).not.toHaveBeenCalled();
+
+    // Releasing on the tab without starting the press on it does nothing.
+    controller.onMouseUp(middleClickEvent(1));
+    expect(onClose).not.toHaveBeenCalled();
+
+    // Standalone middle auxclick closes the tab.
+    const aux = middleClickEvent(1);
+    controller.onAuxClick(aux);
+    expect(aux.preventDefault).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not close when disabled or when middle-clicking an editable input", () => {
+    let disabled = true;
+    const onClose = vi.fn();
+    const controller = createMiddleClickCloseController({
+      getDisabled: () => disabled,
+      onClose,
+    });
+
+    // While disabled (e.g. fetching result tab or renaming), autoscroll is still prevented but close is blocked.
+    const disabledDown = middleClickEvent(1);
+    controller.onMouseDown(disabledDown);
+    controller.onMouseUp(middleClickEvent(1));
+    controller.onAuxClick(middleClickEvent(1));
+    expect(disabledDown.preventDefault).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+
+    // Editable targets (like inline rename inputs) are untouched so primary-selection paste still works.
+    disabled = false;
+    const inputTarget = {
+      closest: (selector: string) => (selector.includes("input") ? {} : null),
+    } as unknown as EventTarget;
+    const inputDown = middleClickEvent(1, { target: inputTarget });
+    const inputUp = middleClickEvent(1, { target: inputTarget });
+    const inputAux = middleClickEvent(1, { target: inputTarget });
+    controller.onMouseDown(inputDown);
+    controller.onMouseUp(inputUp);
+    controller.onAuxClick(inputAux);
+    expect(inputDown.preventDefault).not.toHaveBeenCalled();
+    expect(inputAux.preventDefault).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("unsaved query tab close prompt", () => {
+  it("formats single and multi-tab prompts clearly", () => {
+    expect(describeUnsavedClosePrompt(["Analytics"])).toEqual({
+      title: "Save changes to Analytics?",
+      description: "This SQL tab has unsaved changes. Save it before closing?",
+      saveLabel: "Save",
+    });
+
+    expect(describeUnsavedClosePrompt(["Analytics", "Warehouse"])).toEqual({
+      title: "Save changes to 2 SQL tabs?",
+      description:
+        "These SQL tabs have unsaved changes (Analytics, Warehouse). Save them before closing?",
+      saveLabel: "Save all",
+    });
+
+    expect(describeUnsavedClosePrompt(["Tab 1", "Tab 2", "Tab 3", "Tab 4"])).toEqual({
+      title: "Save changes to 4 SQL tabs?",
+      description:
+        "These SQL tabs have unsaved changes (Tab 1, Tab 2 and 2 more). Save them before closing?",
+      saveLabel: "Save all",
+    });
+  });
+
+  it("selects only unsaved query tabs when closing one or many tabs", () => {
+    const emptyTab = sampleTab("t-empty", { text: "" });
+    const savedTab = sampleTab("t-saved", { text: "SELECT 1;" });
+    const dirtySavedTab = sampleTab("t-dirty", { title: "Invoices", text: "SELECT 2;" });
+    const draftTab = sampleTab("t-draft", { text: "SELECT * FROM users;" });
+    const tabs = [emptyTab, savedTab, dirtySavedTab, draftTab];
+    const savedByTab = {
+      "t-saved": { path: "/tmp/saved.sql", content: "SELECT 1;" },
+      "t-dirty": { path: "/tmp/invoices.sql", content: "SELECT 1;" },
+    };
+    const labelOf = (item: SavedTab) => scriptTabLabel(tabs, item, "Analytics");
+
+    // Clean empty or saved tabs close without prompting.
+    expect(
+      selectUnsavedTabsToClose(["t-empty"], tabs, savedByTab, (item) => item.text, labelOf),
+    ).toBeNull();
+    expect(
+      selectUnsavedTabsToClose(["t-saved"], tabs, savedByTab, (item) => item.text, labelOf),
+    ).toBeNull();
+
+    // Closing an unsaved query tab triggers the save prompt.
+    expect(
+      selectUnsavedTabsToClose(["t-draft"], tabs, savedByTab, (item) => item.text, labelOf),
+    ).toEqual({
+      unsavedIds: ["t-draft"],
+      labels: ["Analytics 4"],
+    });
+
+    // Closing multiple tabs collects only the unsaved ones in order.
+    expect(
+      selectUnsavedTabsToClose(
+        ["t-empty", "t-saved", "t-dirty", "t-draft"],
+        tabs,
+        savedByTab,
+        (item) => item.text,
+        labelOf,
+      ),
+    ).toEqual({
+      unsavedIds: ["t-dirty", "t-draft"],
+      labels: ["Invoices", "Analytics 4"],
+    });
+
+    // Live editor text overrides detect unsaved changes before tab state flushes.
+    expect(
+      selectUnsavedTabsToClose(
+        ["t-saved"],
+        tabs,
+        savedByTab,
+        (item) => (item.id === "t-saved" ? "SELECT 99;" : item.text),
+        labelOf,
+      ),
+    ).toEqual({
+      unsavedIds: ["t-saved"],
+      labels: ["Analytics 2"],
+    });
+  });
+
+  it("mounts UnsavedTabCloseDialog cleanly for both idle and saving states", () => {
+    expect(() =>
+      renderToStaticMarkup(
+        <UnsavedTabCloseDialog
+          labels={["Analytics"]}
+          onCancel={() => {}}
+          onDiscard={() => {}}
+          onSave={() => {}}
+        />,
+      ),
+    ).not.toThrow();
+
+    expect(() =>
+      renderToStaticMarkup(
+        <UnsavedTabCloseDialog
+          labels={["Analytics", "Orders"]}
+          saving
+          onCancel={() => {}}
+          onDiscard={() => {}}
+          onSave={() => {}}
+        />,
+      ),
+    ).not.toThrow();
   });
 });

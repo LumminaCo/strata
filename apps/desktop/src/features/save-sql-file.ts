@@ -95,6 +95,25 @@ export function seedSavedSqlTabs(
   return next;
 }
 
+export function selectUnsavedTabsToClose<T extends { id: string; text: string }>(
+  closingIds: readonly string[],
+  tabs: readonly T[],
+  savedByTab: Readonly<Record<string, SavedSqlState>>,
+  getTabText: (tab: T) => string,
+  getTabLabel: (tab: T) => string,
+): { unsavedIds: string[]; labels: string[] } | null {
+  const unsavedIds: string[] = [];
+  const labels: string[] = [];
+  for (const id of closingIds) {
+    const entry = tabs.find((tab) => tab.id === id);
+    if (!entry) continue;
+    if (!isSqlTabUnsaved(getTabText(entry), savedByTab[entry.id])) continue;
+    unsavedIds.push(entry.id);
+    labels.push(getTabLabel(entry));
+  }
+  return unsavedIds.length > 0 ? { unsavedIds, labels } : null;
+}
+
 export function recordSavedSqlTab(
   current: Record<string, SavedSqlState>,
   tabId: string,

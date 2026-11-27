@@ -63,6 +63,7 @@ import { ActivitySidebar } from "@/features/activity-sidebar";
 import { CatalogExplorer, type CatalogEntry } from "@/features/catalog-explorer";
 import { CatalogPalette, DatabasePicker, SchemaPicker } from "@/features/catalog-dialogs";
 import { SettingsDialog } from "@/features/settings";
+import { QueryElapsedTime } from "@/features/query-elapsed-time";
 import {
   QueryNotificationStack,
   appendQueryToast,
@@ -392,6 +393,15 @@ export function App() {
   }
 
   const running = active.busy === "Running";
+  const waitingForResults =
+    active.queryStartedAt !== undefined &&
+    !selectedInspection &&
+    !result &&
+    !active.messages.length;
+  const queryTimer =
+    running && active.queryStartedAt !== undefined ? (
+      <QueryElapsedTime key={active.queryStartedAt} startedAt={active.queryStartedAt} />
+    ) : null;
   useEffect(() => {
     // Reveal hidden results whenever a query starts, whatever path started it.
     if (running) resultsPanelRef.current?.expand();
@@ -985,6 +995,19 @@ export function App() {
     editors.current.set(tab.id, state);
   }
 
+  const stopButton = (
+    <Button
+      variant="destructive"
+      onClick={() => void data.stop()}
+      title={shortcuts.stop}
+      disabled={
+        active.busy === "Stopping" || (!active.busy && !active.results.some((item) => item.more))
+      }
+    >
+      <Square /> Stop
+    </Button>
+  );
+
   return (
     <div
       className="workspace"
@@ -1435,17 +1458,7 @@ export function App() {
                   >
                     Run script
                   </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => void data.stop()}
-                    title={shortcuts.stop}
-                    disabled={
-                      active.busy === "Stopping" ||
-                      (!active.busy && !active.results.some((item) => item.more))
-                    }
-                  >
-                    <Square /> Stop
-                  </Button>
+                  {stopButton}
                   <Button
                     variant="ghost"
                     onClick={() => run("explain")}
@@ -1884,9 +1897,17 @@ export function App() {
                         </div>
                       ) : (
                         <div className="results-empty">
-                          {active.busy === "Running"
-                            ? "Waiting for results…"
-                            : "Run a statement to see results here."}
+                          {waitingForResults ? (
+                            <div className="grid justify-items-center gap-2">
+                              <span>
+                                {running ? "Waiting for results…" : "Stopping query…"}
+                                {queryTimer && <> · {queryTimer}</>}
+                              </span>
+                              {stopButton}
+                            </div>
+                          ) : (
+                            "Run a statement to see results here."
+                          )}
                         </div>
                       )}
                     </section>
@@ -2004,7 +2025,11 @@ export function App() {
                   : ""}
           </span>
         )}
-        {active.elapsed !== undefined && <span>{active.elapsed} ms</span>}
+        {queryTimer ? (
+          (!waitingForResults || schemaActive) && queryTimer
+        ) : active.elapsed !== undefined ? (
+          <span>{active.elapsed} ms</span>
+        ) : null}
         {profile?.readOnly && <span>Read-only</span>}
         {active.transaction?.open && <span className="transaction-open">Transaction open</span>}
         {!schemaActive && !selectedInspection && result && gridAggregate && (

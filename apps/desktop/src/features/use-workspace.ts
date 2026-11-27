@@ -35,6 +35,7 @@ export interface Activity {
   selected: string | null;
   messages: { level: string; text: string }[];
   elapsed?: number;
+  queryStartedAt?: number;
   diagnostic?: EditorDiagnostic;
   dbmsOutput?: boolean;
   transaction?: TransactionState;
@@ -761,9 +762,15 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
         passwords.current.set(connection.id, credential);
         if (savePassword) void persistPromptPassword(connection, credential);
       }
-      update(item.id, (current) =>
-        query ? beginQueryActivity(current, session, query.keepResults) : { ...current, session },
-      );
+      if (query) {
+        const queryStartedAt = performance.now();
+        update(item.id, (current) => ({
+          ...beginQueryActivity(current, session, query.keepResults),
+          queryStartedAt,
+        }));
+      } else {
+        update(item.id, (current) => ({ ...current, session }));
+      }
       if (query && job.runId) {
         await loadResultGrid();
         if (job.stopped || jobs.current.get(item.id) !== job) return;
@@ -881,6 +888,7 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
         update(item.id, (current) => ({
           ...current,
           busy: stopping.current.has(item.id) ? "Stopping" : undefined,
+          queryStartedAt: undefined,
         }));
       }
     }

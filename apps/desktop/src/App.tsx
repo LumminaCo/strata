@@ -201,6 +201,7 @@ export function App() {
   const [activityFocusToken, setActivityFocusToken] = useState(0);
   const explorerPanelRef = usePanelRef();
   const activityPanelRef = usePanelRef();
+  const resultsPanelRef = usePanelRef();
   const [palette, setPalette] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [closeWarning, setCloseWarning] = useState<{ title: string; confirm: () => void }>();
@@ -386,6 +387,12 @@ export function App() {
     }
     if (panel.isCollapsed()) panel.expand();
     else panel.collapse();
+  }
+
+  function toggleResults() {
+    const panel = resultsPanelRef.current;
+    if (panel?.isCollapsed()) panel.expand();
+    else panel?.collapse();
   }
 
   function openConnectionsSidebar() {
@@ -1019,6 +1026,7 @@ export function App() {
             palette: () => setPalette(true),
             activity: toggleActivitySidebar,
             explorer: toggleExplorer,
+            results: toggleResults,
             navigate: () => {
               const target = editor.current?.target();
               if (target)
@@ -1597,7 +1605,12 @@ export function App() {
                     </section>
                   </ResizablePanel>
                   <ResizableHandle aria-label="Resize editor and results" />
-                  <ResizablePanel minSize="104px">
+                  <ResizablePanel
+                    panelRef={resultsPanelRef}
+                    minSize="104px"
+                    collapsible
+                    collapsedSize={0}
+                  >
                     <section
                       className="results"
                       aria-label="Results"

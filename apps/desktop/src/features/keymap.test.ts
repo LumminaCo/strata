@@ -63,6 +63,7 @@ describe("workspaceKeydown", () => {
       palette: vi.fn(),
       activity: vi.fn(),
       explorer: vi.fn(),
+      results: vi.fn(),
       navigate: vi.fn(),
       explain: vi.fn(),
       format: vi.fn(),
@@ -124,5 +125,18 @@ describe("workspaceKeydown", () => {
       const other = expected === "explorer" ? "activity" : "explorer";
       expect(handlers[other]).not.toHaveBeenCalled();
     }
+  });
+
+  it("maps Ctrl+J to results and leaves Ctrl+Shift+J alone", () => {
+    for (const shortcut of ["Ctrl+j", "Cmd+j"]) {
+      const handlers = actions();
+      const preventDefault = vi.fn();
+      expect(workspaceKeydown(key(shortcut, preventDefault), handlers, false), shortcut).toBe(true);
+      expect(preventDefault).toHaveBeenCalledOnce();
+      expect(handlers.results).toHaveBeenCalledOnce();
+    }
+    const handlers = actions();
+    expect(workspaceKeydown(key("Ctrl+Shift+J"), handlers, false)).toBe(false);
+    expect(handlers.results).not.toHaveBeenCalled();
   });
 });

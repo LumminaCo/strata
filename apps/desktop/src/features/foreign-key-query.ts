@@ -1,5 +1,3 @@
-import { formatQualifiedObjectName } from "@/features/catalog-context-menu";
-import { normalizeTabTitle } from "@/features/tab-order";
 import { quoteName } from "@/features/table-data";
 import type { Cell, Connection, ForeignKeyRef } from "@/ipc/bindings/protocol";
 
@@ -53,23 +51,12 @@ export function formatSqlLiteral(
   return `'${text.replaceAll("'", "''")}'`;
 }
 
-export function buildForeignKeyQuery(
+// Valid as raw SQL (first load, columns unknown) and as the table filter language (re-apply).
+export function buildForeignKeyFilter(
   target: ForeignKeyRef,
   value: Exclude<Cell, null>,
   columnKind: string | undefined,
   dbKind: Connection["kind"],
 ): string {
-  const relation = formatQualifiedObjectName(target.schema, target.table, dbKind);
-  const column = quoteName(target.column, dbKind);
-  const literal = formatSqlLiteral(value, columnKind, dbKind);
-  return `SELECT *\nFROM ${relation}\nWHERE ${column} = ${literal};`;
-}
-
-export function foreignKeyTabTitle(
-  target: ForeignKeyRef,
-  value: Exclude<Cell, null>,
-): string | undefined {
-  const raw = String(value).replace(/\s+/g, " ").trim();
-  const shortValue = raw.length > 18 ? `${raw.slice(0, 17)}…` : raw;
-  return normalizeTabTitle(`${target.table} (${shortValue})`);
+  return `${quoteName(target.column, dbKind)} = ${formatSqlLiteral(value, columnKind, dbKind)}`;
 }

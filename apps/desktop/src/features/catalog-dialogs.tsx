@@ -12,8 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
-import type { Connection, HistoryItem } from "@/ipc/bindings/protocol";
-import { dispatch, errorMessage } from "@/ipc/client";
+import { errorMessage } from "@/ipc/client";
 
 import type { CatalogEntry } from "./catalog-explorer";
 
@@ -120,87 +119,6 @@ function fuzzyScore(value: string, query: string) {
     if (!end) return -1;
   }
   return haystack.length + end;
-}
-
-export function QueryHistory({
-  connection,
-  revision,
-  onClose,
-  onOpen,
-}: {
-  connection?: Connection;
-  revision: number;
-  onClose: () => void;
-  onOpen: (sql: string) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const [entries, setEntries] = useState<HistoryItem[]>([]);
-  const [error, setError] = useState("");
-  const connectionId = connection?.id;
-  useEffect(() => {
-    if (!connectionId) return;
-    let current = true;
-    void dispatch("history_list", { connectionId }).then(
-      (items) => {
-        if (current) setEntries(items);
-      },
-      (error: unknown) => {
-        if (current) setError(errorMessage(error));
-      },
-    );
-    return () => {
-      current = false;
-    };
-  }, [connectionId, revision]);
-  const items = entries.filter((item) =>
-    item.sql.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
-  );
-  return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
-      <DialogContent className="catalog-dialog">
-        <DialogHeader>
-          <DialogTitle>Query history</DialogTitle>
-          <DialogDescription>
-            {connection ? (
-              <span className="inline-connection">
-                <DatabaseIcon kind={connection.kind} />
-                {connection.name}
-              </span>
-            ) : (
-              "Select a connection to see its history."
-            )}
-          </DialogDescription>
-        </DialogHeader>
-        <Input
-          aria-label="Filter query history"
-          placeholder="Filter SQL"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-        <div className="catalog-dialog-list">
-          {error && <p role="alert">{error}</p>}
-          {!error && !items.length && <p>No matching queries.</p>}
-          {items.map((item, index) => (
-            <Button
-              key={`${item.startedAt}-${index}`}
-              variant="ghost"
-              onClick={() => onOpen(item.sql)}
-            >
-              <span className="history-statement">{item.sql}</span>
-              <small>
-                {new Date(item.startedAt).toLocaleString()} · {item.durationMs} ms · {item.status}
-              </small>
-            </Button>
-          ))}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
 }
 
 export function DatabasePicker({

@@ -132,6 +132,153 @@ fn sqlite_migrations_are_repeatable_and_history_prunes_per_connection() {
     assert_eq!(reader.history("two", 10).expect("other history"), [entry]);
 }
 
+#[test]
+fn query_history_paginates_filters_and_orders_across_connections() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let paths = Paths::under(directory.path().into());
+    let mut db = Database::open(&paths.database).expect("open");
+    let entries = [
+        ("one", "SELECT * FROM customers WHERE name LIKE '%ada%'", 100),
+        ("two", "SELECT count(*) FROM orders", 200),
+        ("one", "SELECT * FROM films WHERE title LIKE '%100%'", 300),
+        ("two", "SELECT * FROM actors", 400),
+    ];
+    for (conn, sql, started_at) in entries {
+        db.record_history(&HistoryEntry {
+            connection_id: conn.into(),
+            source: Source::Ui,
+            sql: sql.into(),
+            started_at,
+            duration_ms: 5,
+            rows: 10,
+            status: HistoryStatus::Ok,
+            error: None,
+        })
+        .expect("record");
+    }
+
+    let first_page = db.query_history(None, None, 0, 2).expect("first page");
+    assert_eq!(first_page.total, 4);
+    assert!(first_page.has_more);
+    assert_eq!(
+        first_page
+            .items
+            .iter()
+            .map(|r| (r.entry.connection_id.as_str(), r.entry.started_at))
+            .collect::<Vec<_>>(),
+        [("two", 400), ("one", 300)]
+    );
+
+    let second_page = db.query_history(None, None, 2, 2).expect("second page");
+    assert_eq!(second_page.total, 4);
+    assert!(!second_page.has_more);
+    assert_eq!(
+        second_page
+            .items
+            .iter()
+            .map(|r| r.entry.started_at)
+            .collect::<Vec<_>>(),
+        [200, 100]
+    );
+
+    let scoped = db
+        .query_history(Some("one"), Some("%ada%"), 0, 10)
+        .expect("literal percent search");
+    assert_eq!(scoped.total, 1);
+    assert!(!scoped.has_more);
+    assert_eq!(
+        scoped.items[0].entry.sql,
+        "SELECT * FROM customers WHERE name LIKE '%ada%'"
+    );
+}
+
+#[test]
+fn saved_queries_persist_independently_and_support_crud_and_search() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let paths = Paths::under(directory.path().into());
+    let db = Database::open(&paths.database).expect("open");
+
+    assert!(
+        db.create_saved_query("q0", Some("one"), "   ", "SELECT 1", 10)
+            .is_err()
+    );
+    assert!(
+        db.create_saved_query("q0", Some("one"), "Empty SQL", "   ", 10)
+            .is_err()
+    );
+
+    let first = db
+        .create_saved_query(
+            "q1",
+            Some("one"),
+            "  Active users  ",
+            "SELECT * FROM users;",
+            100,
+        )
+        .expect("create first");
+    assert_eq!(first.title, "Active users");
+    assert_eq!(first.created_at, 100);
+    assert_eq!(first.updated_at, 100);
+
+    let second = db
+        .create_saved_query(
+            "q2",
+            Some("two"),
+            "Order totals",
+            "SELECT sum(total) FROM orders;",
+            200,
+        )
+        .expect("create second");
+    assert_eq!(second.connection_id.as_deref(), Some("two"));
+
+    let all = db.list_saved_queries(None, None).expect("list all");
+    assert_eq!(
+        all.iter().map(|q| q.id.as_str()).collect::<Vec<_>>(),
+        ["q2", "q1"]
+    );
+
+    let updated = db
+        .update_saved_query(
+            "q1",
+            "VIP users",
+            "SELECT * FROM users WHERE vip = true;",
+            300,
+        )
+        .expect("update");
+    assert_eq!(updated.title, "VIP users");
+    assert_eq!(updated.created_at, 100);
+    assert_eq!(updated.updated_at, 300);
+    assert_eq!(updated.connection_id.as_deref(), Some("one"));
+
+    let reordered = db.list_saved_queries(None, None).expect("list reordered");
+    assert_eq!(
+        reordered.iter().map(|q| q.id.as_str()).collect::<Vec<_>>(),
+        ["q1", "q2"]
+    );
+
+    let by_title = db
+        .list_saved_queries(None, Some("vip"))
+        .expect("search by title");
+    assert_eq!(by_title.len(), 1);
+    assert_eq!(by_title[0].id, "q1");
+
+    let by_conn = db
+        .list_saved_queries(Some("two"), None)
+        .expect("filter by connection");
+    assert_eq!(by_conn.len(), 1);
+    assert_eq!(by_conn[0].id, "q2");
+
+    db.delete_saved_query("q1").expect("delete");
+    assert_eq!(
+        db.list_saved_queries(None, None).expect("remaining").len(),
+        1
+    );
+    assert!(
+        db.update_saved_query("q1", "Missing", "SELECT 1", 400)
+            .is_err()
+    );
+}
+
 #[tokio::test]
 async fn watcher_keeps_last_good_config_after_an_invalid_edit() {
     let directory = tempfile::tempdir().expect("tempdir");

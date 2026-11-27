@@ -84,6 +84,7 @@ import {
   removeSavedSqlTabs,
   saveSqlFile as persistSqlFile,
   seedSavedSqlTabs,
+  selectUnsavedTabsToClose,
   type SavedSqlState,
 } from "@/features/save-sql-file";
 import {
@@ -98,6 +99,7 @@ import {
   ResultTabItem,
   SchemaTabItem,
   ScriptTabItem,
+  UnsavedTabCloseDialog,
 } from "@/features/tab-controls";
 import {
   MESSAGES_TAB_ID,
@@ -120,7 +122,7 @@ import { shortcuts, workspaceKeydown } from "@/features/keymap";
 import { useTabDrag } from "@/features/use-tab-drag";
 import { useWorkspace } from "@/features/use-workspace";
 import { useAppUpdate } from "@/features/use-app-update";
-import type { Cell, Connection, ForeignKeyRef, RunMode } from "@/ipc/bindings/protocol";
+import type { Cell, Connection, ForeignKeyRef, RunMode, SavedTab } from "@/ipc/bindings/protocol";
 import { browserMode, dispatch, errorMessage } from "@/ipc/client";
 import strataLogo from "../../../dev/strata-logo.png";
 
@@ -148,10 +150,14 @@ function readTheme() {
 export function App() {
   const [queryToasts, setQueryToasts] = useState<QueryCompletion[]>([]);
   const [savedSqlByTab, setSavedSqlByTab] = useState<Record<string, SavedSqlState>>({});
+  const savedSqlRef = useRef(savedSqlByTab);
+  savedSqlRef.current = savedSqlByTab;
   const notificationPrefs = useRef({ toast: true, sound: true });
   const data = useWorkspace({
     onWorkspaceLoad(workspace) {
-      setSavedSqlByTab(seedSavedSqlTabs(workspace.tabs));
+      const seeded = seedSavedSqlTabs(workspace.tabs);
+      savedSqlRef.current = seeded;
+      setSavedSqlByTab(seeded);
     },
     onQueryComplete(completion) {
       const { toast, sound } = notificationPrefs.current;
@@ -198,6 +204,12 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const historySidebarOpen = explorerOpen && sidebarView === "history";
   const [closeWarning, setCloseWarning] = useState<{ title: string; confirm: () => void }>();
+  const [unsavedClosePrompt, setUnsavedClosePrompt] = useState<{
+    ids: string[];
+    unsavedIds: string[];
+    labels: string[];
+  }>();
+  const [savingUnsavedClose, setSavingUnsavedClose] = useState(false);
   const windowState = useRef({
     dirty: data.hasOpenTransactions,
     close: data.closeWorkspace,
@@ -243,6 +255,8 @@ export function App() {
   const editor = useRef<EditorHandle>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const editors = useRef(new Map<string, { current: EditorState | null }>());
+  const tabsRef = useRef(data.tabs);
+  tabsRef.current = data.tabs;
   const savingSql = useRef(false);
   const filterInput = useRef<FilterInputHandle>(null);
   const ThemeIcon = themeIcons[theme];
@@ -549,14 +563,41 @@ export function App() {
     }
   }
 
-  function closeManyTabs(ids: string[], approved = false) {
-    if (ids.length === 0) return;
-    if (!approved) {
+  function currentTabText(targetTab: SavedTab): string {
+    if (!schemaActive && tab?.id === targetTab.id && editor.current) {
+      return editor.current.text();
+    }
+    return targetTab.text;
+  }
+
+  function closeManyTabs(
+    ids: string[],
+    options?: { skipUnsavedCheck?: boolean; skipTransactionCheck?: boolean },
+  ) {
+    if (ids.length === 0 || savingSql.current) return;
+    if (!options?.skipUnsavedCheck) {
+      const currentTabs = tabsRef.current;
+      const unsaved = selectUnsavedTabsToClose(
+        ids,
+        currentTabs,
+        savedSqlRef.current,
+        currentTabText,
+        (entry) => {
+          const connection = data.profiles.find((value) => value.id === entry.connectionId);
+          return scriptTabLabel(currentTabs, entry, connection?.name);
+        },
+      );
+      if (unsaved) {
+        setUnsavedClosePrompt({ ids, ...unsaved });
+        return;
+      }
+    }
+    if (!options?.skipTransactionCheck) {
       const atRisk = ids.filter((id) => data.transactionAtRisk(id));
       if (atRisk.length > 0) {
         setCloseWarning({
           title: atRisk.length === 1 ? "Close SQL tab?" : `Close ${atRisk.length} SQL tabs?`,
-          confirm: () => closeManyTabs(ids, true),
+          confirm: () => closeManyTabs(ids, { skipUnsavedCheck: true, skipTransactionCheck: true }),
         });
         return;
       }
@@ -594,8 +635,8 @@ export function App() {
     });
   }
 
-  function closeTab(id: string, approved = false) {
-    closeManyTabs([id], approved);
+  function closeTab(id: string) {
+    closeManyTabs([id]);
   }
 
   function closeResultTabs(tabId: string, resultIds: string[]) {
@@ -748,12 +789,12 @@ export function App() {
     }
   }
 
-  async function saveSqlFile(saveAs = false) {
-    if (!tab || !editor.current || schemaActive || savingSql.current) return;
-    const tabId = tab.id;
-    const content = editor.current.text();
-    const existing = savedSqlByTab[tabId];
-    const suggestedPath = existing?.path ?? tab.filePath;
+  async function saveSqlTab(targetTab: SavedTab, saveAs = false): Promise<boolean> {
+    if (savingSql.current) return false;
+    const tabId = targetTab.id;
+    const content = currentTabText(targetTab);
+    const existing = savedSqlRef.current[tabId];
+    const suggestedPath = existing?.path ?? targetTab.filePath;
     savingSql.current = true;
     try {
       const saved = await persistSqlFile(content, {
@@ -761,18 +802,57 @@ export function App() {
         handle: existing?.handle,
         saveAs,
       });
-      if (!saved) return;
-      if (editors.current.has(tabId)) {
+      if (!saved) return false;
+      if (tabsRef.current.some((entry) => entry.id === tabId)) {
+        savedSqlRef.current = recordSavedSqlTab(
+          savedSqlRef.current,
+          tabId,
+          content,
+          saved.path,
+          saved.handle,
+        );
         setSavedSqlByTab((current) =>
           recordSavedSqlTab(current, tabId, content, saved.path, saved.handle),
         );
         data.setTabFilePath(tabId, saved.path);
       }
       data.setNotice(`Saved SQL to ${saved.path}.`);
+      return true;
     } catch (error) {
       data.setNotice(errorMessage(error));
+      return false;
     } finally {
       savingSql.current = false;
+    }
+  }
+
+  async function saveSqlFile(saveAs = false) {
+    if (!tab || !editor.current || schemaActive) return;
+    await saveSqlTab(tab, saveAs);
+  }
+
+  async function saveUnsavedTabsAndClose() {
+    if (!unsavedClosePrompt || savingUnsavedClose) return;
+    const { ids, unsavedIds } = unsavedClosePrompt;
+    setSavingUnsavedClose(true);
+    let allSaved = true;
+    try {
+      for (const id of unsavedIds) {
+        const targetTab = tabsRef.current.find((entry) => entry.id === id);
+        if (!targetTab) continue;
+        if (!isSqlTabUnsaved(currentTabText(targetTab), savedSqlRef.current[id])) continue;
+        const saved = await saveSqlTab(targetTab, false);
+        if (!saved) {
+          allSaved = false;
+          break;
+        }
+      }
+    } finally {
+      setSavingUnsavedClose(false);
+      setUnsavedClosePrompt(undefined);
+    }
+    if (allSaved) {
+      closeManyTabs(ids, { skipUnsavedCheck: true });
     }
   }
 
@@ -889,6 +969,7 @@ export function App() {
           agentActivity ||
           settingsOpen ||
           closeWarning ||
+          unsavedClosePrompt ||
           update.status ||
           renamingScriptActive ||
           renamingResultActive ||
@@ -1907,6 +1988,21 @@ export function App() {
                   onInstall: installUpdate,
                 }
           }
+        />
+      )}
+      {unsavedClosePrompt && (
+        <UnsavedTabCloseDialog
+          labels={unsavedClosePrompt.labels}
+          saving={savingUnsavedClose}
+          onCancel={() => {
+            if (!savingUnsavedClose) setUnsavedClosePrompt(undefined);
+          }}
+          onDiscard={() => {
+            const ids = unsavedClosePrompt.ids;
+            setUnsavedClosePrompt(undefined);
+            closeManyTabs(ids, { skipUnsavedCheck: true });
+          }}
+          onSave={() => void saveUnsavedTabsAndClose()}
         />
       )}
       {closeWarning && (

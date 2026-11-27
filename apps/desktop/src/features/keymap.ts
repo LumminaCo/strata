@@ -20,7 +20,7 @@ export const shortcuts = {
   newTab: "Ctrl+T",
   closeTab: "Ctrl+W",
   palette: "Ctrl+K",
-  history: "Ctrl+H",
+  activity: "Ctrl+Alt+B",
   explorer: "Ctrl+B",
   navigate: "F4",
   explain: "Ctrl+Shift+E",
@@ -45,10 +45,14 @@ export function isBrowserShortcut(event: KeyboardEvent) {
 type Actions = Record<keyof typeof shortcuts | "nextTab" | "previousTab", () => void>;
 
 export function workspaceKeydown(event: KeyboardEvent, actions: Actions, browserMode: boolean) {
-  const modifier = (event.ctrlKey || event.metaKey) && !event.altKey;
+  const primary = event.ctrlKey || event.metaKey;
+  const modifier = primary && !event.altKey;
   const key = event.key.toLowerCase();
+  const isKeyB = key === "b" || event.code === "KeyB";
   let action: keyof Actions | undefined;
-  if (modifier) {
+  if (primary && event.altKey && !event.shiftKey && isKeyB) {
+    action = "activity";
+  } else if (modifier) {
     if (key === "enter") action = event.shiftKey ? "runInNewTab" : "run";
     if (key === ".") action = "stop";
     if (event.shiftKey && key === "e") action = "explain";
@@ -58,8 +62,7 @@ export function workspaceKeydown(event: KeyboardEvent, actions: Actions, browser
     if (key === "s") action = event.shiftKey ? "saveSqlAs" : "saveSql";
     if (key === "w") action = "closeTab";
     if (key === "k" || key === "p") action = "palette";
-    if (key === "h") action = "history";
-    if (key === "b") action = "explorer";
+    if (!event.shiftKey && isKeyB) action = "explorer";
     if (key === "tab") action = event.shiftKey ? "previousTab" : "nextTab";
   }
   if (event.altKey && !event.ctrlKey && !event.metaKey) {

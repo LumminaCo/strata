@@ -20,12 +20,12 @@ export function CatalogPalette({
   entries,
   onClose,
   onOpen,
-  onHistory,
+  onActivity,
 }: {
   entries: CatalogEntry[];
   onClose: () => void;
   onOpen: (entry: CatalogEntry) => void;
-  onHistory: () => void;
+  onActivity: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -100,8 +100,8 @@ export function CatalogPalette({
             </Button>
           ))}
         </div>
-        <Button variant="outline" onClick={onHistory}>
-          Query history
+        <Button variant="outline" onClick={onActivity}>
+          Activity
         </Button>
       </DialogContent>
     </Dialog>

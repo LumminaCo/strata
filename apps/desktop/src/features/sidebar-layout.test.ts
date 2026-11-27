@@ -1,12 +1,19 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  ACTIVITY_SIDEBAR_DEFAULT_WIDTH,
+  ACTIVITY_SIDEBAR_MAX_WIDTH,
+  ACTIVITY_SIDEBAR_MIN_WIDTH,
+  ACTIVITY_SIDEBAR_WIDTH_STORAGE_KEY,
   SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
   SIDEBAR_WIDTH_STORAGE_KEY,
+  clampActivitySidebarWidth,
   clampSidebarWidth,
+  readActivitySidebarWidth,
   readSidebarWidth,
+  writeActivitySidebarWidth,
   writeSidebarWidth,
 } from "@/features/sidebar-layout";
 
@@ -80,5 +87,23 @@ describe("sidebar width persistence and clamping", () => {
         },
       }),
     ).not.toThrow();
+  });
+
+  it("reads, clamps, and writes activity sidebar widths independently", () => {
+    const storage = memoryStorage();
+    expect(readActivitySidebarWidth(storage)).toBe(ACTIVITY_SIDEBAR_DEFAULT_WIDTH);
+    expect(clampActivitySidebarWidth(ACTIVITY_SIDEBAR_MIN_WIDTH - 40)).toBe(
+      ACTIVITY_SIDEBAR_MIN_WIDTH,
+    );
+    expect(clampActivitySidebarWidth(ACTIVITY_SIDEBAR_MAX_WIDTH + 40)).toBe(
+      ACTIVITY_SIDEBAR_MAX_WIDTH,
+    );
+
+    writeActivitySidebarWidth(ACTIVITY_SIDEBAR_MIN_WIDTH - 1, storage);
+    expect(storage.entries.has(ACTIVITY_SIDEBAR_WIDTH_STORAGE_KEY)).toBe(false);
+
+    writeActivitySidebarWidth(360.6, storage);
+    expect(storage.getItem(ACTIVITY_SIDEBAR_WIDTH_STORAGE_KEY)).toBe("361");
+    expect(readActivitySidebarWidth(storage)).toBe(361);
   });
 });

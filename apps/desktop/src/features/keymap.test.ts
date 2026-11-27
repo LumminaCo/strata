@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { isBrowserShortcut, shortcuts, workspaceKeydown } from "@/features/keymap";
 
-function key(shortcut: string, preventDefault = vi.fn()) {
+function key(shortcut: string, preventDefault = vi.fn(), extra?: Partial<KeyboardEvent>) {
   const parts = shortcut.split("+");
   return {
     key: parts.at(-1)!,
@@ -11,6 +11,7 @@ function key(shortcut: string, preventDefault = vi.fn()) {
     shiftKey: parts.includes("Shift"),
     altKey: parts.includes("Alt"),
     preventDefault,
+    ...extra,
   } as unknown as KeyboardEvent;
 }
 
@@ -60,7 +61,7 @@ describe("workspaceKeydown", () => {
       nextTab: vi.fn(),
       previousTab: vi.fn(),
       palette: vi.fn(),
-      history: vi.fn(),
+      activity: vi.fn(),
       explorer: vi.fn(),
       navigate: vi.fn(),
       explain: vi.fn(),
@@ -102,6 +103,25 @@ describe("workspaceKeydown", () => {
       expect(preventDefault).toHaveBeenCalledOnce();
       expect(handlers[expected]).toHaveBeenCalledOnce();
       const other = expected === "saveSql" ? "saveSqlAs" : "saveSql";
+      expect(handlers[other]).not.toHaveBeenCalled();
+    }
+  });
+
+  it("maps Ctrl+B to explorer and Ctrl+Alt+B to activity", () => {
+    for (const [shortcut, expected, extra] of [
+      ["Ctrl+b", "explorer", undefined],
+      ["Cmd+b", "explorer", undefined],
+      ["Ctrl+Alt+b", "activity", undefined],
+      ["Cmd+Alt+b", "activity", undefined],
+      ["Cmd+Alt+∫", "activity", { code: "KeyB" }],
+    ] as const) {
+      const handlers = actions();
+      const preventDefault = vi.fn();
+      const event = key(shortcut, preventDefault, extra);
+      expect(workspaceKeydown(event, handlers, false), shortcut).toBe(true);
+      expect(preventDefault).toHaveBeenCalledOnce();
+      expect(handlers[expected]).toHaveBeenCalledOnce();
+      const other = expected === "explorer" ? "activity" : "explorer";
       expect(handlers[other]).not.toHaveBeenCalled();
     }
   });

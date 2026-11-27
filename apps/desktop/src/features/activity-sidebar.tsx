@@ -1,33 +1,58 @@
 import {
+  Activity,
+  ArrowUpRight,
+  Bot,
   Check,
   ChevronRight,
   Copy,
-  Database,
-  History,
   Pencil,
   Pin,
   PinOff,
   Play,
   Plus,
   Search,
+  Terminal,
+  User,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { DatabaseIcon } from "@/components/database-icon";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { Connection, HistoryItem, SavedQueryItem } from "@/ipc/bindings/protocol";
+import type { AuditEntry, Connection, HistoryItem, SavedQueryItem } from "@/ipc/bindings/protocol";
 import { dispatch, errorMessage } from "@/ipc/client";
 
 export const HISTORY_PAGE_SIZE = 100;
+export const AUDIT_LIST_LIMIT = 200;
+const AUDIT_POLL_MS = 2000;
 const CREDENTIAL_OMITTED_MARKER = "-- Credential statement omitted";
 const MAX_SUGGESTED_TITLE_LENGTH = 60;
 
-export type HistorySidebarTab = "history" | "pinned";
-export type HistoryScope = "all" | "connection";
+export type ActivitySidebarTab = "activity" | "pinned";
+export type ActivityScope = "all" | "connection";
+export type ActivityActorFilter = "all" | "user" | "agent";
+export type ActivityActor = "user" | "cli" | "agent";
 
-export interface QueryHistorySidebarProps {
+export type ActivityFeedEntry =
+  | {
+      kind: "query";
+      key: string;
+      timestamp: number;
+      actor: ActivityActor;
+      item: HistoryItem;
+    }
+  | {
+      kind: "agent";
+      key: string;
+      timestamp: number;
+      actor: "agent";
+      item: AuditEntry;
+    };
+
+export interface ActivitySidebarProps {
+  open: boolean;
   profiles: Connection[];
   activeConnection?: Connection;
   canRun: boolean;
@@ -36,10 +61,16 @@ export interface QueryHistorySidebarProps {
   focusToken?: number;
   currentEditorSql?: () => string;
   onRun: (sql: string, options?: { title?: string; connectionId?: string | null }) => void;
+  onOpenSql: (connectionId: string, database: string, sql: string) => void;
   onCopy: (sql: string, label: string) => Promise<void> | void;
   onNotify: (message: string) => void;
-  onShowConnections: () => void;
   onCollapse: () => void;
+}
+
+interface PinTarget {
+  key: string;
+  sql: string;
+  connectionId: string | null;
 }
 
 export function isCredentialOmittedSql(sql: string): boolean {
@@ -82,7 +113,122 @@ export function formatDuration(ms: number): string {
   return `${seconds.toFixed(seconds >= 10 ? 1 : 2)} s`;
 }
 
-export function QueryHistorySidebar({
+export function resolveHistoryActor(source: string): ActivityActor {
+  if (source === "mcp") return "agent";
+  if (source === "cli") return "cli";
+  return "user";
+}
+
+export function auditStatusTone(decision: string): "ok" | "error" | "cancelled" | "pending" {
+  if (decision === "allowed") return "ok";
+  if (decision === "denied" || decision === "error") return "error";
+  if (decision === "pending") return "pending";
+  return "cancelled";
+}
+
+export function matchesAuditFilter(
+  entry: AuditEntry,
+  options: { connectionName?: string | null; search?: string },
+): boolean {
+  if (options.connectionName && entry.connectionName !== options.connectionName) {
+    return false;
+  }
+  const needle = options.search?.trim().toLowerCase();
+  if (!needle) return true;
+  return [
+    entry.sql ?? "",
+    entry.tool,
+    entry.clientName ?? "",
+    entry.connectionName,
+    entry.decision,
+    entry.reason ?? "",
+  ].some((field) => field.toLowerCase().includes(needle));
+}
+
+export function buildActivityFeed(
+  historyItems: HistoryItem[],
+  auditEntries: AuditEntry[],
+  options: {
+    actorFilter: ActivityActorFilter;
+    connectionName?: string | null;
+    search?: string;
+  },
+): ActivityFeedEntry[] {
+  const entries: ActivityFeedEntry[] = [];
+
+  for (const item of historyItems) {
+    const actor = resolveHistoryActor(item.source);
+    if (options.actorFilter === "user" && actor === "agent") continue;
+    if (options.actorFilter === "agent" && actor !== "agent") continue;
+    entries.push({
+      kind: "query",
+      key: `history-${item.id}`,
+      timestamp: item.startedAt,
+      actor,
+      item,
+    });
+  }
+
+  if (options.actorFilter !== "user") {
+    for (const item of auditEntries) {
+      if (
+        !matchesAuditFilter(item, {
+          connectionName: options.connectionName,
+          search: options.search,
+        })
+      ) {
+        continue;
+      }
+      entries.push({
+        kind: "agent",
+        key: `audit-${item.id}`,
+        timestamp: item.ts,
+        actor: "agent",
+        item,
+      });
+    }
+  }
+
+  entries.sort((left, right) => {
+    if (right.timestamp !== left.timestamp) return right.timestamp - left.timestamp;
+    if (left.kind !== right.kind) return left.kind === "agent" ? -1 : 1;
+    return right.item.id - left.item.id;
+  });
+
+  return entries;
+}
+
+function ActorChip({ actor, clientName }: { actor: ActivityActor; clientName?: string | null }) {
+  if (actor === "agent") {
+    return (
+      <span
+        className="activity-actor-chip"
+        data-actor="agent"
+        title={clientName ? `Agent: ${clientName}` : "Executed by an MCP agent"}
+      >
+        <Bot aria-hidden="true" />
+        <span>Agent</span>
+      </span>
+    );
+  }
+  if (actor === "cli") {
+    return (
+      <span className="activity-actor-chip" data-actor="cli" title="Executed via Strata CLI">
+        <Terminal aria-hidden="true" />
+        <span>CLI</span>
+      </span>
+    );
+  }
+  return (
+    <span className="activity-actor-chip" data-actor="user" title="Executed by you">
+      <User aria-hidden="true" />
+      <span>You</span>
+    </span>
+  );
+}
+
+export function ActivitySidebar({
+  open,
   profiles,
   activeConnection,
   canRun,
@@ -91,13 +237,14 @@ export function QueryHistorySidebar({
   focusToken = 0,
   currentEditorSql,
   onRun,
+  onOpenSql,
   onCopy,
   onNotify,
-  onShowConnections,
   onCollapse,
-}: QueryHistorySidebarProps) {
-  const [activeTab, setActiveTab] = useState<HistorySidebarTab>("history");
-  const [scope, setScope] = useState<HistoryScope>("all");
+}: ActivitySidebarProps) {
+  const [activeTab, setActiveTab] = useState<ActivitySidebarTab>("activity");
+  const [actorFilter, setActorFilter] = useState<ActivityActorFilter>("all");
+  const [scope, setScope] = useState<ActivityScope>("all");
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
@@ -108,6 +255,10 @@ export function QueryHistorySidebar({
   const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
   const [historyError, setHistoryError] = useState("");
 
+  const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState("");
+
   const [savedItems, setSavedItems] = useState<SavedQueryItem[]>([]);
   const [savedLoading, setSavedLoading] = useState(false);
   const [savedError, setSavedError] = useState("");
@@ -116,7 +267,7 @@ export function QueryHistorySidebar({
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set());
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  const [pinningHistoryId, setPinningHistoryId] = useState<number | null>(null);
+  const [pinningTarget, setPinningTarget] = useState<PinTarget | null>(null);
   const [pinTitle, setPinTitle] = useState("");
   const [pinSaving, setPinSaving] = useState(false);
   const [pinError, setPinError] = useState("");
@@ -139,13 +290,23 @@ export function QueryHistorySidebar({
   const savedRequestId = useRef(0);
 
   const activeConnectionId = activeConnection?.id ?? null;
-  const effectiveScope: HistoryScope = activeConnectionId ? scope : "all";
+  const effectiveScope: ActivityScope = activeConnectionId ? scope : "all";
   const filterConnectionId = effectiveScope === "connection" ? activeConnectionId : null;
+  const filterConnectionName =
+    effectiveScope === "connection" ? (activeConnection?.name ?? null) : null;
 
   const profileById = useMemo(() => {
     const map = new Map<string, Connection>();
     for (const profile of profiles) {
       if (profile.id) map.set(profile.id, profile);
+    }
+    return map;
+  }, [profiles]);
+
+  const profileByName = useMemo(() => {
+    const map = new Map<string, Connection>();
+    for (const profile of profiles) {
+      map.set(profile.name, profile);
     }
     return map;
   }, [profiles]);
@@ -158,6 +319,39 @@ export function QueryHistorySidebar({
     return set;
   }, [savedItems]);
 
+  const filteredAuditEntries = useMemo(
+    () =>
+      auditEntries.filter((entry) =>
+        matchesAuditFilter(entry, {
+          connectionName: filterConnectionName,
+          search: debouncedSearch,
+        }),
+      ),
+    [auditEntries, debouncedSearch, filterConnectionName],
+  );
+
+  const feed = useMemo(
+    () =>
+      buildActivityFeed(historyItems, auditEntries, {
+        actorFilter,
+        connectionName: filterConnectionName,
+        search: debouncedSearch,
+      }),
+    [actorFilter, auditEntries, debouncedSearch, filterConnectionName, historyItems],
+  );
+
+  const mcpHistoryCount = useMemo(
+    () => historyItems.filter((item) => resolveHistoryActor(item.source) === "agent").length,
+    [historyItems],
+  );
+
+  const activityBadgeCount =
+    actorFilter === "agent"
+      ? filteredAuditEntries.length + mcpHistoryCount
+      : actorFilter === "user"
+        ? Math.max(0, historyTotal - mcpHistoryCount)
+        : historyTotal + filteredAuditEntries.length;
+
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 150);
     return () => clearTimeout(timer);
@@ -168,12 +362,13 @@ export function QueryHistorySidebar({
   }, []);
 
   useEffect(() => {
-    if (focusToken > 0) {
+    if (open && focusToken > 0) {
       searchInputRef.current?.focus();
     }
-  }, [focusToken]);
+  }, [focusToken, open]);
 
   useEffect(() => {
+    if (!open) return;
     const request = ++historyRequestId.current;
     setHistoryLoading(true);
     setHistoryError("");
@@ -196,9 +391,43 @@ export function QueryHistorySidebar({
         setHistoryLoading(false);
       },
     );
-  }, [filterConnectionId, debouncedSearch, revision]);
+  }, [open, filterConnectionId, debouncedSearch, revision]);
 
   useEffect(() => {
+    if (!open || activeTab !== "activity") return;
+    let current = true;
+    let inFlight = false;
+    let firstLoad = true;
+
+    async function loadAudit() {
+      if (inFlight) return;
+      inFlight = true;
+      if (firstLoad) setAuditLoading(true);
+      try {
+        const audit = await dispatch("audit_list", { limit: AUDIT_LIST_LIMIT });
+        if (current) {
+          setAuditEntries(audit);
+          setAuditError("");
+        }
+      } catch (error) {
+        if (current) setAuditError(errorMessage(error));
+      } finally {
+        if (current && firstLoad) setAuditLoading(false);
+        firstLoad = false;
+        inFlight = false;
+      }
+    }
+
+    void loadAudit();
+    const timer = setInterval(() => void loadAudit(), AUDIT_POLL_MS);
+    return () => {
+      current = false;
+      clearInterval(timer);
+    };
+  }, [open, activeTab]);
+
+  useEffect(() => {
+    if (!open) return;
     const request = ++savedRequestId.current;
     setSavedLoading(true);
     setSavedError("");
@@ -217,7 +446,7 @@ export function QueryHistorySidebar({
         setSavedLoading(false);
       },
     );
-  }, [filterConnectionId, debouncedSearch, savedRevision]);
+  }, [open, filterConnectionId, debouncedSearch, savedRevision]);
 
   const loadMoreHistory = useCallback(() => {
     if (historyLoadingMore || !historyHasMore) return;
@@ -267,19 +496,19 @@ export function QueryHistorySidebar({
     copiedTimerRef.current = setTimeout(() => setCopiedKey(null), 1500);
   }
 
-  function startPinFromHistory(item: HistoryItem) {
-    setPinningHistoryId(item.id);
-    setPinTitle(suggestQueryTitle(item.sql));
+  function startPin(target: PinTarget) {
+    setPinningTarget(target);
+    setPinTitle(suggestQueryTitle(target.sql));
     setPinError("");
   }
 
-  function cancelPinFromHistory() {
-    setPinningHistoryId(null);
+  function cancelPin() {
+    setPinningTarget(null);
     setPinTitle("");
     setPinError("");
   }
 
-  async function submitPinFromHistory(item: HistoryItem) {
+  async function submitPin(target: PinTarget) {
     if (pinSaving) return;
     const trimmed = pinTitle.trim();
     if (!trimmed) {
@@ -290,12 +519,12 @@ export function QueryHistorySidebar({
     setPinError("");
     try {
       await dispatch("saved_query_save", {
-        connectionId: item.connectionId || activeConnectionId,
+        connectionId: target.connectionId || activeConnectionId,
         title: trimmed,
-        sql: item.sql,
+        sql: target.sql,
       });
       setSavedRevision((value) => value + 1);
-      setPinningHistoryId(null);
+      setPinningTarget(null);
       setPinTitle("");
       onNotify(`Pinned "${trimmed}".`);
     } catch (error) {
@@ -406,27 +635,26 @@ export function QueryHistorySidebar({
   }
 
   const showScopeToggle = Boolean(activeConnectionId && profiles.length > 1);
+  const activityLoading =
+    (actorFilter !== "agent" && historyLoading) || (actorFilter !== "user" && auditLoading);
+  const activityError =
+    actorFilter === "agent"
+      ? auditError || historyError
+      : actorFilter === "user"
+        ? historyError
+        : historyError || auditError;
 
   return (
-    <aside className="explorer history-sidebar" aria-label="Query history">
-      <div className="sidebar-heading">
-        <h2>Query history</h2>
+    <aside className="explorer history-sidebar activity-sidebar" aria-label="Activity">
+      <div className="sidebar-heading activity-sidebar-heading">
+        <h2>Activity</h2>
         <div className="sidebar-heading-actions">
           <Button
             size="icon-xs"
             variant="ghost"
-            title="Show connections"
-            aria-label="Show connections"
-            onClick={onShowConnections}
-          >
-            <Database />
-          </Button>
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            title="Collapse query history"
-            aria-label="Collapse query history"
-            className="sidebar-collapse-button"
+            title="Collapse activity"
+            aria-label="Collapse activity"
+            className="activity-collapse-button"
             onClick={onCollapse}
           >
             <ChevronRight />
@@ -435,18 +663,18 @@ export function QueryHistorySidebar({
       </div>
 
       <div className="history-sidebar-controls">
-        <div className="history-tabs" role="tablist" aria-label="Query history views">
+        <div className="history-tabs" role="tablist" aria-label="Activity views">
           <button
             type="button"
             role="tab"
             className="history-tab"
-            aria-selected={activeTab === "history"}
-            onClick={() => setActiveTab("history")}
+            aria-selected={activeTab === "activity"}
+            onClick={() => setActiveTab("activity")}
           >
-            <History aria-hidden="true" />
-            <span>History</span>
-            {historyTotal > 0 && (
-              <span className="history-tab-count">{historyTotal.toLocaleString()}</span>
+            <Activity aria-hidden="true" />
+            <span>Activity</span>
+            {activityBadgeCount > 0 && (
+              <span className="history-tab-count">{activityBadgeCount.toLocaleString()}</span>
             )}
           </button>
           <button
@@ -469,8 +697,8 @@ export function QueryHistorySidebar({
           <Input
             ref={searchInputRef}
             className="history-search-input"
-            aria-label={activeTab === "history" ? "Search query history" : "Search pinned queries"}
-            placeholder={activeTab === "history" ? "Filter SQL…" : "Filter pinned…"}
+            aria-label={activeTab === "activity" ? "Search activity" : "Search pinned queries"}
+            placeholder={activeTab === "activity" ? "Filter SQL or agent calls…" : "Filter pinned…"}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             onKeyDown={(event) => {
@@ -492,6 +720,37 @@ export function QueryHistorySidebar({
           )}
         </div>
 
+        {activeTab === "activity" && (
+          <div className="activity-actor-row" role="group" aria-label="Activity source filter">
+            <button
+              type="button"
+              className="history-scope-pill"
+              aria-pressed={actorFilter === "all"}
+              onClick={() => setActorFilter("all")}
+            >
+              <span>All</span>
+            </button>
+            <button
+              type="button"
+              className="history-scope-pill"
+              aria-pressed={actorFilter === "user"}
+              onClick={() => setActorFilter("user")}
+            >
+              <User aria-hidden="true" />
+              <span>You</span>
+            </button>
+            <button
+              type="button"
+              className="history-scope-pill"
+              aria-pressed={actorFilter === "agent"}
+              onClick={() => setActorFilter("agent")}
+            >
+              <Bot aria-hidden="true" />
+              <span>Agent</span>
+            </button>
+          </div>
+        )}
+
         {showScopeToggle && (
           <div className="history-scope-row" role="group" aria-label="Connection filter">
             <button
@@ -500,7 +759,7 @@ export function QueryHistorySidebar({
               aria-pressed={effectiveScope === "all"}
               onClick={() => setScope("all")}
             >
-              All connections
+              <span>All connections</span>
             </button>
             <button
               type="button"
@@ -531,118 +790,314 @@ export function QueryHistorySidebar({
       <div
         className="history-list"
         role="tabpanel"
-        aria-label={activeTab === "history" ? "History" : "Pinned"}
+        aria-label={activeTab === "activity" ? "Activity" : "Pinned"}
       >
-        {activeTab === "history" ? (
+        {activeTab === "activity" ? (
           <>
-            {historyError && (
+            {activityError && (
               <p className="history-empty" role="alert">
-                {historyError}
+                {activityError}
               </p>
             )}
-            {!historyError && !historyLoading && historyItems.length === 0 && (
+            {!activityError && !activityLoading && feed.length === 0 && (
               <p className="history-empty">
                 {debouncedSearch
-                  ? "No matching queries in history."
-                  : "Run a query to build your history."}
+                  ? "No matching activity."
+                  : actorFilter === "agent"
+                    ? "No agent activity recorded yet."
+                    : actorFilter === "user"
+                      ? "Run a query to build your activity."
+                      : "Run a query or connect an agent to see activity here."}
               </p>
             )}
-            {historyItems.map((item) => {
-              const key = `history-${item.id}`;
+            {feed.map((entry) => {
+              if (entry.kind === "query") {
+                const { item, key, actor } = entry;
+                const expanded = expandedKeys.has(key);
+                const copied = copiedKey === key;
+                const omitted = isCredentialOmittedSql(item.sql);
+                const alreadyPinned = pinnedSqlSet.has(item.sql.trim());
+                const isPinning = pinningTarget?.key === key;
+                const connection = profileById.get(item.connectionId);
+                const runDisabled = busy || omitted || (!canRun && !connection);
+                return (
+                  <article key={key} className="history-card" data-actor={actor}>
+                    <div className="history-card-header">
+                      <span
+                        className="history-status-dot"
+                        data-status={item.status}
+                        title={`Status: ${item.status}`}
+                      />
+                      <ActorChip actor={actor} />
+                      <time
+                        className="history-time"
+                        title={new Date(item.startedAt).toLocaleString()}
+                      >
+                        {formatHistoryTime(item.startedAt)}
+                      </time>
+                      <div className="history-card-actions">
+                        <Button
+                          type="button"
+                          size="icon-xs"
+                          variant="ghost"
+                          disabled={runDisabled}
+                          title={
+                            omitted
+                              ? "Credential statements are not stored in history"
+                              : busy
+                                ? "Wait for the running query to finish"
+                                : "Run in new result tab"
+                          }
+                          aria-label="Run query in new result tab"
+                          onClick={() =>
+                            onRun(item.sql, { connectionId: item.connectionId || null })
+                          }
+                        >
+                          <Play />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon-xs"
+                          variant="ghost"
+                          disabled={omitted}
+                          title={copied ? "Copied" : "Copy SQL"}
+                          aria-label="Copy SQL"
+                          onClick={() => void handleCopy(key, item.sql, "query SQL")}
+                        >
+                          {copied ? <Check /> : <Copy />}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon-xs"
+                          variant="ghost"
+                          disabled={omitted}
+                          data-pinned={alreadyPinned || isPinning}
+                          title={alreadyPinned ? "Pinned (click to save another)" : "Pin query"}
+                          aria-label="Pin query"
+                          onClick={() =>
+                            isPinning
+                              ? cancelPin()
+                              : startPin({
+                                  key,
+                                  sql: item.sql,
+                                  connectionId: item.connectionId || null,
+                                })
+                          }
+                        >
+                          <Pin />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="history-sql-preview"
+                      data-expanded={expanded}
+                      title={expanded ? "Click to collapse" : "Click to expand full SQL"}
+                      onClick={() => toggleExpanded(key)}
+                    >
+                      <code>{item.sql}</code>
+                    </button>
+
+                    <div className="history-card-meta">
+                      <span>{formatDuration(item.durationMs)}</span>
+                      <span>{item.rows.toLocaleString()} rows</span>
+                      {effectiveScope === "all" && connection && (
+                        <span className="history-card-conn" title={connection.name}>
+                          <DatabaseIcon kind={connection.kind} />
+                          <span>{connection.name}</span>
+                        </span>
+                      )}
+                    </div>
+
+                    {isPinning && pinningTarget && (
+                      <form
+                        className="history-inline-form"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void submitPin(pinningTarget);
+                        }}
+                      >
+                        <Input
+                          autoFocus
+                          aria-label="Pinned query title"
+                          placeholder="Query title"
+                          maxLength={120}
+                          value={pinTitle}
+                          onChange={(event) => {
+                            setPinTitle(event.target.value);
+                            if (pinError) setPinError("");
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Escape") {
+                              event.stopPropagation();
+                              cancelPin();
+                            }
+                          }}
+                        />
+                        {pinError && (
+                          <p className="history-form-error" role="alert">
+                            {pinError}
+                          </p>
+                        )}
+                        <div className="history-inline-form-actions">
+                          <Button type="submit" size="xs" disabled={pinSaving}>
+                            Save pin
+                          </Button>
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="ghost"
+                            disabled={pinSaving}
+                            onClick={cancelPin}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </form>
+                    )}
+                  </article>
+                );
+              }
+
+              const { item, key } = entry;
+              const sql = item.sql;
+              const hasSql = Boolean(sql);
+              const omitted = sql ? isCredentialOmittedSql(sql) : false;
               const expanded = expandedKeys.has(key);
               const copied = copiedKey === key;
-              const omitted = isCredentialOmittedSql(item.sql);
-              const alreadyPinned = pinnedSqlSet.has(item.sql.trim());
-              const isPinning = pinningHistoryId === item.id;
-              const connection = profileById.get(item.connectionId);
-              const runDisabled = busy || omitted || (!canRun && !connection);
+              const alreadyPinned = sql ? pinnedSqlSet.has(sql.trim()) : false;
+              const isPinning = pinningTarget?.key === key;
+              const connection = profileByName.get(item.connectionName);
+              const runDisabled = !hasSql || busy || omitted || (!canRun && !connection);
+              const clientLabel = item.clientName || "MCP client";
+              const showConnectionName =
+                effectiveScope === "all" && item.connectionName && item.connectionName !== "—";
               return (
-                <article key={key} className="history-card">
+                <article key={key} className="history-card" data-actor="agent">
                   <div className="history-card-header">
                     <span
                       className="history-status-dot"
-                      data-status={item.status}
-                      title={`Status: ${item.status}`}
+                      data-status={auditStatusTone(item.decision)}
+                      title={`Decision: ${item.decision}`}
                     />
-                    <time
-                      className="history-time"
-                      title={new Date(item.startedAt).toLocaleString()}
-                    >
-                      {formatHistoryTime(item.startedAt)}
+                    <ActorChip actor="agent" clientName={clientLabel} />
+                    <time className="history-time" title={new Date(item.ts).toLocaleString()}>
+                      {formatHistoryTime(item.ts)}
                     </time>
-                    <div className="history-card-actions">
-                      <Button
-                        type="button"
-                        size="icon-xs"
-                        variant="ghost"
-                        disabled={runDisabled}
-                        title={
-                          omitted
-                            ? "Credential statements are not stored in history"
-                            : busy
-                              ? "Wait for the running query to finish"
-                              : "Run in new result tab"
-                        }
-                        aria-label="Run query in new result tab"
-                        onClick={() => onRun(item.sql, { connectionId: item.connectionId || null })}
-                      >
-                        <Play />
-                      </Button>
-                      <Button
-                        type="button"
-                        size="icon-xs"
-                        variant="ghost"
-                        disabled={omitted}
-                        title={copied ? "Copied" : "Copy SQL"}
-                        aria-label="Copy SQL"
-                        onClick={() => void handleCopy(key, item.sql, "query SQL")}
-                      >
-                        {copied ? <Check /> : <Copy />}
-                      </Button>
-                      <Button
-                        type="button"
-                        size="icon-xs"
-                        variant="ghost"
-                        disabled={omitted}
-                        data-pinned={alreadyPinned || isPinning}
-                        title={alreadyPinned ? "Pinned (click to save another)" : "Pin query"}
-                        aria-label="Pin query"
-                        onClick={() =>
-                          isPinning ? cancelPinFromHistory() : startPinFromHistory(item)
-                        }
-                      >
-                        <Pin />
-                      </Button>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    className="history-sql-preview"
-                    data-expanded={expanded}
-                    title={expanded ? "Click to collapse" : "Click to expand full SQL"}
-                    onClick={() => toggleExpanded(key)}
-                  >
-                    <code>{item.sql}</code>
-                  </button>
-
-                  <div className="history-card-meta">
-                    <span>{formatDuration(item.durationMs)}</span>
-                    <span>{item.rows.toLocaleString()} rows</span>
-                    {effectiveScope === "all" && connection && (
-                      <span className="history-card-conn" title={connection.name}>
-                        <DatabaseIcon kind={connection.kind} />
-                        <span>{connection.name}</span>
-                      </span>
+                    {hasSql && sql && (
+                      <div className="history-card-actions">
+                        <Button
+                          type="button"
+                          size="icon-xs"
+                          variant="ghost"
+                          disabled={runDisabled}
+                          title={
+                            omitted
+                              ? "Credential statements are not stored in activity"
+                              : busy
+                                ? "Wait for the running query to finish"
+                                : "Run in new result tab"
+                          }
+                          aria-label="Run agent query in new result tab"
+                          onClick={() => onRun(sql, { connectionId: connection?.id ?? null })}
+                        >
+                          <Play />
+                        </Button>
+                        {connection?.id && !omitted && (
+                          <Button
+                            type="button"
+                            size="icon-xs"
+                            variant="ghost"
+                            title="Open SQL in editor tab"
+                            aria-label="Open SQL in editor tab"
+                            onClick={() => onOpenSql(connection.id!, connection.database, sql)}
+                          >
+                            <ArrowUpRight />
+                          </Button>
+                        )}
+                        <Button
+                          type="button"
+                          size="icon-xs"
+                          variant="ghost"
+                          disabled={omitted}
+                          title={copied ? "Copied" : "Copy SQL"}
+                          aria-label="Copy SQL"
+                          onClick={() => void handleCopy(key, sql, "query SQL")}
+                        >
+                          {copied ? <Check /> : <Copy />}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon-xs"
+                          variant="ghost"
+                          disabled={omitted}
+                          data-pinned={alreadyPinned || isPinning}
+                          title={alreadyPinned ? "Pinned (click to save another)" : "Pin query"}
+                          aria-label="Pin query"
+                          onClick={() =>
+                            isPinning
+                              ? cancelPin()
+                              : startPin({
+                                  key,
+                                  sql,
+                                  connectionId: connection?.id ?? null,
+                                })
+                          }
+                        >
+                          <Pin />
+                        </Button>
+                      </div>
                     )}
                   </div>
 
-                  {isPinning && (
+                  <div className="activity-agent-row">
+                    <code className="activity-tool-name">{item.tool}</code>
+                    <Badge
+                      variant="outline"
+                      className="activity-decision-badge"
+                      data-decision={item.decision}
+                    >
+                      {item.decision}
+                    </Badge>
+                    <span className="activity-client-name" title={clientLabel}>
+                      {clientLabel}
+                    </span>
+                  </div>
+
+                  {sql && (
+                    <button
+                      type="button"
+                      className="history-sql-preview"
+                      data-expanded={expanded}
+                      title={expanded ? "Click to collapse" : "Click to expand full SQL"}
+                      onClick={() => toggleExpanded(key)}
+                    >
+                      <code>{sql}</code>
+                    </button>
+                  )}
+
+                  {item.reason && <p className="activity-reason">{item.reason}</p>}
+
+                  {(item.durationMs !== null || item.rows !== null || showConnectionName) && (
+                    <div className="history-card-meta">
+                      {item.durationMs !== null && <span>{formatDuration(item.durationMs)}</span>}
+                      {item.rows !== null && <span>{item.rows.toLocaleString()} rows</span>}
+                      {showConnectionName && (
+                        <span className="history-card-conn" title={item.connectionName}>
+                          {connection && <DatabaseIcon kind={connection.kind} />}
+                          <span>{item.connectionName}</span>
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {isPinning && pinningTarget && (
                     <form
                       className="history-inline-form"
                       onSubmit={(event) => {
                         event.preventDefault();
-                        void submitPinFromHistory(item);
+                        void submitPin(pinningTarget);
                       }}
                     >
                       <Input
@@ -658,7 +1113,7 @@ export function QueryHistorySidebar({
                         onKeyDown={(event) => {
                           if (event.key === "Escape") {
                             event.stopPropagation();
-                            cancelPinFromHistory();
+                            cancelPin();
                           }
                         }}
                       />
@@ -676,7 +1131,7 @@ export function QueryHistorySidebar({
                           size="xs"
                           variant="ghost"
                           disabled={pinSaving}
-                          onClick={cancelPinFromHistory}
+                          onClick={cancelPin}
                         >
                           Cancel
                         </Button>
@@ -686,7 +1141,7 @@ export function QueryHistorySidebar({
                 </article>
               );
             })}
-            {historyHasMore && (
+            {historyHasMore && actorFilter !== "agent" && (
               <div className="history-load-more">
                 <Button
                   type="button"
@@ -776,7 +1231,7 @@ export function QueryHistorySidebar({
               <p className="history-empty">
                 {debouncedSearch
                   ? "No matching pinned queries."
-                  : "Pin queries from History or save one here for quick reuse."}
+                  : "Pin queries from Activity or save one here for quick reuse."}
               </p>
             )}
             {savedItems.map((item) => {

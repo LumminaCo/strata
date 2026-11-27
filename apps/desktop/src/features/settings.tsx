@@ -278,9 +278,9 @@ function keybindingEntries(): KeybindingEntry[] {
     },
     {
       group: "Navigation & workspace",
-      label: "Query history",
-      description: "Toggle the query history and pinned queries sidebar.",
-      keys: shortcuts.history,
+      label: "Toggle activity",
+      description: "Show or hide the right-side activity and pinned queries sidebar.",
+      keys: shortcuts.activity,
     },
     {
       group: "Navigation & workspace",

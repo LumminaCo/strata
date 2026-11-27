@@ -1,13 +1,12 @@
 import { getCurrentWindow, UserAttentionType } from "@tauri-apps/api/window";
 import type { EditorState } from "@codemirror/state";
 import {
+  Activity,
   Cable,
   ChevronRight,
   Copy,
   Database,
   Download,
-  ShieldCheck,
-  History,
   Command as CommandIcon,
   FolderOpen,
   Save,
@@ -64,10 +63,9 @@ import {
   PasswordDialog,
   emptyConnection,
 } from "@/features/connections";
-import { AgentActivity } from "@/features/agent-activity";
+import { ActivitySidebar } from "@/features/activity-sidebar";
 import { CatalogExplorer, type CatalogEntry } from "@/features/catalog-explorer";
 import { CatalogPalette, DatabasePicker, SchemaPicker } from "@/features/catalog-dialogs";
-import { QueryHistorySidebar } from "@/features/query-history-sidebar";
 import { SettingsDialog } from "@/features/settings";
 import {
   QueryNotificationStack,
@@ -88,9 +86,13 @@ import {
   type SavedSqlState,
 } from "@/features/save-sql-file";
 import {
+  ACTIVITY_SIDEBAR_DEFAULT_WIDTH,
+  ACTIVITY_SIDEBAR_MIN_WIDTH,
   SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_MIN_WIDTH,
+  readActivitySidebarWidth,
   readSidebarWidth,
+  writeActivitySidebarWidth,
   writeSidebarWidth,
 } from "@/features/sidebar-layout";
 import {
@@ -190,19 +192,17 @@ export function App() {
   const [resultViews, setResultViews] = useState<Record<string, ResultViewState>>({});
   const [visibleRowCounts, setVisibleRowCounts] = useState<Record<string, number>>({});
   const [initialSidebarWidth] = useState(() => readSidebarWidth());
+  const [initialActivityWidth] = useState(() => readActivitySidebarWidth());
+  const activityWidthRef = useRef(initialActivityWidth);
   const [gridAggregate, setGridAggregate] = useState<NumericAggregateSummary | null>(null);
   const [aggregateFn, setAggregateFn] = useState<AggregateFunction>(readAggregateFunction);
   const [explorerOpen, setExplorerOpen] = useState(true);
-  const [sidebarView, setSidebarView] = useState<"connections" | "history">("connections");
-  const [historyFocusToken, setHistoryFocusToken] = useState(0);
-  const sidebarBeforeHistory = useRef<{ open: boolean; view: "connections" | "history" }>({
-    open: true,
-    view: "connections",
-  });
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [activityFocusToken, setActivityFocusToken] = useState(0);
   const explorerPanelRef = usePanelRef();
+  const activityPanelRef = usePanelRef();
   const [palette, setPalette] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const historySidebarOpen = explorerOpen && sidebarView === "history";
   const [closeWarning, setCloseWarning] = useState<{ title: string; confirm: () => void }>();
   const [unsavedClosePrompt, setUnsavedClosePrompt] = useState<{
     ids: string[];
@@ -220,7 +220,6 @@ export function App() {
     close: data.closeWorkspace,
     notice: data.setNotice,
   };
-  const [agentActivity, setAgentActivity] = useState(false);
   const [schemaTabs, setSchemaTabs] = useState<Inspection[]>([]);
   const [schemaSelected, setSchemaSelected] = useState<string>();
   const [pinnedByTab, setPinned] = useState<Record<string, Inspection[]>>({});
@@ -390,37 +389,53 @@ export function App() {
   }
 
   function openConnectionsSidebar() {
-    setSidebarView("connections");
     expandExplorer();
   }
 
-  function openHistorySidebar() {
-    if (!historySidebarOpen) {
-      sidebarBeforeHistory.current = { open: explorerOpen, view: sidebarView };
-    }
-    setSidebarView("history");
-    expandExplorer();
-    setHistoryFocusToken((value) => value + 1);
+  function collapseActivity() {
+    if (activityPanelRef.current) activityPanelRef.current.collapse();
+    else setActivityOpen(false);
   }
 
-  function toggleHistorySidebar() {
-    if (historySidebarOpen) {
-      if (
-        sidebarBeforeHistory.current.open &&
-        sidebarBeforeHistory.current.view === "connections"
-      ) {
-        setSidebarView("connections");
-      } else {
-        collapseExplorer();
+  function openActivitySidebar() {
+    const panel = activityPanelRef.current;
+    if (panel) {
+      if (panel.isCollapsed()) {
+        panel.resize(`${activityWidthRef.current}px`);
       }
+    } else {
+      setActivityOpen(true);
+    }
+    setActivityFocusToken((value) => value + 1);
+  }
+
+  function toggleActivitySidebar() {
+    const panel = activityPanelRef.current;
+    if (!panel) {
+      setActivityOpen((open) => {
+        const next = !open;
+        if (next) setActivityFocusToken((value) => value + 1);
+        return next;
+      });
       return;
     }
-    openHistorySidebar();
+    if (panel.isCollapsed()) {
+      panel.resize(`${activityWidthRef.current}px`);
+      setActivityFocusToken((value) => value + 1);
+    } else {
+      panel.collapse();
+    }
   }
 
   function resetSidebarWidth() {
     explorerPanelRef.current?.resize(`${SIDEBAR_DEFAULT_WIDTH}px`);
     writeSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
+  }
+
+  function resetActivitySidebarWidth() {
+    activityWidthRef.current = ACTIVITY_SIDEBAR_DEFAULT_WIDTH;
+    activityPanelRef.current?.resize(`${ACTIVITY_SIDEBAR_DEFAULT_WIDTH}px`);
+    writeActivitySidebarWidth(ACTIVITY_SIDEBAR_DEFAULT_WIDTH);
   }
 
   function runHistoryQuery(
@@ -966,7 +981,6 @@ export function App() {
           valueView ||
           data.modal ||
           palette ||
-          agentActivity ||
           settingsOpen ||
           closeWarning ||
           unsavedClosePrompt ||
@@ -1003,7 +1017,7 @@ export function App() {
               data.moveTab(-1);
             },
             palette: () => setPalette(true),
-            history: toggleHistorySidebar,
+            activity: toggleActivitySidebar,
             explorer: toggleExplorer,
             navigate: () => {
               const target = editor.current?.target();
@@ -1070,15 +1084,6 @@ export function App() {
           >
             <Settings2 />
           </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            title="Agent activity"
-            aria-label="Agent activity"
-            onClick={() => setAgentActivity(true)}
-          >
-            <ShieldCheck />
-          </Button>
           {!browserMode && (
             <Button
               variant="ghost"
@@ -1103,16 +1108,6 @@ export function App() {
           </Button>
           <Button
             variant="ghost"
-            size="icon-sm"
-            aria-pressed={historySidebarOpen}
-            title={`Query history (${shortcuts.history})`}
-            aria-label="Query history"
-            onClick={toggleHistorySidebar}
-          >
-            <History />
-          </Button>
-          <Button
-            variant="ghost"
             onClick={changeTheme}
             aria-label={`Theme: ${theme}. Change theme.`}
             title="Change theme"
@@ -1134,12 +1129,22 @@ export function App() {
         orientation="horizontal"
         className="workspace-body"
         data-explorer-open={explorerOpen}
+        data-activity-open={activityOpen}
         onLayoutChanged={(_layout, meta) => {
           if (!meta.isUserInteraction) return;
           const panel = explorerPanelRef.current;
-          if (!panel || panel.isCollapsed()) return;
-          const { inPixels } = panel.getSize();
-          if (inPixels >= SIDEBAR_MIN_WIDTH) writeSidebarWidth(inPixels);
+          if (panel && !panel.isCollapsed()) {
+            const { inPixels } = panel.getSize();
+            if (inPixels >= SIDEBAR_MIN_WIDTH) writeSidebarWidth(inPixels);
+          }
+          const activityPanel = activityPanelRef.current;
+          if (activityPanel && !activityPanel.isCollapsed()) {
+            const { inPixels } = activityPanel.getSize();
+            if (inPixels >= ACTIVITY_SIDEBAR_MIN_WIDTH) {
+              activityWidthRef.current = inPixels;
+              writeActivitySidebarWidth(inPixels);
+            }
+          }
         }}
       >
         <ResizablePanel
@@ -1147,7 +1152,7 @@ export function App() {
           panelRef={explorerPanelRef}
           defaultSize={`${initialSidebarWidth}px`}
           minSize={`${SIDEBAR_MIN_WIDTH}px`}
-          maxSize="50%"
+          maxSize="40%"
           collapsible
           collapsedSize={0}
           groupResizeBehavior="preserve-pixel-size"
@@ -1157,92 +1162,75 @@ export function App() {
             setExplorerOpen((current) => (current === open ? current : open));
           }}
         >
-          {sidebarView === "history" ? (
-            <QueryHistorySidebar
+          <aside className="explorer connections-sidebar" aria-label="Connections">
+            <div className="sidebar-heading">
+              <h2>Connections</h2>
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                title={`Collapse connections (${shortcuts.explorer})`}
+                aria-label="Collapse connections"
+                onClick={collapseExplorer}
+              >
+                <ChevronRight />
+              </Button>
+            </div>
+            <CatalogExplorer
               profiles={data.profiles}
-              activeConnection={profile}
-              canRun={Boolean(tab && profile)}
-              busy={Boolean(active.busy)}
-              revision={data.historyRevision}
-              focusToken={historyFocusToken}
-              currentEditorSql={() => editor.current?.text() ?? tab?.text ?? ""}
-              onRun={runHistoryQuery}
-              onCopy={(sql, label) => copyText(sql, label)}
-              onNotify={data.setNotice}
-              onShowConnections={openConnectionsSidebar}
-              onCollapse={collapseExplorer}
+              active={profile?.id}
+              revision={data.catalogRevision}
+              canPin={!!tab}
+              canInsertInEditor={Boolean(tab && !schemaActive)}
+              scope={data.scope}
+              onObjects={catalog.captureObjects}
+              onEntries={setEntries}
+              openSql={openTab}
+              onRefresh={data.invalidateCatalog}
+              onObject={openObject}
+              onPinObject={pinObject}
+              onInsertText={(text) => editor.current?.insert(text)}
+              onCopyText={(text, label) => void copyText(text, label)}
+              onCopyDdl={(entry) => void copyObjectDdl(entry)}
+              onEditConnection={(connection) => editConnection(connection)}
+              onDuplicateConnection={(connection) =>
+                editConnection({ ...connection, id: null, name: `${connection.name} copy` })
+              }
+              onDeleteConnection={(connection) => setDeletion(connection)}
             />
-          ) : (
-            <aside className="explorer" aria-label="Connections">
-              <div className="sidebar-heading">
-                <h2>Connections</h2>
+            {profile?.id && (
+              <div className="profile-actions">
                 <Button
-                  size="icon-xs"
                   variant="ghost"
-                  title="Collapse connections"
-                  aria-label="Collapse connections"
-                  onClick={collapseExplorer}
+                  size="icon-sm"
+                  title="Edit connection"
+                  aria-label="Edit connection"
+                  onClick={() => editConnection(profile)}
                 >
-                  <ChevronRight />
+                  <Settings2 />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  title="Duplicate connection"
+                  aria-label="Duplicate connection"
+                  onClick={() =>
+                    editConnection({ ...profile, id: null, name: `${profile.name} copy` })
+                  }
+                >
+                  <Copy />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  title="Delete connection"
+                  aria-label="Delete connection"
+                  onClick={() => setDeletion(profile)}
+                >
+                  <Trash2 />
                 </Button>
               </div>
-              <CatalogExplorer
-                profiles={data.profiles}
-                active={profile?.id}
-                revision={data.catalogRevision}
-                canPin={!!tab}
-                canInsertInEditor={Boolean(tab && !schemaActive)}
-                scope={data.scope}
-                onObjects={catalog.captureObjects}
-                onEntries={setEntries}
-                openSql={openTab}
-                onRefresh={data.invalidateCatalog}
-                onObject={openObject}
-                onPinObject={pinObject}
-                onInsertText={(text) => editor.current?.insert(text)}
-                onCopyText={(text, label) => void copyText(text, label)}
-                onCopyDdl={(entry) => void copyObjectDdl(entry)}
-                onEditConnection={(connection) => editConnection(connection)}
-                onDuplicateConnection={(connection) =>
-                  editConnection({ ...connection, id: null, name: `${connection.name} copy` })
-                }
-                onDeleteConnection={(connection) => setDeletion(connection)}
-              />
-              {profile?.id && (
-                <div className="profile-actions">
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    title="Edit connection"
-                    aria-label="Edit connection"
-                    onClick={() => editConnection(profile)}
-                  >
-                    <Settings2 />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    title="Duplicate connection"
-                    aria-label="Duplicate connection"
-                    onClick={() =>
-                      editConnection({ ...profile, id: null, name: `${profile.name} copy` })
-                    }
-                  >
-                    <Copy />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    title="Delete connection"
-                    aria-label="Delete connection"
-                    onClick={() => setDeletion(profile)}
-                  >
-                    <Trash2 />
-                  </Button>
-                </div>
-              )}
-            </aside>
-          )}
+            )}
+          </aside>
         </ResizablePanel>
 
         <ResizableHandle
@@ -1252,14 +1240,14 @@ export function App() {
           onDoubleClick={resetSidebarWidth}
         />
 
-        <ResizablePanel id="workspace" minSize="50%" style={{ overflow: "hidden" }}>
+        <ResizablePanel id="workspace" minSize="30%" style={{ overflow: "hidden" }}>
           <main className="query-workspace">
             <div className="query-tabs">
               {!explorerOpen && (
                 <Button
                   size="icon-sm"
                   variant="ghost"
-                  title="Show connections"
+                  title={`Show connections (${shortcuts.explorer})`}
                   aria-label="Show connections"
                   onClick={openConnectionsSidebar}
                 >
@@ -1378,6 +1366,18 @@ export function App() {
               >
                 <Plus />
               </Button>
+              {(!tab || schemaActive) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="query-tabs-activity"
+                  aria-pressed={activityOpen}
+                  title={`Activity (${shortcuts.activity})`}
+                  onClick={toggleActivitySidebar}
+                >
+                  <Activity /> Activity
+                </Button>
+              )}
             </div>
 
             {schemaActive ? (
@@ -1559,6 +1559,14 @@ export function App() {
                         {environments[profile.env]}
                       </Badge>
                     )}
+                    <Button
+                      variant="ghost"
+                      aria-pressed={activityOpen}
+                      title={`Activity (${shortcuts.activity})`}
+                      onClick={toggleActivitySidebar}
+                    >
+                      <Activity /> Activity
+                    </Button>
                   </div>
                 </div>
                 <ResizablePanelGroup
@@ -1882,6 +1890,45 @@ export function App() {
             )}
           </main>
         </ResizablePanel>
+
+        <ResizableHandle
+          className="activity-resize-handle"
+          aria-label="Resize activity sidebar"
+          disableDoubleClick
+          onDoubleClick={resetActivitySidebarWidth}
+        />
+
+        <ResizablePanel
+          id="activity"
+          panelRef={activityPanelRef}
+          defaultSize={0}
+          minSize={`${ACTIVITY_SIDEBAR_MIN_WIDTH}px`}
+          maxSize="45%"
+          collapsible
+          collapsedSize={0}
+          groupResizeBehavior="preserve-pixel-size"
+          style={{ overflow: "hidden" }}
+          onResize={(panelSize) => {
+            const open = panelSize.asPercentage > 0;
+            setActivityOpen((current) => (current === open ? current : open));
+          }}
+        >
+          <ActivitySidebar
+            open={activityOpen}
+            profiles={data.profiles}
+            activeConnection={profile}
+            canRun={Boolean(tab && profile)}
+            busy={Boolean(active.busy)}
+            revision={data.historyRevision}
+            focusToken={activityFocusToken}
+            currentEditorSql={() => editor.current?.text() ?? tab?.text ?? ""}
+            onRun={runHistoryQuery}
+            onOpenSql={(id, database, sql) => openTab(id, database, sql)}
+            onCopy={(sql, label) => copyText(sql, label)}
+            onNotify={data.setNotice}
+            onCollapse={collapseActivity}
+          />
+        </ResizablePanel>
       </ResizablePanelGroup>
 
       <QueryNotificationStack
@@ -2017,24 +2064,14 @@ export function App() {
           }}
         />
       )}
-      {agentActivity && (
-        <AgentActivity
-          profiles={data.profiles}
-          onClose={() => setAgentActivity(false)}
-          onOpen={(id, database, sql) => {
-            openTab(id, database, sql);
-            setAgentActivity(false);
-          }}
-        />
-      )}
       {palette && (
         <CatalogPalette
           entries={entries}
           onClose={() => setPalette(false)}
           onOpen={openObject}
-          onHistory={() => {
+          onActivity={() => {
             setPalette(false);
-            openHistorySidebar();
+            openActivitySidebar();
           }}
         />
       )}

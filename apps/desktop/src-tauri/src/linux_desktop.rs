@@ -354,8 +354,7 @@ fn desktop_entry_matches_appimage(
         }
         if let Some(wm_class) = trimmed.strip_prefix("StartupWMClass=") {
             let wm_class = wm_class.trim();
-            if wm_class.eq_ignore_ascii_case(APP_ID)
-                || wm_class.eq_ignore_ascii_case(LEGACY_APP_ID)
+            if wm_class.eq_ignore_ascii_case(APP_ID) || wm_class.eq_ignore_ascii_case(LEGACY_APP_ID)
             {
                 claims_strata_wm_class = true;
             }
@@ -693,7 +692,11 @@ Exec=/home/ada/Applications/Strata_0.7.0_amd64.AppImage
 Icon=/home/ada/Applications/.icons/strata
 StartupWMClass=strata
 ";
-        assert!(desktop_entry_matches_appimage(renamed_appimage, appimage, None));
+        assert!(desktop_entry_matches_appimage(
+            renamed_appimage,
+            appimage,
+            None
+        ));
 
         let other = "\
 [Desktop Entry]
@@ -834,7 +837,11 @@ Exec=/home/ada/Applications/Strata.AppImage.bak
             Some(root.path()),
         ));
         assert_eq!(fs::read(&user_override).unwrap(), b"new-system-icon");
-        assert!(!data_home.join("icons/hicolor/32x32/apps/strata.png").exists());
+        assert!(
+            !data_home
+                .join("icons/hicolor/32x32/apps/strata.png")
+                .exists()
+        );
         assert!(!refresh_existing_user_icon_overrides(
             &system_hicolor,
             &data_home,

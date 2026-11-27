@@ -183,6 +183,7 @@ export function updateTabFilePath(
 
 export interface UseWorkspaceOptions {
   onQueryComplete?: (completion: QueryCompletion) => void;
+  onWorkspaceLoad?: (workspace: Workspace) => void;
 }
 
 export function useWorkspace(options?: UseWorkspaceOptions) {
@@ -205,6 +206,8 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
   const tabsRef = useRef<SavedTab[]>([]);
   const onQueryCompleteRef = useRef(options?.onQueryComplete);
   onQueryCompleteRef.current = options?.onQueryComplete;
+  const onWorkspaceLoadRef = useRef(options?.onWorkspaceLoad);
+  onWorkspaceLoadRef.current = options?.onWorkspaceLoad;
 
   const queueSave = useCallback((snapshot: Workspace) => {
     const save = saves.current
@@ -231,6 +234,7 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
         setProfiles(connections);
         setSettings(settings);
         setWorkspace(loaded);
+        onWorkspaceLoadRef.current?.(loaded);
         setNotice("");
       },
       (error: unknown) => {

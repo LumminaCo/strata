@@ -24,6 +24,7 @@ import {
   recordSavedSqlTab,
   removeSavedSqlTabs,
   saveSqlFile,
+  seedSavedSqlTabs,
   suggestedSqlFileName,
 } from "./save-sql-file";
 
@@ -294,5 +295,33 @@ describe("unsaved SQL tab tracking", () => {
 
     expect(removeSavedSqlTabs(updated, new Set(["tab-missing"]))).toBe(updated);
     expect(removeSavedSqlTabs(updated, new Set(["tab-1"]))).toEqual({});
+  });
+
+  it("seeds restored workspace tabs as clean until edited while preserving linked file paths", () => {
+    const seeded = seedSavedSqlTabs([
+      { id: "scratch", text: "SELECT * FROM users;" },
+      { id: "linked", text: "SELECT 1;", filePath: " /home/ada/Documents/Strata/report.sql " },
+      { id: "blank-path", text: "SELECT 2;", filePath: "   " },
+      { id: "empty", text: "" },
+    ]);
+
+    expect(seeded).toEqual({
+      scratch: { content: "SELECT * FROM users;" },
+      linked: { path: "/home/ada/Documents/Strata/report.sql", content: "SELECT 1;" },
+      "blank-path": { content: "SELECT 2;" },
+      empty: { content: "" },
+    });
+    expect("path" in seeded.scratch!).toBe(false);
+    expect("path" in seeded["blank-path"]!).toBe(false);
+
+    expect(isSqlTabUnsaved("SELECT * FROM users;", seeded.scratch)).toBe(false);
+    expect(isSqlTabUnsaved("SELECT * FROM users LIMIT 10;", seeded.scratch)).toBe(true);
+    expect(isSqlTabUnsaved("SELECT * FROM users;", seeded.scratch)).toBe(false);
+
+    expect(isSqlTabUnsaved("SELECT 1;", seeded.linked)).toBe(false);
+    expect(isSqlTabUnsaved("SELECT 2;", seeded.linked)).toBe(true);
+
+    expect(isSqlTabUnsaved("", seeded.empty)).toBe(false);
+    expect(isSqlTabUnsaved("SELECT 3;", seeded.empty)).toBe(true);
   });
 });

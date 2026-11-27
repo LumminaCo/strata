@@ -492,7 +492,10 @@ mod tests {
 
     fn seed_appdir_icons(appdir: &Path, payload: &[u8]) {
         for size in ["32x32", "128x128", "256x256", "512x512"] {
-            let dir = appdir.join("usr/share/icons/hicolor").join(size).join("apps");
+            let dir = appdir
+                .join("usr/share/icons/hicolor")
+                .join(size)
+                .join("apps");
             fs::create_dir_all(&dir).unwrap();
             fs::write(dir.join("strata.png"), payload).unwrap();
         }

@@ -138,7 +138,11 @@ fn query_history_paginates_filters_and_orders_across_connections() {
     let paths = Paths::under(directory.path().into());
     let mut db = Database::open(&paths.database).expect("open");
     let entries = [
-        ("one", "SELECT * FROM customers WHERE name LIKE '%ada%'", 100),
+        (
+            "one",
+            "SELECT * FROM customers WHERE name LIKE '%ada%'",
+            100,
+        ),
         ("two", "SELECT count(*) FROM orders", 200),
         ("one", "SELECT * FROM films WHERE title LIKE '%100%'", 300),
         ("two", "SELECT * FROM actors", 400),

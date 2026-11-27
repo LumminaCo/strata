@@ -49,11 +49,7 @@ import {
   ResizablePanelGroup,
   usePanelRef,
 } from "@/components/ui/resizable";
-import {
-  buildForeignKeyQuery,
-  foreignKeyTabTitle,
-  needsFullCellRead,
-} from "@/features/foreign-key-query";
+import { buildForeignKeyFilter, needsFullCellRead } from "@/features/foreign-key-query";
 import { type FilterInputHandle } from "@/features/result-filter-input";
 import { formatColumnIdentifier, type ResultFilter, type SortRule } from "@/features/result-query";
 import { ResultToolbar } from "@/features/result-toolbar";
@@ -905,30 +901,31 @@ export function App() {
     }
   }
 
-  function openForeignKeyQuery(options: {
+  async function openForeignKeyTable(options: {
     connection: Connection;
     database?: string;
-    schema?: string;
     target: ForeignKeyRef;
     value: Cell;
     columnKind?: string;
   }) {
-    if (options.value === null || !options.connection.id) return;
-    const text = buildForeignKeyQuery(
-      options.target,
-      options.value,
-      options.columnKind,
-      options.connection.kind,
-    );
-    const title = foreignKeyTabTitle(options.target, options.value);
-    setSchemaSelected(undefined);
-    data.openAndRunTab({
-      connectionId: options.connection.id,
-      database: options.database ?? options.connection.database,
-      schema: options.schema,
-      text,
-      title,
-    });
+    const { connection, target, value } = options;
+    if (value === null || !connection.id) return;
+    const database = options.database ?? connection.database;
+    try {
+      const scope = await data.scope(connection, database, true);
+      const reference = { schema: target.schema, name: target.table };
+      const object = await dispatch("resolve_object", { scope, reference });
+      if (!object) throw new Error(`Could not find ${target.schema}.${target.table}.`);
+      openObject({
+        connection,
+        database,
+        object,
+        section: "Data",
+        filter: buildForeignKeyFilter(target, value, options.columnKind, connection.kind),
+      });
+    } catch (error) {
+      data.setNotice(errorMessage(error));
+    }
   }
 
   async function followResultForeignKey(item: ResultSet, row: number, column: number) {
@@ -946,10 +943,9 @@ export function App() {
         return;
       }
     }
-    openForeignKeyQuery({
+    await openForeignKeyTable({
       connection: profile,
       database: active.session?.database ?? tab?.database ?? profile.database,
-      schema: active.session?.schema ?? tab?.schema,
       target,
       value,
       columnKind: meta.kind,
@@ -1404,7 +1400,7 @@ export function App() {
                   credentials={inspectionCredentials}
                   onValue={showCell}
                   onFollowForeignKey={({ entry, target, value, columnKind }) =>
-                    openForeignKeyQuery({
+                    void openForeignKeyTable({
                       connection: entry.connection,
                       database: entry.database,
                       target,
@@ -1770,7 +1766,7 @@ export function App() {
                           promote={openObject}
                           onValue={showCell}
                           onFollowForeignKey={({ entry, target, value, columnKind }) =>
-                            openForeignKeyQuery({
+                            void openForeignKeyTable({
                               connection: entry.connection,
                               database: entry.database,
                               target,

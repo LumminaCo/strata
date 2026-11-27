@@ -29,6 +29,8 @@ export type InspectionSection =
 export interface Inspection extends CatalogEntry {
   column?: string;
   section?: InspectionSection;
+  /** Initial WHERE expression for the Data section, set when following a foreign key. */
+  filter?: string;
   requestId?: number;
 }
 
@@ -137,7 +139,10 @@ export function TableInspector({
       const object = await dispatch("resolve_object", { scope, reference });
       if (!object) throw new Error(`Could not find ${reference.schema}.${reference.name}.`);
       setPath((path) => ({
-        items: [...path.items.slice(0, path.index + 1), { ...current, object, column: undefined }],
+        items: [
+          ...path.items.slice(0, path.index + 1),
+          { ...current, object, column: undefined, filter: undefined },
+        ],
         index: path.index + 1,
       }));
     } catch (error) {
@@ -153,8 +158,9 @@ export function TableInspector({
     if (section === "Data" && table)
       return (
         <TableData
-          key={`${current.database}:${current.object.oid}`}
+          key={`${current.database}:${current.object.oid}:${current.requestId}`}
           entry={current}
+          initialFilter={current.filter}
           theme={theme}
           credentials={() => controls.current(current)}
           onValue={onValue}

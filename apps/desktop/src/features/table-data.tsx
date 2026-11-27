@@ -55,6 +55,7 @@ interface Props {
   theme: string;
   credentials: () => Promise<CatalogScope>;
   onValue: (name: string, value: Cell, kind?: string) => void;
+  initialFilter?: string;
   onFollowForeignKey?: (options: {
     entry: CatalogEntry;
     target: ForeignKeyRef;
@@ -63,10 +64,17 @@ interface Props {
   }) => void;
 }
 
-export function TableData({ entry, theme, credentials, onValue, onFollowForeignKey }: Props) {
-  const [filter, setFilter] = useState("");
+export function TableData({
+  entry,
+  theme,
+  credentials,
+  onValue,
+  initialFilter = "",
+  onFollowForeignKey,
+}: Props) {
+  const [filter, setFilter] = useState(initialFilter);
   const [order, setOrder] = useState("");
-  const [applied, setApplied] = useState({ filter: "", order: "", version: 0 });
+  const [applied, setApplied] = useState({ filter: initialFilter, order: "", version: 0 });
   const [result, setResult] = useState<ResultSet>();
   const [knownColumns, setKnownColumns] = useState<ColumnMeta[]>([]);
   const [busy, setBusy] = useState(true);

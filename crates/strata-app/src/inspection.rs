@@ -83,7 +83,7 @@ impl AppService {
                 .find(|object| object.name == *name)
                 .cloned();
         }
-        let database = crate::metadata::database(&self.engine, &target)?;
+        let database = strata_engine::database(&self.engine, &target)?;
         Ok(object.map(|object| ResolvedObject {
             database,
             object,

@@ -4,6 +4,7 @@ use std::{
 };
 
 use strata_core::{Batch, ColumnMeta, CoreError, DbKind, ForeignKeyRef, Result, TableForeignKey};
+use strata_engine::wire_rows;
 use strata_sql::{
     Dialect, ProjectionSource, QueryColumnSources, Span, StmtClass, TableSource,
     needs_mutation_confirmation, query_column_sources, split, statement_at, utf16_to_byte,
@@ -14,7 +15,7 @@ use uuid::Uuid;
 
 use crate::{
     AppService, CatalogScope, RunEvent, RunMode, RunRequest, Session, Target, elapsed_ms,
-    inspection, protocol::wire_rows,
+    inspection,
 };
 
 const MAX_BATCH: usize = 500;
@@ -129,7 +130,7 @@ impl AppService {
         }
 
         let started = Instant::now();
-        let started_at = crate::metadata::now_ms();
+        let started_at = strata_engine::now_ms();
         let mut recorded_sql = Vec::new();
         let mut rows = 0_u32;
         let mut next_result_index = 0;

@@ -1,8 +1,8 @@
 use std::time::Instant;
 
 use serde_json::{Value, json};
-use strata_app::{Engine, WireCell};
 use strata_core::{AgentAccess, CoreError, DbKind, Environment, Limits, Profile, Secret};
+use strata_engine::{Engine, WireCell};
 use strata_sql::{Dialect, StmtClass, strict_statement};
 use tokio_util::sync::CancellationToken;
 

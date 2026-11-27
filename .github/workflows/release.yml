@@ -105,10 +105,13 @@ jobs:
           $destination = Join-Path $env:RUNNER_TEMP "Strata"
           $setup = Start-Process $installer.FullName -ArgumentList "/S", "/D=$destination" -PassThru -Wait
           if ($setup.ExitCode -ne 0) { throw "The installer returned $($setup.ExitCode)." }
-          $binary = Join-Path $destination "strata.exe"
+          $binary = Join-Path $destination "strata-desktop.exe"
+          $cli = Join-Path $destination "strata.exe"
           $bridge = Join-Path $destination "oracle-bridge.exe"
+          if (!(Test-Path $cli)) { throw "The Strata CLI binary is missing from the installation." }
           if (!(Test-Path $bridge)) { throw "The Oracle sidecar is missing from the installation." }
           "STRATA_BUNDLE_BIN=$binary" >> $env:GITHUB_ENV
+          "STRATA_CLI_BIN=$cli" >> $env:GITHUB_ENV
           "Windows installer bytes $($installer.Length)" >> $env:GITHUB_STEP_SUMMARY
       - uses: actions/setup-python@v6
         if: ${{ !inputs.windows_artifact_run || inputs.benchmark_windows_artifact }}
@@ -164,7 +167,7 @@ jobs:
           "Windows startup to window title $($clock.ElapsedMilliseconds) ms" >> $env:GITHUB_STEP_SUMMARY
           Write-Host "Windows startup to window title $($clock.ElapsedMilliseconds) ms"
           $start = [System.Diagnostics.ProcessStartInfo]::new()
-          $start.FileName = $binary
+          $start.FileName = $env:STRATA_CLI_BIN
           $start.Arguments = "mcp"
           $start.UseShellExecute = $false
           $start.RedirectStandardInput = $true
@@ -201,6 +204,12 @@ jobs:
       - run: vp install --frozen-lockfile
       - run: vp build
         working-directory: apps/desktop
+      - run: cargo build --locked -p strata-cli
+      - name: Stage debug Strata CLI for workspace tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path apps/desktop/src-tauri/bin | Out-Null
+          Copy-Item target/debug/strata.exe apps/desktop/src-tauri/bin/strata-x86_64-pc-windows-msvc.exe
       - run: cargo test --locked --workspace
 
   macos-arm64:
@@ -233,6 +242,10 @@ jobs:
       - run: vp install --frozen-lockfile
       - run: vp build
         working-directory: apps/desktop
+      - run: |
+          mkdir -p apps/desktop/src-tauri/bin
+          cargo build --locked -p strata-cli
+          cp target/debug/strata apps/desktop/src-tauri/bin/strata-aarch64-apple-darwin
       - run: cargo test --locked --workspace
       - name: Build macOS bundle
         env:
@@ -240,6 +253,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
+          mkdir -p apps/desktop/src-tauri/bin
+          cargo build --release --locked -p strata-cli --target aarch64-apple-darwin
+          cp target/aarch64-apple-darwin/release/strata apps/desktop/src-tauri/bin/strata-aarch64-apple-darwin
           config=()
           bundles=(dmg)
           if [[ "$STRATA_SIGNED_RELEASE" == true ]]; then
@@ -301,10 +317,12 @@ jobs:
           trap - EXIT
           binaries="$installed/Contents/MacOS"
           test -x "$binaries/oracle-bridge"
+          test -x "$binaries/strata"
           "$binaries/strata" --version
+          "$binaries/strata-desktop" --version
           printf 'macOS installer bytes %s\n' "$(stat -f %z "$disk")" >> "$GITHUB_STEP_SUMMARY"
           set -o pipefail
-          python dev/benchmark-desktop.py "$binaries/strata" --pg-bin "$(brew --prefix postgresql@17)/bin" | tee macos-performance.jsonl
+          python dev/benchmark-desktop.py "$binaries/strata-desktop" --pg-bin "$(brew --prefix postgresql@17)/bin" | tee macos-performance.jsonl
           cat macos-performance.jsonl >> "$GITHUB_STEP_SUMMARY"
 
   publish-updates:

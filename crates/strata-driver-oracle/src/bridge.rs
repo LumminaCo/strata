@@ -67,17 +67,7 @@ pub struct Bridge {
 
 impl Bridge {
     fn start() -> Result<Arc<Self>> {
-        let binary = if let Some(binary) = std::env::var_os("STRATA_ORACLE_BRIDGE") {
-            PathBuf::from(binary)
-        } else {
-            let executable = std::env::current_exe()
-                .map_err(|_| error("Cannot locate the Strata executable"))?;
-            executable.with_file_name(if cfg!(windows) {
-                "oracle-bridge.exe"
-            } else {
-                "oracle-bridge"
-            })
-        };
+        let binary = resolve_bridge_binary()?;
         let mut child = Command::new(binary)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -210,6 +200,39 @@ fn error(message: &str) -> CoreError {
     }
 }
 
+fn bridge_binary_name() -> &'static str {
+    if cfg!(windows) {
+        "oracle-bridge.exe"
+    } else {
+        "oracle-bridge"
+    }
+}
+
+fn resolve_bridge_from(
+    env_override: Option<PathBuf>,
+    current_exe: Option<PathBuf>,
+) -> Result<PathBuf> {
+    if let Some(binary) = env_override.filter(|path| !path.as_os_str().is_empty()) {
+        return Ok(binary);
+    }
+    let executable = current_exe.ok_or_else(|| error("Cannot locate the Strata executable"))?;
+    let name = bridge_binary_name();
+    if let Ok(canonical) = std::fs::canonicalize(&executable) {
+        let candidate = canonical.with_file_name(name);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+    Ok(executable.with_file_name(name))
+}
+
+fn resolve_bridge_binary() -> Result<PathBuf> {
+    resolve_bridge_from(
+        std::env::var_os("STRATA_ORACLE_BRIDGE").map(PathBuf::from),
+        std::env::current_exe().ok(),
+    )
+}
+
 impl From<Failure> for CoreError {
     fn from(error: Failure) -> Self {
         match error.code.as_str() {
@@ -234,5 +257,46 @@ impl From<Failure> for CoreError {
                 message: error.message,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{bridge_binary_name, resolve_bridge_from};
+
+    #[test]
+    fn prefers_env_override_when_set() {
+        let override_path = std::path::PathBuf::from("/custom/oracle-bridge");
+        let resolved = resolve_bridge_from(
+            Some(override_path.clone()),
+            Some(std::path::PathBuf::from("/usr/bin/strata")),
+        )
+        .expect("resolve env override");
+        assert_eq!(resolved, override_path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolves_bridge_next_to_canonicalized_symlink_target() {
+        let dir =
+            std::env::temp_dir().join(format!("strata-oracle-bridge-test-{}", std::process::id()));
+        let real_dir = dir.join("real");
+        let link_dir = dir.join("bin");
+        std::fs::create_dir_all(&real_dir).unwrap();
+        std::fs::create_dir_all(&link_dir).unwrap();
+        let real_cli = real_dir.join("strata");
+        let real_bridge = real_dir.join(bridge_binary_name());
+        std::fs::write(&real_cli, b"").unwrap();
+        std::fs::write(&real_bridge, b"").unwrap();
+        let link_cli = link_dir.join("strata");
+        let _ = std::fs::remove_file(&link_cli);
+        std::os::unix::fs::symlink(&real_cli, &link_cli).unwrap();
+
+        let resolved = resolve_bridge_from(None, Some(link_cli)).expect("resolve symlinked bridge");
+        assert_eq!(
+            resolved,
+            std::fs::canonicalize(&real_bridge).expect("canonical bridge")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

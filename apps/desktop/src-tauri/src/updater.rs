@@ -102,8 +102,8 @@ pub async fn install_update(
 fn check_other_processes() -> Result<(), String> {
     use std::{env, os::windows::process::CommandExt, path::PathBuf, process::Command};
 
-    // The passive NSIS installer can forcibly close other processes using strata.exe,
-    // including an MCP server. Give them a chance to finish their work first.
+    // The passive NSIS installer can forcibly close other processes using strata-desktop.exe.
+    // Give other Strata windows a chance to finish their work first.
     const CHECK_FAILED: &str = "Could not check for other running copies of Strata.";
     const CREATE_NO_WINDOW: u32 = 0x08000000;
     let exe = env::current_exe().map_err(|_| CHECK_FAILED)?;
@@ -129,9 +129,7 @@ fn check_other_processes() -> Result<(), String> {
     {
         1 => Ok(()),
         0 => Err(CHECK_FAILED.into()),
-        _ => {
-            Err("Another Strata window or MCP server is running. Close it before updating.".into())
-        }
+        _ => Err("Another Strata window is running. Close it before updating.".into()),
     }
 }
 

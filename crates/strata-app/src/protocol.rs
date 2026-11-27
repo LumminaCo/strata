@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
-use strata_core::{Batch, Cell, ColumnMeta, CoreError, Environment, TlsMode};
+use strata_core::{Batch, ColumnMeta, CoreError, Environment, TlsMode};
+use strata_engine::{WireCell, wire_rows};
 use ts_rs::TS;
 use uuid::Uuid;
 
@@ -227,31 +228,6 @@ pub enum RunEvent {
     },
 }
 
-#[derive(Serialize)]
-#[serde(untagged)]
-pub enum WireCell {
-    Value(Cell),
-    Exact(String),
-}
-
-impl From<Cell> for WireCell {
-    fn from(cell: Cell) -> Self {
-        // JavaScript cannot round-trip bigint values outside its safe integer range.
-        match cell {
-            Cell::Int(value) if value.unsigned_abs() > (1_u64 << 53) - 1 => {
-                Self::Exact(value.to_string())
-            }
-            other => Self::Value(other),
-        }
-    }
-}
-
-pub(crate) fn wire_rows(rows: Vec<Vec<Cell>>) -> Vec<Vec<WireCell>> {
-    rows.into_iter()
-        .map(|row| row.into_iter().map(Into::into).collect())
-        .collect()
-}
-
 #[derive(Serialize, TS)]
 pub struct Page {
     #[ts(type = "Cell[][]")]
@@ -416,6 +392,8 @@ pub enum Command {
     AuditList {
         limit: Option<u32>,
     },
+    CliStatus,
+    InstallCli,
     McpConfig,
     WorkspaceLoad,
     WorkspaceBootstrap,
@@ -495,6 +473,7 @@ fn typescript_bindings() {
         RunEvent::decl(&cfg),
         Page::decl(&cfg),
         NextResult::decl(&cfg),
+        crate::CliStatus::decl(&cfg),
         crate::ParsedUrl::decl(&cfg),
     ] {
         output.push_str("export ");

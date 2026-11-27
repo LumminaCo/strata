@@ -37,7 +37,7 @@ Session controls let you choose auto-commit or enter manual mode. Strata prompts
 
 ## Desktop bundles
 
-Use `./x bundle-linux` for the AppImage and Debian package, or `./x bundle-windows` for the Windows x64 NSIS installer. Bundles are copied to `artifacts/`. The Bundles workflow also builds the macOS arm64 disk image on a macOS runner. Each installer includes the Oracle sidecar. Both Linux bundles use system GTK 3 and WebKitGTK 4.1. The Debian package declares these dependencies. Install them on the host before running the AppImage.
+Use `./x bundle-linux` for the AppImage and Debian package, or `./x bundle-windows` for the Windows x64 NSIS installer. Bundles are copied to `artifacts/`. The Bundles workflow also builds the macOS arm64 disk image on a macOS runner. Each installer includes the standalone `strata` CLI (for MCP) and the Oracle sidecar. Both Linux bundles use system GTK 3 and WebKitGTK 4.1. The Debian package declares these dependencies. Install them on the host before running the AppImage.
 
 Windows bundles are unsigned and may show a SmartScreen prompt. `embedBootstrapper` assumes a supported Windows installation with WebView2 Evergreen already present for offline installation. If the runtime is missing, the bootstrapper downloads it. [WebView2 installation decision](docs/adr/0003-webview2-bootstrapper.md)
 
@@ -61,9 +61,11 @@ Set the version in `Cargo.toml` and `apps/desktop/src-tauri/tauri.conf.json`, re
 
 ## MCP setup
 
+Strata ships a decoupled headless `strata` CLI alongside the `strata-desktop` app so MCP clients can use saved connections without keeping the desktop app running.
+
 Set **Agent access** to **Read** on a connection that an MCP client may use. Use an OS keychain entry or an environment variable for the password. Use a database account with read privileges for production.
 
-Choose **Copy MCP config** in the native window, or register the installed binary with your client.
+Open **Settings → Agent & MCP** in the native app and click **Install CLI** (on Linux AppImage and Windows this installs a persistent copy alongside the Oracle sidecar; on macOS it symlinks `~/.local/bin/strata`; on Debian `/usr/bin/strata` is already on `PATH`), then click **Copy config**—or register `strata` directly with your client:
 
 ```sh
 claude mcp add strata -- /path/to/strata mcp

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { emptyConnection } from "@/features/connections";
 import {
   defaultSettings,
+  describeCliStatus,
   describeUpdateStatus,
   formatEndpoint,
   groupConnections,
@@ -123,5 +124,55 @@ describe("settings helpers", () => {
     expect(matchesUpdateQuery("check updates")).toBe(true);
     expect(matchesUpdateQuery("release version")).toBe(true);
     expect(matchesUpdateQuery("oracle")).toBe(false);
+  });
+
+  it("describes Strata CLI installation states", () => {
+    expect(describeCliStatus(null, true)).toBe("Checking Strata CLI installation…");
+    expect(
+      describeCliStatus(
+        {
+          installed: true,
+          onPath: true,
+          needsUpdate: false,
+          bundledAvailable: true,
+          ephemeral: false,
+          path: "/usr/bin/strata",
+          installDir: "/usr/bin",
+        },
+        false,
+      ),
+    ).toBe("Installed on PATH at /usr/bin/strata.");
+    expect(
+      describeCliStatus(
+        {
+          installed: true,
+          onPath: false,
+          needsUpdate: false,
+          bundledAvailable: true,
+          ephemeral: false,
+          path: "/home/ada/.local/bin/strata",
+          installDir: "/home/ada/.local/bin",
+        },
+        false,
+      ),
+    ).toBe(
+      "Installed at /home/ada/.local/bin/strata. Add /home/ada/.local/bin to PATH to run strata from any shell.",
+    );
+    expect(
+      describeCliStatus(
+        {
+          installed: false,
+          onPath: false,
+          needsUpdate: false,
+          bundledAvailable: true,
+          ephemeral: true,
+          path: null,
+          installDir: "/home/ada/.local/bin",
+        },
+        false,
+      ),
+    ).toBe(
+      "Install the strata CLI into /home/ada/.local/bin so MCP configs stay valid after closing the AppImage.",
+    );
   });
 });

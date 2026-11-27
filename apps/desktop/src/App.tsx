@@ -395,6 +395,12 @@ export function App() {
     else panel?.collapse();
   }
 
+  const running = active.busy === "Running";
+  useEffect(() => {
+    // Reveal hidden results whenever a query starts, whatever path started it.
+    if (running) resultsPanelRef.current?.expand();
+  }, [running, resultsPanelRef]);
+
   function openConnectionsSidebar() {
     expandExplorer();
   }

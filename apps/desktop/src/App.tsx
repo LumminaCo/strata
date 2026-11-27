@@ -42,7 +42,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Select } from "@/components/ui/select";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -1491,18 +1491,17 @@ export function App() {
                   <div className="query-actions-end">
                     {active.session && (
                       <div className="transaction-actions">
-                        <NativeSelect
+                        <Select
                           aria-label="Transaction mode"
                           size="sm"
                           value={active.transaction?.manual ? "manual" : "auto"}
                           disabled={!!active.busy || !!active.transaction?.open}
-                          onChange={(event) =>
-                            void data.transactionMode(event.target.value === "manual")
-                          }
-                        >
-                          <NativeSelectOption value="auto">Auto</NativeSelectOption>
-                          <NativeSelectOption value="manual">Manual</NativeSelectOption>
-                        </NativeSelect>
+                          onValueChange={(mode) => void data.transactionMode(mode === "manual")}
+                          items={[
+                            { value: "auto", label: "Auto" },
+                            { value: "manual", label: "Manual" },
+                          ]}
+                        />
                         {active.transaction?.open && (
                           <>
                             <Button

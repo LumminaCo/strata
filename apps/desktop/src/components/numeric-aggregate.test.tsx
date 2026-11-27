@@ -252,16 +252,14 @@ describe("NumericAggregateBar", () => {
       <NumericAggregateBar summary={sampleSummary} fn="sum" onChangeFn={vi.fn()} />,
     );
     expect(sumMarkup).toContain('aria-label="Aggregate function"');
-    expect(sumMarkup).toContain(">SUM</option>");
-    expect(sumMarkup).toContain(">AVG</option>");
-    expect(sumMarkup).toContain(">MIN</option>");
-    expect(sumMarkup).toContain(">MAX</option>");
+    expect(sumMarkup).toContain(">SUM</span>");
     expect(sumMarkup).toContain('data-testid="numeric-aggregation-value">60</span>');
     expect(sumMarkup).toContain("(3)");
 
     const avgMarkup = renderToStaticMarkup(
       <NumericAggregateBar summary={sampleSummary} fn="avg" onChangeFn={vi.fn()} />,
     );
+    expect(avgMarkup).toContain(">AVG</span>");
     expect(avgMarkup).toContain('data-testid="numeric-aggregation-value">20</span>');
 
     const minMarkup = renderToStaticMarkup(

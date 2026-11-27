@@ -795,10 +795,9 @@ body[data-tab-dragging="true"] * {
   color: var(--muted-foreground);
   pointer-events: none;
 }
-.toolbar-picker [data-slot="native-select"] {
+.toolbar-picker [data-slot="select-trigger"] {
   padding-left: 26px;
   max-width: 180px;
-  text-overflow: ellipsis;
 }
 .environment-badge {
   color: var(--tag-color);
@@ -1576,7 +1575,7 @@ body[data-tab-dragging="true"] * {
   gap: 5px;
   align-content: start;
 }
-.connection-field [data-slot="native-select-wrapper"] {
+.connection-field [data-slot="select-trigger"] {
   width: 100%;
 }
 .driver-select {
@@ -1592,7 +1591,7 @@ body[data-tab-dragging="true"] * {
   height: 15px;
   pointer-events: none;
 }
-.driver-select select {
+.driver-select [data-slot="select-trigger"] {
   padding-left: 30px;
 }
 .inline-connection {
@@ -1944,7 +1943,7 @@ body[data-tab-dragging="true"] * {
   gap: var(--space-1);
   align-items: center;
 }
-.grid-copy [data-slot="native-select-wrapper"] {
+.grid-copy [data-slot="select-trigger"] {
   background: var(--surface);
   border-radius: var(--radius);
 }
@@ -2360,7 +2359,7 @@ body[data-tab-dragging="true"] * {
   gap: var(--space-2);
 }
 
-.settings-row-control [data-slot="native-select-wrapper"] {
+.settings-row-control [data-slot="select-trigger"] {
   min-width: 144px;
 }
 
@@ -2529,21 +2528,16 @@ body[data-tab-dragging="true"] * {
   color: var(--foreground);
   font-size: var(--font-size-label);
 }
-.status-aggregation-picker {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
 .status-aggregation-select {
   height: 20px;
-  padding: 0 18px 0 6px;
+  gap: 2px;
+  padding: 0 4px 0 6px;
   border: 1px solid var(--border);
   border-radius: calc(var(--radius) * 0.7);
   background: var(--background);
   color: var(--workspace-accent);
   font: 600 var(--font-size-caption) / 1 var(--ui-font);
   letter-spacing: 0.02em;
-  appearance: none;
   cursor: pointer;
   outline: none;
 }
@@ -2554,18 +2548,9 @@ body[data-tab-dragging="true"] * {
   border-color: var(--ring);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 25%, transparent);
 }
-.status-aggregation-select option {
-  background: Canvas;
-  color: CanvasText;
-  font-weight: 500;
-}
-.status-aggregation-chevron {
-  position: absolute;
-  right: 4px;
+.status-aggregation-select svg {
   width: 11px;
   height: 11px;
-  color: var(--muted-foreground);
-  pointer-events: none;
 }
 .status-aggregation-value {
   display: inline-flex;

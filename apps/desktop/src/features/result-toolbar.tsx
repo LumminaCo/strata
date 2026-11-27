@@ -2,7 +2,7 @@ import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Filter, Plus, X } from "
 import { useState, type Ref } from "react";
 
 import { Button } from "@/components/ui/button";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Select } from "@/components/ui/select";
 import type { Cell, ColumnMeta } from "@/ipc/bindings/protocol";
 
 import { ResultFilterInput, type FilterInputHandle } from "./result-filter-input";
@@ -125,26 +125,19 @@ export function ResultToolbar({
             </span>
           )}
           {columns.length > 0 && unsortedColumns.length > 0 && (
-            <NativeSelect
+            <Select
               aria-label="Add sort column"
               size="sm"
-              value=""
-              onChange={(event) => {
-                const colIndex = Number(event.target.value);
-                if (!Number.isNaN(colIndex)) {
-                  onSortsChange(setColumnSort(sorts, colIndex, false));
-                }
-              }}
-            >
-              <NativeSelectOption value="" disabled>
-                {hasSorts ? "+ Then by" : "+ Sort by"}
-              </NativeSelectOption>
-              {unsortedColumns.map(({ column, index }) => (
-                <NativeSelectOption key={`${column.name}-${index}`} value={String(index)}>
-                  {column.name}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
+              value={null}
+              placeholder={hasSorts ? "+ Then by" : "+ Sort by"}
+              onValueChange={(colIndex) =>
+                onSortsChange(setColumnSort(sorts, Number(colIndex), false))
+              }
+              items={unsortedColumns.map(({ column, index }) => ({
+                value: String(index),
+                label: column.name,
+              }))}
+            />
           )}
         </div>
       </div>

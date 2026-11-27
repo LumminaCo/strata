@@ -10,7 +10,7 @@ import {
 import { NumericAggregateBar } from "@/components/numeric-aggregate-bar";
 import type { ResultSet } from "@/components/result-grid";
 import { Button } from "@/components/ui/button";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Select } from "@/components/ui/select";
 import type { CatalogScope, Cell, ColumnMeta, ForeignKeyRef } from "@/ipc/bindings/protocol";
 import { dispatch, errorMessage, runQuery } from "@/ipc/client";
 
@@ -318,18 +318,15 @@ export function TableData({
             setCount(undefined);
           }}
         />
-        <NativeSelect
+        <Select
           aria-label="Order by column"
           value={order}
-          onChange={(event) => setOrder(event.target.value)}
-        >
-          <NativeSelectOption value="">Order by</NativeSelectOption>
-          {availableColumns.map((column) => (
-            <NativeSelectOption value={column.name} key={column.name}>
-              {column.name}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
+          onValueChange={setOrder}
+          items={[
+            { value: "", label: "Order by" },
+            ...availableColumns.map((column) => ({ value: column.name, label: column.name })),
+          ]}
+        />
         <Button type="submit" variant="outline">
           Apply
         </Button>

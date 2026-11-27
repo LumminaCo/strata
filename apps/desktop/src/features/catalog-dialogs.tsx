@@ -11,7 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Select } from "@/components/ui/select";
 import { errorMessage } from "@/ipc/client";
 
 import type { CatalogEntry } from "./catalog-explorer";
@@ -137,7 +137,7 @@ export function DatabasePicker({
   return (
     <div className="toolbar-picker">
       <Database aria-hidden="true" />
-      <NativeSelect
+      <Select
         aria-label="Tab database"
         size="sm"
         value={selected}
@@ -147,14 +147,12 @@ export function DatabasePicker({
           if (!databases)
             void load().then(setDatabases, (error: unknown) => setError(errorMessage(error)));
         }}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {[...new Set([selected, ...(databases ?? [])])].map((database) => (
-          <NativeSelectOption key={database} value={database}>
-            {database}
-          </NativeSelectOption>
-        ))}
-      </NativeSelect>
+        onValueChange={onChange}
+        items={[...new Set([selected, ...(databases ?? [])])].map((database) => ({
+          value: database,
+          label: database,
+        }))}
+      />
     </div>
   );
 }
@@ -222,7 +220,7 @@ export function SchemaPicker({
   return (
     <div className="toolbar-picker">
       <Layers aria-hidden="true" />
-      <NativeSelect
+      <Select
         aria-label="Default schema"
         size="sm"
         value={selected}
@@ -231,14 +229,9 @@ export function SchemaPicker({
         onFocus={() => {
           if (!schemas) fetchSchemas();
         }}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {options.map((schema) => (
-          <NativeSelectOption key={schema} value={schema}>
-            {schema}
-          </NativeSelectOption>
-        ))}
-      </NativeSelect>
+        onValueChange={onChange}
+        items={options.map((schema) => ({ value: schema, label: schema }))}
+      />
     </div>
   );
 }

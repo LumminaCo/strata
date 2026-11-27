@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Select } from "@/components/ui/select";
 import type { Connection, DriverOptions } from "@/ipc/bindings/protocol";
 import { browserMode, dispatch, errorMessage } from "@/ipc/client";
 
@@ -302,12 +302,11 @@ export function ConnectionForm({
           <Field name="connection-kind" label="Driver">
             <div className="driver-select">
               <DatabaseIcon kind={profile.kind} className="driver-select-icon" />
-              <NativeSelect
+              <Select
                 id="connection-kind"
                 value={profile.kind}
                 disabled={!!initial.id}
-                onChange={(event) => {
-                  const kind = event.target.value as Connection["kind"];
+                onValueChange={(kind) => {
                   setProfile((current) => ({
                     ...current,
                     kind,
@@ -317,11 +316,12 @@ export function ConnectionForm({
                       kind === "sqlserver" ? "master" : kind === "oracle" ? "FREEPDB1" : "postgres",
                   }));
                 }}
-              >
-                <NativeSelectOption value="postgres">PostgreSQL</NativeSelectOption>
-                <NativeSelectOption value="sqlserver">SQL Server</NativeSelectOption>
-                <NativeSelectOption value="oracle">Oracle</NativeSelectOption>
-              </NativeSelect>
+                items={[
+                  { value: "postgres", label: "PostgreSQL" },
+                  { value: "sqlserver", label: "SQL Server" },
+                  { value: "oracle", label: "Oracle" },
+                ]}
+              />
             </div>
           </Field>
           <Field name="connection-name" label="Name">
@@ -333,15 +333,16 @@ export function ConnectionForm({
             />
           </Field>
           <Field name="connection-env" label="Environment">
-            <NativeSelect
+            <Select
               id="connection-env"
               value={profile.env}
-              onChange={(event) => field("env", event.target.value as Connection["env"])}
-            >
-              <NativeSelectOption value="dev">Development</NativeSelectOption>
-              <NativeSelectOption value="staging">Staging</NativeSelectOption>
-              <NativeSelectOption value="prod">Production</NativeSelectOption>
-            </NativeSelect>
+              onValueChange={(env) => field("env", env)}
+              items={[
+                { value: "dev", label: "Development" },
+                { value: "staging", label: "Staging" },
+                { value: "prod", label: "Production" },
+              ]}
+            />
           </Field>
           <div className="endpoint-fields">
             <Field name="connection-host" label="Host">
@@ -385,11 +386,10 @@ export function ConnectionForm({
             />
           </Field>
           <Field name="connection-secret" label="Authentication">
-            <NativeSelect
+            <Select
               id="connection-secret"
               value={source}
-              onChange={(event) => {
-                const chosen = event.target.value;
+              onValueChange={(chosen) => {
                 setProfile((current) => ({
                   ...current,
                   secret: chosen === "env" ? "env:" : chosen === "windows" ? "prompt" : chosen,
@@ -400,18 +400,17 @@ export function ConnectionForm({
                 }));
                 if (chosen === "env" || chosen === "windows") setPassword(undefined);
               }}
-            >
-              {!browserMode && (
-                <NativeSelectOption value="keychain">OS keychain</NativeSelectOption>
-              )}
-              <NativeSelectOption value="prompt">Prompt for password</NativeSelectOption>
-              <NativeSelectOption value="env">Environment variable</NativeSelectOption>
-              {profile.kind === "sqlserver" &&
+              items={[
+                ...(browserMode ? [] : [{ value: "keychain", label: "OS keychain" }]),
+                { value: "prompt", label: "Prompt for password" },
+                { value: "env", label: "Environment variable" },
+                ...(profile.kind === "sqlserver" &&
                 !browserMode &&
-                navigator.userAgent.includes("Windows") && (
-                  <NativeSelectOption value="windows">Windows integrated</NativeSelectOption>
-                )}
-            </NativeSelect>
+                navigator.userAgent.includes("Windows")
+                  ? [{ value: "windows", label: "Windows integrated" }]
+                  : []),
+              ]}
+            />
           </Field>
           {source === "env" ? (
             <Field name="connection-variable" label="Variable name">
@@ -457,15 +456,16 @@ export function ConnectionForm({
                 />
               </Field>
               <Field name="connection-encrypt" label="Encryption">
-                <NativeSelect
+                <Select
                   id="connection-encrypt"
                   value={options.encryption ?? (options.encrypt === false ? "off" : "on")}
-                  onChange={(event) => option("encryption", event.target.value)}
-                >
-                  <NativeSelectOption value="on">On</NativeSelectOption>
-                  <NativeSelectOption value="off">Off</NativeSelectOption>
-                  <NativeSelectOption value="strict">Strict</NativeSelectOption>
-                </NativeSelect>
+                  onValueChange={(encryption) => option("encryption", encryption)}
+                  items={[
+                    { value: "on", label: "On" },
+                    { value: "off", label: "Off" },
+                    { value: "strict", label: "Strict" },
+                  ]}
+                />
               </Field>
               <Label className="read-only-field">
                 <input
@@ -479,17 +479,18 @@ export function ConnectionForm({
             </>
           ) : (
             <Field name="connection-tls" label="TLS">
-              <NativeSelect
+              <Select
                 id="connection-tls"
                 value={profile.tls}
-                onChange={(event) => field("tls", event.target.value as Connection["tls"])}
-              >
-                <NativeSelectOption value="prefer">Prefer</NativeSelectOption>
-                <NativeSelectOption value="disable">Disable</NativeSelectOption>
-                <NativeSelectOption value="require">Require</NativeSelectOption>
-                <NativeSelectOption value="verify-ca">Verify CA</NativeSelectOption>
-                <NativeSelectOption value="verify-full">Verify full</NativeSelectOption>
-              </NativeSelect>
+                onValueChange={(tls) => field("tls", tls)}
+                items={[
+                  { value: "prefer", label: "Prefer" },
+                  { value: "disable", label: "Disable" },
+                  { value: "require", label: "Require" },
+                  { value: "verify-ca", label: "Verify CA" },
+                  { value: "verify-full", label: "Verify full" },
+                ]}
+              />
             </Field>
           )}
           {profile.kind === "oracle" && (
@@ -502,15 +503,16 @@ export function ConnectionForm({
                 />
               </Field>
               <Field name="connection-role" label="Oracle role">
-                <NativeSelect
+                <Select
                   id="connection-role"
                   value={options.role ?? ""}
-                  onChange={(event) => option("role", event.target.value || null)}
-                >
-                  <NativeSelectOption value="">Default</NativeSelectOption>
-                  <NativeSelectOption value="SYSDBA">SYSDBA</NativeSelectOption>
-                  <NativeSelectOption value="SYSOPER">SYSOPER</NativeSelectOption>
-                </NativeSelect>
+                  onValueChange={(role) => option("role", role || null)}
+                  items={[
+                    { value: "", label: "Default" },
+                    { value: "SYSDBA", label: "SYSDBA" },
+                    { value: "SYSOPER", label: "SYSOPER" },
+                  ]}
+                />
               </Field>
               <Field name="connection-descriptor" label="TNS descriptor (optional)">
                 <Input
@@ -536,35 +538,34 @@ export function ConnectionForm({
             />
           </Field>
           <Field name="connection-color" label="Color">
-            <NativeSelect
+            <Select
               id="connection-color"
               value={profile.color ?? ""}
-              onChange={(event) => field("color", event.target.value || null)}
-            >
-              <NativeSelectOption value="">Environment default</NativeSelectOption>
-              <NativeSelectOption value="blue">Blue</NativeSelectOption>
-              <NativeSelectOption value="green">Green</NativeSelectOption>
-              <NativeSelectOption value="amber">Amber</NativeSelectOption>
-              <NativeSelectOption value="red">Red</NativeSelectOption>
-            </NativeSelect>
+              onValueChange={(color) => field("color", color || null)}
+              items={[
+                { value: "", label: "Environment default" },
+                { value: "blue", label: "Blue" },
+                { value: "green", label: "Green" },
+                { value: "amber", label: "Amber" },
+                { value: "red", label: "Red" },
+              ]}
+            />
           </Field>
           <Field name="connection-agent" label="Agent access">
-            <NativeSelect
+            <Select
               id="connection-agent"
               value={profile.agentAccess}
-              onChange={(event) =>
-                field("agentAccess", event.target.value as Connection["agentAccess"])
-              }
-            >
-              <NativeSelectOption value="none">Disabled</NativeSelectOption>
-              <NativeSelectOption value="read">Read</NativeSelectOption>
-              <NativeSelectOption
-                value="write"
-                disabled={profile.env === "prod" || profile.readOnly}
-              >
-                Read and write
-              </NativeSelectOption>
-            </NativeSelect>
+              onValueChange={(agentAccess) => field("agentAccess", agentAccess)}
+              items={[
+                { value: "none", label: "Disabled" },
+                { value: "read", label: "Read" },
+                {
+                  value: "write",
+                  label: "Read and write",
+                  disabled: profile.env === "prod" || profile.readOnly,
+                },
+              ]}
+            />
           </Field>
           {profile.agentAccess === "write" && profile.env !== "prod" && !profile.readOnly && (
             <Label className="read-only-field">

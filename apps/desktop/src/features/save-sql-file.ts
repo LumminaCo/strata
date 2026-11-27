@@ -81,6 +81,20 @@ export function isSqlTabUnsaved(text: string, saved?: SavedSqlState): boolean {
   return text.length > 0;
 }
 
+export function seedSavedSqlTabs(
+  tabs: ReadonlyArray<{ id: string; text: string; filePath?: string }>,
+): Record<string, SavedSqlState> {
+  const next: Record<string, SavedSqlState> = {};
+  for (const tab of tabs) {
+    const path = tab.filePath?.trim() || undefined;
+    next[tab.id] = {
+      ...(path !== undefined ? { path } : {}),
+      content: tab.text,
+    };
+  }
+  return next;
+}
+
 export function recordSavedSqlTab(
   current: Record<string, SavedSqlState>,
   tabId: string,

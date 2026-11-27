@@ -83,6 +83,7 @@ import {
   recordSavedSqlTab,
   removeSavedSqlTabs,
   saveSqlFile as persistSqlFile,
+  seedSavedSqlTabs,
   type SavedSqlState,
 } from "@/features/save-sql-file";
 import {
@@ -146,8 +147,12 @@ function readTheme() {
 
 export function App() {
   const [queryToasts, setQueryToasts] = useState<QueryCompletion[]>([]);
+  const [savedSqlByTab, setSavedSqlByTab] = useState<Record<string, SavedSqlState>>({});
   const notificationPrefs = useRef({ toast: true, sound: true });
   const data = useWorkspace({
+    onWorkspaceLoad(workspace) {
+      setSavedSqlByTab(seedSavedSqlTabs(workspace.tabs));
+    },
     onQueryComplete(completion) {
       const { toast, sound } = notificationPrefs.current;
       if (toast) {
@@ -238,7 +243,6 @@ export function App() {
   const editor = useRef<EditorHandle>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const editors = useRef(new Map<string, { current: EditorState | null }>());
-  const [savedSqlByTab, setSavedSqlByTab] = useState<Record<string, SavedSqlState>>({});
   const savingSql = useRef(false);
   const filterInput = useRef<FilterInputHandle>(null);
   const ThemeIcon = themeIcons[theme];

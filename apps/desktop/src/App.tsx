@@ -401,6 +401,12 @@ export function App() {
     expandExplorer();
   }
 
+  // A collapsed sidebar becomes display:none, so focus left inside it falls to <body>,
+  // outside the workspace keydown handler, and every shortcut stops firing.
+  function keepFocusOnHide(open: boolean, selector: string) {
+    if (!open && document.activeElement?.closest(selector)) editor.current?.focus();
+  }
+
   function collapseActivity() {
     if (activityPanelRef.current) activityPanelRef.current.collapse();
     else setActivityOpen(false);
@@ -1169,6 +1175,7 @@ export function App() {
           style={{ overflow: "hidden" }}
           onResize={(panelSize) => {
             const open = panelSize.asPercentage > 0;
+            keepFocusOnHide(open, ".connections-sidebar");
             setExplorerOpen((current) => (current === open ? current : open));
           }}
         >
@@ -1924,6 +1931,7 @@ export function App() {
           style={{ overflow: "hidden" }}
           onResize={(panelSize) => {
             const open = panelSize.asPercentage > 0;
+            keepFocusOnHide(open, ".activity-sidebar");
             setActivityOpen((current) => (current === open ? current : open));
           }}
         >

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Categories={{{categories}}}
+Comment={{{comment}}}
+Exec={{{exec}}}
+Icon=strata
+Name={{{name}}}
+StartupWMClass=strata
+Terminal=false
+Type=Application

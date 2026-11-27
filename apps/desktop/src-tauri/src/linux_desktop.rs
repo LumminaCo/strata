@@ -10,7 +10,8 @@ const APP_NAME: &str = "Strata";
 const APP_COMMENT: &str = "Desktop database client";
 const MANAGED_MARKER: &str = "X-Strata-Managed=true";
 const DESKTOP_EXEC_RESERVED: &str = " \t\n\"'\\><~|&;$*?()#`";
-const ICON_SIZES: [&str; 4] = ["32x32", "128x128", "256x256", "512x512"];
+const ICON_SIZES: [&str; 5] = ["32x32", "128x128", "256x256", "256x256@2", "512x512"];
+const STALE_ICON_SIZES: [&str; 4] = ["16x16", "24x24", "48x48", "64x64"];
 const PRIMARY_ICON_SIZE: &str = "256x256";
 
 pub fn configure_identity() {
@@ -27,11 +28,27 @@ pub fn sync_appimage_integration() {
     {
         return;
     }
+    let Some(base_dirs) = directories::BaseDirs::new() else {
+        return;
+    };
+    let data_home = base_dirs.data_local_dir().to_path_buf();
+    let home_dir = base_dirs.home_dir().to_path_buf();
+
     let Some(appimage) = env::var_os("APPIMAGE")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .filter(|path| path.is_file() && !path.starts_with("/tmp"))
     else {
+        // Non-AppImage installs (e.g. .deb) install system icons under
+        // /usr/share/icons/hicolor. If stale user-level overrides from an older
+        // install exist under ~/.local/share/icons or ~/.icons, refresh them so
+        // they cannot shadow the updated system icon.
+        let system_hicolor = Path::new("/usr/share/icons/hicolor");
+        if system_hicolor.is_dir()
+            && refresh_existing_user_icon_overrides(system_hicolor, &data_home, Some(&home_dir))
+        {
+            spawn_cache_refresh(data_home, true, false);
+        }
         return;
     };
     let Some(appdir) = resolve_appdir(
@@ -40,11 +57,6 @@ pub fn sync_appimage_integration() {
     ) else {
         return;
     };
-    let Some(base_dirs) = directories::BaseDirs::new() else {
-        return;
-    };
-    let data_home = base_dirs.data_local_dir().to_path_buf();
-    let home_dir = base_dirs.home_dir().to_path_buf();
     let system_desktop_exists = Path::new("/usr/share/applications/Strata.desktop").is_file()
         || Path::new("/usr/share/applications/strata.desktop").is_file();
 
@@ -57,23 +69,25 @@ pub fn sync_appimage_integration() {
     );
 
     if result.icons_changed || result.desktop_changed {
-        let icons_changed = result.icons_changed;
-        let desktop_changed = result.desktop_changed;
-        std::thread::spawn(move || {
-            if icons_changed {
-                let _ = Command::new("gtk-update-icon-cache")
-                    .args(["-q", "-t", "-f"])
-                    .arg(data_home.join("icons/hicolor"))
-                    .status();
-            }
-            if desktop_changed {
-                let _ = Command::new("update-desktop-database")
-                    .arg("-q")
-                    .arg(data_home.join("applications"))
-                    .status();
-            }
-        });
+        spawn_cache_refresh(data_home, result.icons_changed, result.desktop_changed);
     }
+}
+
+fn spawn_cache_refresh(data_home: PathBuf, icons_changed: bool, desktop_changed: bool) {
+    std::thread::spawn(move || {
+        if icons_changed {
+            let _ = Command::new("gtk-update-icon-cache")
+                .args(["-q", "-t", "-f"])
+                .arg(data_home.join("icons/hicolor"))
+                .status();
+        }
+        if desktop_changed {
+            let _ = Command::new("update-desktop-database")
+                .arg("-q")
+                .arg(data_home.join("applications"))
+                .status();
+        }
+    });
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -119,15 +133,84 @@ fn write_if_changed(target: &Path, bytes: &[u8]) -> bool {
     true
 }
 
-fn sync_user_icons(appdir: &Path, data_home: &Path) -> (bool, Option<Vec<u8>>) {
+fn remove_if_exists(path: &Path) -> bool {
+    path.is_file() && fs::remove_file(path).is_ok()
+}
+
+fn read_source_icon(source_hicolor: &Path, size: &str) -> Option<Vec<u8>> {
+    let direct = source_hicolor.join(size).join("apps/strata.png");
+    if let Ok(bytes) = fs::read(&direct) {
+        return Some(bytes);
+    }
+    if size == "256x256@2" {
+        return fs::read(source_hicolor.join("512x512/apps/strata.png")).ok();
+    }
+    None
+}
+
+fn cleanup_stale_user_icons(
+    data_home: &Path,
+    home_dir: Option<&Path>,
+    primary_icon: Option<&[u8]>,
+) -> bool {
+    let mut changed = false;
+    let target_hicolor = data_home.join("icons/hicolor");
+
+    // Remove legacy scalable SVGs or smaller fixed sizes that could shadow the
+    // updated hicolor PNGs.
+    for name in ["strata.svg", "strata-desktop.svg"] {
+        if remove_if_exists(&target_hicolor.join("scalable/apps").join(name)) {
+            changed = true;
+        }
+        if remove_if_exists(&data_home.join("icons").join(name)) {
+            changed = true;
+        }
+        if let Some(home) = home_dir
+            && remove_if_exists(&home.join(".icons").join(name))
+        {
+            changed = true;
+        }
+    }
+
+    for size in STALE_ICON_SIZES {
+        for name in ["strata.png", "strata-desktop.png"] {
+            if remove_if_exists(&target_hicolor.join(size).join("apps").join(name)) {
+                changed = true;
+            }
+        }
+    }
+
+    // Refresh any unthemed fallback PNGs under ~/.local/share/icons or ~/.icons.
+    if let Some(bytes) = primary_icon {
+        for name in ["strata.png", "strata-desktop.png"] {
+            let local_icon = data_home.join("icons").join(name);
+            if local_icon.is_file() && write_if_changed(&local_icon, bytes) {
+                changed = true;
+            }
+            if let Some(home) = home_dir {
+                let legacy_icon = home.join(".icons").join(name);
+                if legacy_icon.is_file() && write_if_changed(&legacy_icon, bytes) {
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    changed
+}
+
+fn sync_user_icons(
+    appdir: &Path,
+    data_home: &Path,
+    home_dir: Option<&Path>,
+) -> (bool, Option<Vec<u8>>) {
     let source_hicolor = appdir.join("usr/share/icons/hicolor");
     let target_hicolor = data_home.join("icons/hicolor");
     let mut changed = false;
     let mut primary_icon = None;
 
     for size in ICON_SIZES {
-        let source = source_hicolor.join(size).join("apps/strata.png");
-        let Ok(bytes) = fs::read(&source) else {
+        let Some(bytes) = read_source_icon(&source_hicolor, size) else {
             continue;
         };
         let target = target_hicolor.join(size).join("apps/strata.png");
@@ -143,7 +226,39 @@ fn sync_user_icons(appdir: &Path, data_home: &Path) -> (bool, Option<Vec<u8>>) {
         }
     }
 
+    if cleanup_stale_user_icons(data_home, home_dir, primary_icon.as_deref()) {
+        changed = true;
+    }
+
     (changed, primary_icon)
+}
+
+fn refresh_existing_user_icon_overrides(
+    source_hicolor: &Path,
+    data_home: &Path,
+    home_dir: Option<&Path>,
+) -> bool {
+    let target_hicolor = data_home.join("icons/hicolor");
+    let mut changed = false;
+    let primary_icon = read_source_icon(source_hicolor, PRIMARY_ICON_SIZE);
+
+    for size in ICON_SIZES {
+        let Some(bytes) = read_source_icon(source_hicolor, size) else {
+            continue;
+        };
+        for name in ["strata.png", "strata-desktop.png"] {
+            let target = target_hicolor.join(size).join("apps").join(name);
+            if target.is_file() && write_if_changed(&target, &bytes) {
+                changed = true;
+            }
+        }
+    }
+
+    if cleanup_stale_user_icons(data_home, home_dir, primary_icon.as_deref()) {
+        changed = true;
+    }
+
+    changed
 }
 
 fn escape_desktop_exec(path: &Path) -> String {
@@ -222,6 +337,8 @@ fn desktop_entry_matches_appimage(
     let mut in_desktop_entry = false;
     let appimage_str = appimage.to_string_lossy();
     let canonical_str = canonical_appimage.map(|path| path.to_string_lossy());
+    let mut claims_strata_wm_class = false;
+    let mut exec_looks_like_appimage = false;
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -235,6 +352,14 @@ fn desktop_entry_matches_appimage(
         if trimmed == MANAGED_MARKER {
             return true;
         }
+        if let Some(wm_class) = trimmed.strip_prefix("StartupWMClass=") {
+            let wm_class = wm_class.trim();
+            if wm_class.eq_ignore_ascii_case(APP_ID)
+                || wm_class.eq_ignore_ascii_case(LEGACY_APP_ID)
+            {
+                claims_strata_wm_class = true;
+            }
+        }
         if let Some(exec_value) = trimmed.strip_prefix("Exec=") {
             let exec_value = exec_value.trim();
             if exec_contains_path(exec_value, &appimage_str) {
@@ -245,9 +370,13 @@ fn desktop_entry_matches_appimage(
             {
                 return true;
             }
+            let lower = exec_value.to_ascii_lowercase();
+            if lower.contains(".appimage") && lower.contains("strata") {
+                exec_looks_like_appimage = true;
+            }
         }
     }
-    false
+    claims_strata_wm_class && exec_looks_like_appimage
 }
 
 fn is_refreshable_cached_icon(path: &Path, home_dir: Option<&Path>) -> bool {
@@ -260,13 +389,17 @@ fn is_refreshable_cached_icon(path: &Path, home_dir: Option<&Path>) -> bool {
     if !path.starts_with(home) {
         return false;
     }
-    let is_png = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("png"));
-    if !is_png {
+    let allowed_ext = match path.extension().and_then(|ext| ext.to_str()) {
+        None => true,
+        Some(ext) => matches!(
+            ext.to_ascii_lowercase().as_str(),
+            "png" | "svg" | "ico" | "webp" | "jpg" | "jpeg" | "xpm"
+        ),
+    };
+    if !allowed_ext {
         return false;
     }
+    let path_lower = path.to_string_lossy().to_ascii_lowercase();
     let has_strata_name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -276,7 +409,15 @@ fn is_refreshable_cached_icon(path: &Path, home_dir: Option<&Path>) -> bool {
         .and_then(|dir| dir.file_name())
         .and_then(|name| name.to_str())
         .is_some_and(|name| matches!(name, ".icons" | "icons"));
-    has_strata_name || in_icons_dir
+    let is_manager_cache = path_lower.contains("gearlever") || path_lower.contains("appimage");
+    has_strata_name || in_icons_dir || is_manager_cache
+}
+
+fn is_png_writable_path(path: &Path) -> bool {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        None => true,
+        Some(ext) => ext.eq_ignore_ascii_case("png"),
+    }
 }
 
 fn update_desktop_entry(
@@ -361,6 +502,7 @@ fn update_desktop_entry(
             if icon_value.is_empty()
                 || icon_value == LEGACY_APP_ID
                 || icon_value.starts_with("appimagekit_")
+                || icon_value.starts_with("gearlever_")
             {
                 out.push(format!("Icon={APP_ID}"));
                 desktop_changed = true;
@@ -368,13 +510,19 @@ fn update_desktop_entry(
                 if !icon_path.is_file() {
                     out.push(format!("Icon={APP_ID}"));
                     desktop_changed = true;
-                } else {
+                } else if is_refreshable_cached_icon(icon_path, home_dir) {
                     if let Some(bytes) = primary_icon
-                        && is_refreshable_cached_icon(icon_path, home_dir)
+                        && is_png_writable_path(icon_path)
                         && write_if_changed(icon_path, bytes)
                     {
                         icon_file_changed = true;
                     }
+                    // Point the desktop entry at the hicolor theme icon name so
+                    // GNOME Shell / KDE immediately reload the updated icon
+                    // instead of holding onto a cached absolute path texture.
+                    out.push(format!("Icon={APP_ID}"));
+                    desktop_changed = true;
+                } else {
                     out.push(line.to_owned());
                 }
             } else {
@@ -432,7 +580,7 @@ fn sync_appimage_with(
     home_dir: Option<&Path>,
     system_desktop_exists: bool,
 ) -> SyncResult {
-    let (mut icons_changed, primary_icon) = sync_user_icons(appdir, data_home);
+    let (mut icons_changed, primary_icon) = sync_user_icons(appdir, data_home, home_dir);
     let mut desktop_changed = false;
 
     let applications = data_home.join("applications");
@@ -487,11 +635,12 @@ mod tests {
 
     use super::{
         APP_ID, APP_NAME, MANAGED_MARKER, desktop_entry_matches_appimage, escape_desktop_exec,
-        resolve_appdir, sync_appimage_with, update_desktop_entry,
+        refresh_existing_user_icon_overrides, resolve_appdir, sync_appimage_with,
+        update_desktop_entry,
     };
 
     fn seed_appdir_icons(appdir: &Path, payload: &[u8]) {
-        for size in ["32x32", "128x128", "256x256", "512x512"] {
+        for size in ["32x32", "128x128", "256x256", "256x256@2", "512x512"] {
             let dir = appdir
                 .join("usr/share/icons/hicolor")
                 .join(size)
@@ -537,6 +686,15 @@ StartupWMClass=strata-desktop
 ";
         assert!(desktop_entry_matches_appimage(gear_lever, appimage, None));
 
+        let renamed_appimage = "\
+[Desktop Entry]
+Name=Strata
+Exec=/home/ada/Applications/Strata_0.7.0_amd64.AppImage
+Icon=/home/ada/Applications/.icons/strata
+StartupWMClass=strata
+";
+        assert!(desktop_entry_matches_appimage(renamed_appimage, appimage, None));
+
         let other = "\
 [Desktop Entry]
 Name=Other
@@ -550,7 +708,7 @@ Exec=/home/ada/Applications/Strata.AppImage.bak
         let root = tempdir().unwrap();
         let home = root.path();
         let appimage = home.join("Applications/Strata.AppImage");
-        let cached_icon = home.join("Applications/.icons/strata_cached.png");
+        let cached_icon = home.join("Applications/.icons/strata_cached");
         fs::create_dir_all(cached_icon.parent().unwrap()).unwrap();
         fs::write(&cached_icon, b"old-icon").unwrap();
 
@@ -569,8 +727,9 @@ Exec=/home/ada/Applications/Strata.AppImage.bak
 
         assert!(desktop_changed);
         assert!(icon_changed);
-        assert!(updated.contains(&format!("Name={APP_NAME}")));
-        assert!(updated.contains(&format!("StartupWMClass={APP_ID}")));
+        assert!(updated.contains(&format!("Name={APP_NAME}\n")));
+        assert!(updated.contains(&format!("Icon={APP_ID}\n")));
+        assert!(updated.contains(&format!("StartupWMClass={APP_ID}\n")));
         assert!(updated.contains("X-AppImage-Version=0.8.0"));
         assert_eq!(fs::read(&cached_icon).unwrap(), b"new-icon");
 
@@ -582,33 +741,48 @@ Exec=/home/ada/Applications/Strata.AppImage.bak
     }
 
     #[test]
-    fn replaces_legacy_theme_and_appimagekit_icons_with_strata() {
+    fn replaces_legacy_theme_and_appimage_manager_icons_with_strata() {
         let appimage = Path::new("/home/ada/Applications/Strata.AppImage");
-        let entry = "\
-[Desktop Entry]
-Name=Strata
-Exec=/home/ada/Applications/Strata.AppImage
-Icon=appimagekit_123456_strata-desktop
-";
-        let (updated, desktop_changed, _) = update_desktop_entry(entry, appimage, None, None);
-        assert!(desktop_changed);
-        assert!(updated.contains("Icon=strata\n"));
-        assert!(updated.contains("StartupWMClass=strata\n"));
+        for icon in [
+            "appimagekit_123456_strata-desktop",
+            "gearlever_strata_abc123",
+            "strata-desktop",
+        ] {
+            let entry = format!(
+                "[Desktop Entry]\n\
+                 Name=Strata\n\
+                 Exec=/home/ada/Applications/Strata.AppImage\n\
+                 Icon={icon}\n"
+            );
+            let (updated, desktop_changed, _) = update_desktop_entry(&entry, appimage, None, None);
+            assert!(desktop_changed);
+            assert!(updated.contains("Icon=strata\n"));
+            assert!(updated.contains("StartupWMClass=strata\n"));
+        }
     }
 
     #[test]
-    fn syncs_icons_and_creates_managed_desktop_entry_for_unintegrated_appimage() {
+    fn syncs_icons_cleans_stale_overrides_and_creates_managed_desktop_entry() {
         let root = tempdir().unwrap();
         let appdir = root.path().join("appdir");
         let data_home = root.path().join("data");
         let appimage = root.path().join("Applications/Strata.AppImage");
         fs::create_dir_all(appimage.parent().unwrap()).unwrap();
         fs::write(&appimage, b"appimage").unwrap();
-        seed_appdir_icons(&appdir, b"v0.8.1-icon");
+        seed_appdir_icons(&appdir, b"v0.8.2-icon");
+
+        let stale_svg = data_home.join("icons/hicolor/scalable/apps/strata.svg");
+        let stale_48 = data_home.join("icons/hicolor/48x48/apps/strata.png");
+        fs::create_dir_all(stale_svg.parent().unwrap()).unwrap();
+        fs::create_dir_all(stale_48.parent().unwrap()).unwrap();
+        fs::write(&stale_svg, b"<svg/>").unwrap();
+        fs::write(&stale_48, b"old-48").unwrap();
 
         let first = sync_appimage_with(&appimage, &appdir, &data_home, Some(root.path()), false);
         assert!(first.icons_changed);
         assert!(first.desktop_changed);
+        assert!(!stale_svg.exists());
+        assert!(!stale_48.exists());
 
         let desktop_path = data_home.join("applications/strata.desktop");
         let content = fs::read_to_string(&desktop_path).unwrap();
@@ -618,7 +792,11 @@ Icon=appimagekit_123456_strata-desktop
         assert!(content.contains(MANAGED_MARKER));
         assert_eq!(
             fs::read(data_home.join("icons/hicolor/256x256/apps/strata.png")).unwrap(),
-            b"v0.8.1-icon"
+            b"v0.8.2-icon"
+        );
+        assert_eq!(
+            fs::read(data_home.join("icons/hicolor/256x256@2/apps/strata.png")).unwrap(),
+            b"v0.8.2-icon"
         );
 
         let second = sync_appimage_with(&appimage, &appdir, &data_home, Some(root.path()), false);
@@ -633,6 +811,35 @@ Icon=appimagekit_123456_strata-desktop
         assert!(third.desktop_changed);
         let moved_content = fs::read_to_string(&desktop_path).unwrap();
         assert!(moved_content.contains(&format!("Exec={}\n", moved.display())));
+    }
+
+    #[test]
+    fn refreshes_existing_user_icon_overrides_for_system_installs() {
+        let root = tempdir().unwrap();
+        let system_hicolor = root.path().join("usr/share/icons/hicolor");
+        let data_home = root.path().join("data");
+        for size in ["32x32", "128x128", "256x256", "256x256@2", "512x512"] {
+            let dir = system_hicolor.join(size).join("apps");
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("strata.png"), b"new-system-icon").unwrap();
+        }
+
+        let user_override = data_home.join("icons/hicolor/256x256@2/apps/strata.png");
+        fs::create_dir_all(user_override.parent().unwrap()).unwrap();
+        fs::write(&user_override, b"old-user-icon").unwrap();
+
+        assert!(refresh_existing_user_icon_overrides(
+            &system_hicolor,
+            &data_home,
+            Some(root.path()),
+        ));
+        assert_eq!(fs::read(&user_override).unwrap(), b"new-system-icon");
+        assert!(!data_home.join("icons/hicolor/32x32/apps/strata.png").exists());
+        assert!(!refresh_existing_user_icon_overrides(
+            &system_hicolor,
+            &data_home,
+            Some(root.path()),
+        ));
     }
 
     #[test]

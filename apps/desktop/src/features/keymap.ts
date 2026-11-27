@@ -22,6 +22,7 @@ export const shortcuts = {
   palette: "Ctrl+K",
   activity: "Ctrl+Alt+B",
   explorer: "Ctrl+B",
+  results: "Ctrl+J",
   navigate: "F4",
   explain: "Ctrl+Shift+E",
   format: "Ctrl+Shift+F",
@@ -63,6 +64,8 @@ export function workspaceKeydown(event: KeyboardEvent, actions: Actions, browser
     if (key === "w") action = "closeTab";
     if (key === "k" || key === "p") action = "palette";
     if (!event.shiftKey && isKeyB) action = "explorer";
+    // Ctrl+Shift+J stays reserved for devtools (see isBrowserShortcut).
+    if (!event.shiftKey && key === "j") action = "results";
     if (key === "tab") action = event.shiftKey ? "previousTab" : "nextTab";
   }
   if (event.altKey && !event.ctrlKey && !event.metaKey) {

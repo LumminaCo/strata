@@ -290,6 +290,12 @@ function keybindingEntries(): KeybindingEntry[] {
     },
     {
       group: "Navigation & workspace",
+      label: "Toggle results",
+      description: "Show or hide the result tabs and messages below the editor.",
+      keys: shortcuts.results,
+    },
+    {
+      group: "Navigation & workspace",
       label: "Inspect object at cursor",
       description: "Resolve and inspect the table or column under the cursor.",
       keys: shortcuts.navigate,

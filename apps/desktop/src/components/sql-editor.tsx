@@ -16,6 +16,7 @@ import {
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, type Ref } from "react";
 
 import { editorKeys } from "@/features/keymap";
+import { sqlRegionFolding } from "@/features/sql-region-folding";
 import type { Connection, ErrorDto, Target } from "@/ipc/bindings/protocol";
 import { dispatch } from "@/ipc/client";
 import { editorTheme } from "@/theme/codemirror";
@@ -256,6 +257,7 @@ export function SqlEditor({
           history(),
           lineNumbers(),
           foldGutter(),
+          sqlRegionFolding,
           bracketMatching(),
           highlightActiveLine(),
           highlightActiveLineGutter(),

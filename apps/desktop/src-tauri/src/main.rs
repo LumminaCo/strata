@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod benchmark;
+#[cfg(target_os = "linux")]
+mod linux_desktop;
 mod sql_file;
 mod updater;
 
@@ -89,6 +91,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         None => {}
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux_desktop::configure_identity();
+        linux_desktop::sync_appimage_integration();
     }
     std::thread::spawn(strata_app::cli::sync_installed_cli);
     let benchmark = Benchmark::open()?;

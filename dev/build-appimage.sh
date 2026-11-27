@@ -22,8 +22,13 @@ dpkg-deb --extract "$deb" "$appdir"
 binary="$appdir/usr/bin/strata-desktop"
 grep -aFq '__TAURI_BUNDLE_TYPE_VAR_DEB' "$binary"
 LC_ALL=C sed -i 's/__TAURI_BUNDLE_TYPE_VAR_DEB/__TAURI_BUNDLE_TYPE_VAR_APP/g' "$binary"
+grep -Fq 'Name=Strata' "$appdir/usr/share/applications/Strata.desktop"
+grep -Fq 'Icon=strata' "$appdir/usr/share/applications/Strata.desktop"
+grep -Fq 'StartupWMClass=strata' "$appdir/usr/share/applications/Strata.desktop"
+test -f "$appdir/usr/share/icons/hicolor/256x256/apps/strata.png"
 ln -s usr/share/applications/Strata.desktop "$appdir/Strata.desktop"
-ln -s usr/share/icons/hicolor/128x128/apps/strata-desktop.png "$appdir/strata-desktop.png"
+ln -s usr/share/icons/hicolor/256x256/apps/strata.png "$appdir/strata.png"
+ln -s strata.png "$appdir/.DirIcon"
 cat > "$appdir/AppRun" <<'RUN'
 #!/bin/sh
 set -eu

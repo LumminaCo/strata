@@ -18,8 +18,8 @@ use rmcp::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use strata_app::{CatalogScope, Engine, Metadata};
 use strata_core::{AgentAccess, CoreError, DbKind, Environment, ObjectKind, Profile};
+use strata_engine::{CatalogScope, Engine, Metadata};
 use strata_sql::Dialect;
 use strata_store::{AuditEntry, AuditOutcome, Paths};
 

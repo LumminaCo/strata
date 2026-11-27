@@ -10,7 +10,7 @@ use strata_store::{
 use tokio::sync::watch;
 use uuid::Uuid;
 
-/// Common Rust entry point for open profiles, sessions and the persistent store.
+/// Common headless Rust entry point for open profiles, sessions and the persistent store.
 pub struct Engine {
     pub(crate) paths: Paths,
     config: WatchedConfig,
@@ -36,6 +36,10 @@ impl Engine {
             core,
             drivers,
         })
+    }
+
+    pub fn paths(&self) -> &Paths {
+        &self.paths
     }
 
     pub fn core_with_limits(&self, limits: Limits) -> Result<Core> {
@@ -79,9 +83,11 @@ impl Engine {
     pub fn config_updates(&self) -> watch::Receiver<ConfigUpdate> {
         self.config.updates()
     }
+
     pub fn config_store(&self) -> ConfigStore {
         ConfigStore::new(self.paths.config.clone())
     }
+
     pub fn core(&self) -> &Core {
         &self.core
     }
@@ -130,11 +136,7 @@ impl Engine {
         self.core.introspector(&profile, &secret).await
     }
 
-    pub(crate) async fn open_profile(
-        &self,
-        profile: Profile,
-        supplied: Option<Secret>,
-    ) -> Result<Uuid> {
+    pub async fn open_profile(&self, profile: Profile, supplied: Option<Secret>) -> Result<Uuid> {
         let (profile, secret) = match supplied {
             Some(secret) => (profile, secret),
             None => resolve_secret(profile, None).await?,
@@ -144,14 +146,14 @@ impl Engine {
             .await
     }
 
-    pub(crate) async fn workspace(&self) -> Result<Option<String>> {
+    pub async fn workspace(&self) -> Result<Option<String>> {
         let path = self.paths.database.clone();
         tokio::task::spawn_blocking(move || Database::open(&path)?.load_workspace())
             .await
             .map_err(background_error)?
     }
 
-    pub(crate) async fn save_workspace(&self, json: String) -> Result<()> {
+    pub async fn save_workspace(&self, json: String) -> Result<()> {
         let path = self.paths.database.clone();
         tokio::task::spawn_blocking(move || Database::open(&path)?.save_workspace(&json))
             .await

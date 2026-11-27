@@ -1,5 +1,5 @@
 [package]
-name = "strata"
+name = "strata-desktop"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -11,7 +11,6 @@ tauri-build.workspace = true
 directories.workspace = true
 serde_json.workspace = true
 strata-app.workspace = true
-strata-mcp.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tauri.workspace = true
@@ -28,9 +27,4 @@ custom-protocol = ["tauri/custom-protocol"]
 workspace = true
 
 [dev-dependencies]
-rmcp = { version = "=3.5.1", default-features = false, features = [
-  "client",
-  "transport-child-process",
-] }
 tempfile.workspace = true
-strata-store.workspace = true

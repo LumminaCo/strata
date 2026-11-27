@@ -13,6 +13,7 @@ import {
   Search,
   ShieldCheck,
   SlidersHorizontal,
+  Terminal,
   Trash2,
   X,
 } from "lucide-react";
@@ -29,7 +30,7 @@ import { ConnectionForm, emptyConnection } from "@/features/connections";
 import { shortcuts } from "@/features/keymap";
 import { playQuerySound, primeQuerySound } from "@/features/query-sound";
 import type { UpdateCheckState } from "@/features/use-app-update";
-import type { Connection, Settings } from "@/ipc/bindings/protocol";
+import type { CliStatus, Connection, Settings } from "@/ipc/bindings/protocol";
 import { browserMode, dispatch, errorMessage } from "@/ipc/client";
 
 export const defaultSettings: Settings = {
@@ -448,6 +449,32 @@ export interface SettingsUpdateProps {
   onInstall: () => string | null;
 }
 
+export function describeCliStatus(status: CliStatus | null, loading: boolean): string {
+  if (loading) return "Checking Strata CLI installation…";
+  if (!status) {
+    return "Install the standalone strata CLI so MCP clients can use saved connections without keeping Strata open.";
+  }
+  if (status.installed && status.needsUpdate) {
+    return `Installed at ${status.path ?? "user bin"}, but an updated version is ready.`;
+  }
+  if (status.installed && status.onPath) {
+    return `Installed on PATH at ${status.path}.`;
+  }
+  if (status.installed) {
+    return status.installDir
+      ? `Installed at ${status.path}. Add ${status.installDir} to PATH to run strata from any shell.`
+      : `Installed at ${status.path}.`;
+  }
+  if (status.ephemeral) {
+    return status.installDir
+      ? `Install the strata CLI into ${status.installDir} so MCP configs stay valid after closing the AppImage.`
+      : "Install the strata CLI to a permanent folder so MCP configs stay valid after closing the AppImage.";
+  }
+  return status.installDir
+    ? `Install the standalone strata CLI into ${status.installDir} for terminal and MCP access.`
+    : "Install the standalone strata CLI for terminal and MCP access.";
+}
+
 export function describeUpdateStatus(
   update: Pick<SettingsUpdateProps, "version" | "checking" | "checkState" | "status">,
 ): string {
@@ -508,6 +535,9 @@ export function SettingsDialog({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [mcpCopied, setMcpCopied] = useState(false);
+  const [cliStatus, setCliStatus] = useState<CliStatus | null>(null);
+  const [cliLoading, setCliLoading] = useState(false);
+  const [cliInstalling, setCliInstalling] = useState(false);
 
   const searchInput = useRef<HTMLInputElement>(null);
   const saveChain = useRef<Promise<void>>(Promise.resolve());
@@ -528,6 +558,25 @@ export function SettingsDialog({
       clearTimeout(mcpTimer.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (browserMode || section !== "agents") return;
+    let active = true;
+    setCliLoading(true);
+    void dispatch("cli_status")
+      .then((status) => {
+        if (active) setCliStatus(status);
+      })
+      .catch(() => {
+        if (active) setCliStatus(null);
+      })
+      .finally(() => {
+        if (active) setCliLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [section]);
 
   function persistSettings(next: Settings) {
     setDraft(next);
@@ -560,6 +609,20 @@ export function SettingsDialog({
     persistSettings({ ...defaultSettings });
   }
 
+  async function installCli() {
+    setCliInstalling(true);
+    setSaveError("");
+    try {
+      const status = await dispatch("install_cli");
+      setCliStatus(status);
+      onNotify?.(status.path ? `Strata CLI installed at ${status.path}.` : "Strata CLI installed.");
+    } catch (error) {
+      setSaveError(errorMessage(error));
+    } finally {
+      setCliInstalling(false);
+    }
+  }
+
   async function copyMcpConfig() {
     try {
       const config = await dispatch("mcp_config");
@@ -568,6 +631,11 @@ export function SettingsDialog({
       onNotify?.("MCP configuration copied.");
       clearTimeout(mcpTimer.current);
       mcpTimer.current = setTimeout(() => setMcpCopied(false), 2000);
+      if (!browserMode) {
+        void dispatch("cli_status")
+          .then((status) => setCliStatus(status))
+          .catch(() => {});
+      }
     } catch (error) {
       setSaveError(errorMessage(error));
     }
@@ -1246,14 +1314,47 @@ export function SettingsDialog({
                   )}
                   {!browserMode && (
                     <section className="settings-section">
-                      <h3>MCP server</h3>
+                      <h3>CLI &amp; MCP server</h3>
                       <div className="settings-card">
+                        <div className="settings-row">
+                          <div className="settings-row-info">
+                            <span className="settings-row-title">Strata CLI</span>
+                            <p className="settings-row-desc" role="status" aria-live="polite">
+                              {describeCliStatus(cliStatus, cliLoading)}
+                            </p>
+                          </div>
+                          <div className="settings-row-control">
+                            {cliStatus?.installed && !cliStatus.needsUpdate && (
+                              <Badge variant="outline">Installed</Badge>
+                            )}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              disabled={
+                                cliInstalling ||
+                                cliLoading ||
+                                (cliStatus !== null && !cliStatus.bundledAvailable)
+                              }
+                              onClick={() => void installCli()}
+                            >
+                              <Terminal />
+                              {cliInstalling
+                                ? "Installing…"
+                                : cliStatus?.needsUpdate
+                                  ? "Update CLI"
+                                  : cliStatus?.installed
+                                    ? "Reinstall CLI"
+                                    : "Install CLI"}
+                            </Button>
+                          </div>
+                        </div>
                         <div className="settings-row">
                           <div className="settings-row-info">
                             <span className="settings-row-title">MCP client configuration</span>
                             <p className="settings-row-desc">
-                              Copy the JSON server configuration to connect an external AI agent to
-                              Strata.
+                              Copy the JSON server configuration pointing to the standalone strata
+                              CLI so AI agents can query saved connections without keeping the app
+                              open.
                             </p>
                           </div>
                           <div className="settings-row-control">

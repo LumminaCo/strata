@@ -12,6 +12,7 @@ import type {
   ObjectDetails,
   ResolvedObject,
   CatalogSnapshot,
+  CliStatus,
   HistoryItem,
   Cell,
   Connection,
@@ -82,6 +83,8 @@ interface Commands {
   set_transaction_mode: [{ sessionId: string; manual: boolean }, TransactionState];
   finish_transaction: [{ sessionId: string; commit: boolean }, TransactionState];
   audit_list: [{ limit?: number }, AuditEntry[]];
+  cli_status: [undefined, CliStatus];
+  install_cli: [undefined, CliStatus];
   mcp_config: [undefined, { mcpServers: Record<string, { command: string; args: string[] }> }];
   workspace_load: [undefined, Workspace];
   workspace_bootstrap: [undefined, WorkspaceBootstrap];

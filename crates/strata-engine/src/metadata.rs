@@ -300,12 +300,12 @@ async fn load_snapshot(catalog: &dyn Introspector, schema: &str) -> Result<Catal
     })
 }
 
-pub(crate) fn database(engine: &Engine, scope: &CatalogScope) -> Result<String> {
+pub fn database(engine: &Engine, scope: &CatalogScope) -> Result<String> {
     let profile = engine.profile(scope.connection_id)?;
     Ok(scope.database.clone().unwrap_or(profile.database))
 }
 
-pub(crate) fn now_ms() -> i64 {
+pub fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |time| time.as_millis() as i64)

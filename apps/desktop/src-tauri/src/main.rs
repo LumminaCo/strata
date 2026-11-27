@@ -78,37 +78,19 @@ async fn run_query(
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments = std::env::args().skip(1);
     match arguments.next().as_deref() {
-        Some("mcp") => {
-            let mut only = std::collections::HashSet::new();
-            while let Some(argument) = arguments.next() {
-                if argument != "--only" {
-                    return Err("Use strata mcp [--only <connection-name>]".into());
-                }
-                let names = arguments
-                    .next()
-                    .ok_or("--only requires a connection name")?;
-                let names: Vec<_> = names
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|name| !name.is_empty())
-                    .collect();
-                if names.is_empty() {
-                    return Err("--only requires a connection name".into());
-                }
-                only.extend(names.into_iter().map(str::to_owned));
-            }
-            return tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()?
-                .block_on(strata_mcp::serve(only));
-        }
         Some("--version") => {
             println!("Strata {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
-        Some(_) => return Err("Use strata, strata --version, or strata mcp".into()),
+        Some(_) => {
+            return Err(
+                "Use strata-desktop or strata-desktop --version (use the strata CLI for MCP)"
+                    .into(),
+            );
+        }
         None => {}
     }
+    std::thread::spawn(strata_app::cli::sync_installed_cli);
     let benchmark = Benchmark::open()?;
     let context = tauri::generate_context!();
     let mut builder = tauri::Builder::default();

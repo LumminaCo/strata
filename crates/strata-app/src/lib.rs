@@ -1,8 +1,7 @@
 //! Commands shared by the desktop and browser development transports.
 
-mod engine;
+pub mod cli;
 mod inspection;
-mod metadata;
 mod protocol;
 mod query;
 
@@ -19,10 +18,10 @@ use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-pub use engine::Engine;
+pub use cli::CliStatus;
 pub use inspection::{ObjectDetails, ResolvedObject};
-pub use metadata::{CatalogScope, CatalogSnapshot, Metadata};
 pub use protocol::*;
+pub use strata_engine::{CatalogScope, CatalogSnapshot, Engine, Metadata, WireCell};
 
 pub struct AppService {
     engine: Engine,
@@ -304,7 +303,9 @@ impl AppService {
                         &kinds,
                         search.as_deref(),
                         offset,
-                        limit.unwrap_or(metadata::TABLE_PAGE_SIZE).clamp(1, 500),
+                        limit
+                            .unwrap_or(strata_engine::TABLE_PAGE_SIZE)
+                            .clamp(1, 500),
                     )
                     .await?,
             ),
@@ -395,17 +396,37 @@ impl AppService {
                 json(TransactionState { manual, open })
             }
             Command::AuditList { limit } => json(self.engine.audit(limit.unwrap_or(200)).await?),
+            Command::CliStatus => {
+                if !self.keychain {
+                    return Err(CoreError::config(
+                        "Open the native app to check the Strata CLI status",
+                    ));
+                }
+                tokio::task::spawn_blocking(cli::cli_status)
+                    .await
+                    .map_err(join_error)
+                    .and_then(json)
+            }
+            Command::InstallCli => {
+                if !self.keychain {
+                    return Err(CoreError::config(
+                        "Open the native app to install the Strata CLI",
+                    ));
+                }
+                tokio::task::spawn_blocking(cli::install_cli)
+                    .await
+                    .map_err(join_error)?
+                    .and_then(json)
+            }
             Command::McpConfig => {
                 if !self.keychain {
                     return Err(CoreError::config(
                         "Open the native app to copy the MCP configuration",
                     ));
                 }
-                let path = std::env::current_exe()
-                    .map_err(|_| CoreError::config("The Strata executable path is unavailable"))?;
-                Ok(
-                    serde_json::json!({ "mcpServers": { "strata": { "command": path, "args": ["mcp"] } } }),
-                )
+                tokio::task::spawn_blocking(cli::mcp_config)
+                    .await
+                    .map_err(join_error)?
             }
             Command::WorkspaceLoad => json(self.load_workspace().await?),
             Command::WorkspaceBootstrap => {

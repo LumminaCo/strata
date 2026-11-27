@@ -1,7 +1,7 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 help:
-    @echo "Strata tasks: up, down, gui, check, test-int, seed, bridge, bindings, bundle-linux, bundle-windows, ci"
+    @echo "Strata tasks: up, down, gui, check, test-int, seed, bridge, cli, bindings, bundle-linux, bundle-windows, ci"
 
 install:
     vp install --frozen-lockfile
@@ -12,7 +12,7 @@ web:
 devserver: bridge
     poll=(); if [[ "${CARGO_WATCH_POLL:-0}" == 1 ]]; then poll+=(--poll); fi; cargo watch "${poll[@]}" --ignore 'apps/desktop/**' --ignore 'artifacts/**' -x 'run --locked -p strata-devserver'
 
-gui: install bridge
+gui: install bridge cli
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ -s "${STRATA_XAUTH_SOURCE:-}" ]]; then
@@ -27,7 +27,12 @@ gui: install bridge
 frontend: install
     cd apps/desktop && vp build
 
-check: frontend
+cli:
+    mkdir -p apps/desktop/src-tauri/bin
+    cargo build --locked -p strata-cli
+    triple="$(rustc -vV | awk '/^host:/ { print $2 }')" && cp "${CARGO_TARGET_DIR:-target}/debug/strata" "apps/desktop/src-tauri/bin/strata-${triple}"
+
+check: frontend cli
     cargo fmt --check
     cargo clippy --locked --workspace --all-targets -- -D warnings
     cargo test --locked --workspace
@@ -38,14 +43,14 @@ check: frontend
 seed:
     bash dev/seed/mssql/seed.sh
 
-test-int: bridge frontend
+test-int: bridge frontend cli
     bash dev/test-int.sh
     STRATA_IT=1 SSL_CERT_FILE=/opt/strata-pg-trust/ca.pem cargo test --locked -p strata-driver-postgres --test postgres -- --ignored
     STRATA_IT=1 cargo test --locked -p strata-driver-mssql --test sql_server -- --ignored
     STRATA_IT=1 STRATA_ORACLE_BRIDGE=/workspace/artifacts/oracle-bridge ORACLE11_TEST="$(getent hosts oracle11 >/dev/null && printf 1 || printf 0)" cargo test --locked -p strata-driver-oracle -- --ignored
     STRATA_IT=1 cargo test --locked -p strata-app --test engine -- --ignored
     STRATA_IT=1 cargo test --locked -p strata-app --test desktop -- --ignored
-    STRATA_IT=1 STRATA_ORACLE_BRIDGE=/workspace/artifacts/oracle-bridge cargo test --locked -p strata --test mcp -- --ignored
+    STRATA_IT=1 STRATA_ORACLE_BRIDGE=/workspace/artifacts/oracle-bridge cargo test --locked -p strata-cli --test mcp -- --ignored
 
 bridge:
     mkdir -p artifacts
@@ -55,12 +60,18 @@ bindings:
     STRATA_UPDATE_BINDINGS=1 cargo test -p strata-app --lib typescript_bindings
 
 bundle-linux: install
+    mkdir -p apps/desktop/src-tauri/bin
+    cargo build --release --locked -p strata-cli
+    triple="$(rustc -vV | awk '/^host:/ { print $2 }')" && cp "${CARGO_TARGET_DIR:-target}/release/strata" "apps/desktop/src-tauri/bin/strata-${triple}"
     config=(); if [[ -n "${STRATA_RELEASE_CONFIG:-}" ]]; then config=(--config "$STRATA_RELEASE_CONFIG"); fi; cd apps/desktop && cargo tauri build "${config[@]}" --bundles deb -- --locked
     mkdir -p artifacts
     for deb in target/release/bundle/deb/*.deb; do name="${deb##*/}"; bash dev/build-appimage.sh "$deb" "artifacts/${name%.deb}.AppImage"; cp "$deb" artifacts/; done
     if [[ -n "${STRATA_RELEASE_CONFIG:-}" ]]; then for file in artifacts/*.AppImage artifacts/*.deb; do cargo tauri signer sign --app-version "$STRATA_RELEASE_VERSION" "$file"; done; fi
 
 bundle-windows: install
+    mkdir -p apps/desktop/src-tauri/bin
+    cargo xwin build --release --locked -p strata-cli --target x86_64-pc-windows-msvc
+    cp "${CARGO_TARGET_DIR:-target}/x86_64-pc-windows-msvc/release/strata.exe" "apps/desktop/src-tauri/bin/strata-x86_64-pc-windows-msvc.exe"
     config=(); if [[ -n "${STRATA_RELEASE_CONFIG:-}" ]]; then config=(--config "$STRATA_RELEASE_CONFIG"); fi; cd apps/desktop && cargo tauri build "${config[@]}" --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis -- --locked
     mkdir -p artifacts
     cp target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe artifacts/

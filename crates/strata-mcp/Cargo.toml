@@ -11,7 +11,7 @@ workspace = true
 rmcp = { version = "=3.5.1", features = ["transport-io"] }
 serde.workspace = true
 serde_json.workspace = true
-strata-app.workspace = true
+strata-engine.workspace = true
 strata-core.workspace = true
 strata-sql.workspace = true
 strata-store.workspace = true

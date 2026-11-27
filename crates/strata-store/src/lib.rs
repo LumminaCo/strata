@@ -11,7 +11,10 @@ use directories::ProjectDirs;
 use strata_core::{CoreError, Profile, Result, Secret};
 
 pub use config::{Config, ConfigStore, ConfigUpdate, Settings, Theme, WatchedConfig};
-pub use database::{Database, HistoryEntry, HistoryStatus, Source};
+pub use database::{
+    Database, HISTORY_LIMIT, HistoryEntry, HistoryPage, HistoryRecord, HistoryStatus, SavedQuery,
+    Source,
+};
 
 #[derive(Clone, Debug)]
 pub struct Paths {

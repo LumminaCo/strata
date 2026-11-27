@@ -66,12 +66,8 @@ import {
 } from "@/features/connections";
 import { AgentActivity } from "@/features/agent-activity";
 import { CatalogExplorer, type CatalogEntry } from "@/features/catalog-explorer";
-import {
-  CatalogPalette,
-  DatabasePicker,
-  QueryHistory,
-  SchemaPicker,
-} from "@/features/catalog-dialogs";
+import { CatalogPalette, DatabasePicker, SchemaPicker } from "@/features/catalog-dialogs";
+import { QueryHistorySidebar } from "@/features/query-history-sidebar";
 import { SettingsDialog } from "@/features/settings";
 import {
   QueryNotificationStack,
@@ -186,10 +182,16 @@ export function App() {
   const [gridAggregate, setGridAggregate] = useState<NumericAggregateSummary | null>(null);
   const [aggregateFn, setAggregateFn] = useState<AggregateFunction>(readAggregateFunction);
   const [explorerOpen, setExplorerOpen] = useState(true);
+  const [sidebarView, setSidebarView] = useState<"connections" | "history">("connections");
+  const [historyFocusToken, setHistoryFocusToken] = useState(0);
+  const sidebarBeforeHistory = useRef<{ open: boolean; view: "connections" | "history" }>({
+    open: true,
+    view: "connections",
+  });
   const explorerPanelRef = usePanelRef();
   const [palette, setPalette] = useState(false);
-  const [history, setHistory] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const historySidebarOpen = explorerOpen && sidebarView === "history";
   const [closeWarning, setCloseWarning] = useState<{ title: string; confirm: () => void }>();
   const windowState = useRef({
     dirty: data.hasOpenTransactions,
@@ -369,9 +371,77 @@ export function App() {
     else panel.collapse();
   }
 
+  function openConnectionsSidebar() {
+    setSidebarView("connections");
+    expandExplorer();
+  }
+
+  function openHistorySidebar() {
+    if (!historySidebarOpen) {
+      sidebarBeforeHistory.current = { open: explorerOpen, view: sidebarView };
+    }
+    setSidebarView("history");
+    expandExplorer();
+    setHistoryFocusToken((value) => value + 1);
+  }
+
+  function toggleHistorySidebar() {
+    if (historySidebarOpen) {
+      if (
+        sidebarBeforeHistory.current.open &&
+        sidebarBeforeHistory.current.view === "connections"
+      ) {
+        setSidebarView("connections");
+      } else {
+        collapseExplorer();
+      }
+      return;
+    }
+    openHistorySidebar();
+  }
+
   function resetSidebarWidth() {
     explorerPanelRef.current?.resize(`${SIDEBAR_DEFAULT_WIDTH}px`);
     writeSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
+  }
+
+  function runHistoryQuery(
+    sql: string,
+    options?: { title?: string; connectionId?: string | null },
+  ) {
+    if (active.busy) {
+      data.setNotice("Wait for the running query to finish.");
+      return;
+    }
+    if (tab && profile) {
+      setSchemaSelected(undefined);
+      if (notificationPrefs.current.sound) primeQuerySound();
+      void data.run({
+        text: sql,
+        target: { cursor: 0 },
+        mode: "script",
+        keepResults: true,
+        resultTitle: options?.title,
+      });
+      return;
+    }
+    const targetConnection =
+      (options?.connectionId
+        ? data.profiles.find((entry) => entry.id === options.connectionId)
+        : undefined) ?? data.profiles[0];
+    if (!targetConnection?.id) {
+      data.setNotice("Select or add a connection to run this query.");
+      return;
+    }
+    setSchemaSelected(undefined);
+    if (notificationPrefs.current.sound) primeQuerySound();
+    data.openAndRunTab({
+      connectionId: targetConnection.id,
+      database: targetConnection.database,
+      text: sql,
+      title: options?.title,
+      mode: "script",
+    });
   }
 
   function changeTheme() {
@@ -812,7 +882,6 @@ export function App() {
           valueView ||
           data.modal ||
           palette ||
-          history ||
           agentActivity ||
           settingsOpen ||
           closeWarning ||
@@ -849,7 +918,7 @@ export function App() {
               data.moveTab(-1);
             },
             palette: () => setPalette(true),
-            history: () => setHistory(true),
+            history: toggleHistorySidebar,
             explorer: toggleExplorer,
             navigate: () => {
               const target = editor.current?.target();
@@ -950,9 +1019,10 @@ export function App() {
           <Button
             variant="ghost"
             size="icon-sm"
-            title="Query history (Ctrl+H)"
+            aria-pressed={historySidebarOpen}
+            title={`Query history (${shortcuts.history})`}
             aria-label="Query history"
-            onClick={() => setHistory(true)}
+            onClick={toggleHistorySidebar}
           >
             <History />
           </Button>
@@ -1002,75 +1072,92 @@ export function App() {
             setExplorerOpen((current) => (current === open ? current : open));
           }}
         >
-          <aside className="explorer" aria-label="Connections">
-            <div className="sidebar-heading">
-              <h2>Connections</h2>
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                title="Collapse connections"
-                aria-label="Collapse connections"
-                onClick={collapseExplorer}
-              >
-                <ChevronRight />
-              </Button>
-            </div>
-            <CatalogExplorer
+          {sidebarView === "history" ? (
+            <QueryHistorySidebar
               profiles={data.profiles}
-              active={profile?.id}
-              revision={data.catalogRevision}
-              canPin={!!tab}
-              canInsertInEditor={Boolean(tab && !schemaActive)}
-              scope={data.scope}
-              onObjects={catalog.captureObjects}
-              onEntries={setEntries}
-              openSql={openTab}
-              onRefresh={data.invalidateCatalog}
-              onObject={openObject}
-              onPinObject={pinObject}
-              onInsertText={(text) => editor.current?.insert(text)}
-              onCopyText={(text, label) => void copyText(text, label)}
-              onCopyDdl={(entry) => void copyObjectDdl(entry)}
-              onEditConnection={(connection) => editConnection(connection)}
-              onDuplicateConnection={(connection) =>
-                editConnection({ ...connection, id: null, name: `${connection.name} copy` })
-              }
-              onDeleteConnection={(connection) => setDeletion(connection)}
+              activeConnection={profile}
+              canRun={Boolean(tab && profile)}
+              busy={Boolean(active.busy)}
+              revision={data.historyRevision}
+              focusToken={historyFocusToken}
+              currentEditorSql={() => editor.current?.text() ?? tab?.text ?? ""}
+              onRun={runHistoryQuery}
+              onCopy={(sql, label) => copyText(sql, label)}
+              onNotify={data.setNotice}
+              onShowConnections={openConnectionsSidebar}
+              onCollapse={collapseExplorer}
             />
-            {profile?.id && (
-              <div className="profile-actions">
+          ) : (
+            <aside className="explorer" aria-label="Connections">
+              <div className="sidebar-heading">
+                <h2>Connections</h2>
                 <Button
+                  size="icon-xs"
                   variant="ghost"
-                  size="icon-sm"
-                  title="Edit connection"
-                  aria-label="Edit connection"
-                  onClick={() => editConnection(profile)}
+                  title="Collapse connections"
+                  aria-label="Collapse connections"
+                  onClick={collapseExplorer}
                 >
-                  <Settings2 />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  title="Duplicate connection"
-                  aria-label="Duplicate connection"
-                  onClick={() =>
-                    editConnection({ ...profile, id: null, name: `${profile.name} copy` })
-                  }
-                >
-                  <Copy />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  title="Delete connection"
-                  aria-label="Delete connection"
-                  onClick={() => setDeletion(profile)}
-                >
-                  <Trash2 />
+                  <ChevronRight />
                 </Button>
               </div>
-            )}
-          </aside>
+              <CatalogExplorer
+                profiles={data.profiles}
+                active={profile?.id}
+                revision={data.catalogRevision}
+                canPin={!!tab}
+                canInsertInEditor={Boolean(tab && !schemaActive)}
+                scope={data.scope}
+                onObjects={catalog.captureObjects}
+                onEntries={setEntries}
+                openSql={openTab}
+                onRefresh={data.invalidateCatalog}
+                onObject={openObject}
+                onPinObject={pinObject}
+                onInsertText={(text) => editor.current?.insert(text)}
+                onCopyText={(text, label) => void copyText(text, label)}
+                onCopyDdl={(entry) => void copyObjectDdl(entry)}
+                onEditConnection={(connection) => editConnection(connection)}
+                onDuplicateConnection={(connection) =>
+                  editConnection({ ...connection, id: null, name: `${connection.name} copy` })
+                }
+                onDeleteConnection={(connection) => setDeletion(connection)}
+              />
+              {profile?.id && (
+                <div className="profile-actions">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    title="Edit connection"
+                    aria-label="Edit connection"
+                    onClick={() => editConnection(profile)}
+                  >
+                    <Settings2 />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    title="Duplicate connection"
+                    aria-label="Duplicate connection"
+                    onClick={() =>
+                      editConnection({ ...profile, id: null, name: `${profile.name} copy` })
+                    }
+                  >
+                    <Copy />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    title="Delete connection"
+                    aria-label="Delete connection"
+                    onClick={() => setDeletion(profile)}
+                  >
+                    <Trash2 />
+                  </Button>
+                </div>
+              )}
+            </aside>
+          )}
         </ResizablePanel>
 
         <ResizableHandle
@@ -1089,7 +1176,7 @@ export function App() {
                   variant="ghost"
                   title="Show connections"
                   aria-label="Show connections"
-                  onClick={expandExplorer}
+                  onClick={openConnectionsSidebar}
                 >
                   <Database />
                 </Button>
@@ -1847,18 +1934,7 @@ export function App() {
           onOpen={openObject}
           onHistory={() => {
             setPalette(false);
-            setHistory(true);
-          }}
-        />
-      )}
-      {history && (
-        <QueryHistory
-          connection={profile}
-          revision={data.historyRevision}
-          onClose={() => setHistory(false)}
-          onOpen={(sql) => {
-            if (profile?.id) data.addTab(profile.id, tab?.database, sql, tab?.schema);
-            setHistory(false);
+            openHistorySidebar();
           }}
         />
       )}

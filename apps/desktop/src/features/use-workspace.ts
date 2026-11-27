@@ -51,6 +51,7 @@ interface Query {
   target: Target;
   mode: RunMode;
   keepResults?: boolean;
+  resultTitle?: string;
 }
 
 type Modal =
@@ -91,8 +92,15 @@ export function beginQueryActivity(
 export function applyResultStart(
   current: Activity,
   event: Extract<RunEvent, { type: "resultStart" }>,
+  resultTitle?: string,
 ): Activity {
   const nextIndex = current.results.reduce((max, item) => Math.max(max, item.index), -1) + 1;
+  const normalizedTitle = resultTitle ? normalizeTabTitle(resultTitle) : undefined;
+  const title = normalizedTitle
+    ? event.resultIndex === 0
+      ? normalizedTitle
+      : normalizeTabTitle(`${normalizedTitle} (${event.resultIndex + 1})`)
+    : undefined;
   return {
     ...current,
     selected: event.resultIndex === 0 ? event.cursorId : (current.selected ?? event.cursorId),
@@ -102,6 +110,7 @@ export function applyResultStart(
         id: event.cursorId,
         columns: event.columns,
         index: nextIndex,
+        ...(title !== undefined ? { title } : {}),
         rows: event.rows,
         more: false,
         capped: false,
@@ -282,6 +291,7 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
     schema?: string;
     text: string;
     title?: string;
+    mode?: RunMode;
   }): string | null {
     if (!workspace || workspace.tabs.length >= 100) {
       setNotice("Close a tab before opening another.");
@@ -291,6 +301,7 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
     if (!connection) return null;
     const normalizedTitle =
       options.title === undefined ? undefined : normalizeTabTitle(options.title);
+    const mode = options.mode ?? "statement";
     const newTab: SavedTab = {
       id: crypto.randomUUID(),
       connectionId: options.connectionId,
@@ -302,8 +313,9 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
     setWorkspace((current) => current && { tabs: [...current.tabs, newTab], activeTab: newTab.id });
     void execute(newTab, connection, {
       text: options.text,
-      target: { selection: [0, options.text.length] },
-      mode: "statement",
+      target: mode === "script" ? { cursor: 0 } : { selection: [0, options.text.length] },
+      mode,
+      resultTitle: normalizedTitle,
     });
     return newTab.id;
   }
@@ -570,7 +582,7 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
         spans.set(event.index, event.span);
         break;
       case "resultStart":
-        update(id, (current) => applyResultStart(current, event));
+        update(id, (current) => applyResultStart(current, event, query.resultTitle));
         break;
       case "rows":
         update(id, (current) =>
@@ -876,6 +888,7 @@ export function useWorkspace(options?: UseWorkspaceOptions) {
     jobs.current.set(tab.id, job);
     try {
       const plan = await dispatch("plan_query", {
+        kind: profile.kind,
         text: query.text,
         target: query.target,
         mode: query.mode,

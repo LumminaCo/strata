@@ -13,7 +13,8 @@ import type {
   ResolvedObject,
   CatalogSnapshot,
   CliStatus,
-  HistoryItem,
+  HistoryPage,
+  SavedQueryItem,
   Cell,
   Connection,
   Page,
@@ -69,7 +70,16 @@ interface Commands {
     ObjectPage,
   ];
   refresh_metadata: [{ connectionId: string }, null];
-  history_list: [{ connectionId: string; limit?: number }, HistoryItem[]];
+  history_list: [
+    { connectionId?: string | null; search?: string; offset?: number; limit?: number },
+    HistoryPage,
+  ];
+  saved_query_list: [{ connectionId?: string | null; search?: string }, SavedQueryItem[]];
+  saved_query_save: [
+    { id?: string | null; connectionId?: string | null; title: string; sql: string },
+    SavedQueryItem,
+  ];
+  saved_query_delete: [{ id: string }, null];
   resolve_at: [
     { scope: CatalogScope; text: string; offset: number; sessionId?: string; schema?: string },
     ResolvedObject | null,

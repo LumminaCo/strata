@@ -355,8 +355,31 @@ pub enum Command {
         connection_id: Uuid,
     },
     HistoryList {
-        connection_id: Uuid,
+        #[serde(default)]
+        connection_id: Option<Uuid>,
+        #[serde(default)]
+        search: Option<String>,
+        #[serde(default)]
+        offset: Option<u32>,
+        #[serde(default)]
         limit: Option<u32>,
+    },
+    SavedQueryList {
+        #[serde(default)]
+        connection_id: Option<Uuid>,
+        #[serde(default)]
+        search: Option<String>,
+    },
+    SavedQuerySave {
+        #[serde(default)]
+        id: Option<Uuid>,
+        #[serde(default)]
+        connection_id: Option<Uuid>,
+        title: String,
+        sql: String,
+    },
+    SavedQueryDelete {
+        id: Uuid,
     },
     ResolveAt {
         scope: crate::CatalogScope,
@@ -411,6 +434,10 @@ pub struct TransactionState {
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryItem {
+    #[ts(type = "number")]
+    pub id: i64,
+    pub connection_id: String,
+    pub source: String,
     pub sql: String,
     #[ts(type = "number")]
     pub started_at: i64,
@@ -419,14 +446,62 @@ pub struct HistoryItem {
     pub status: String,
 }
 
-impl From<strata_store::HistoryEntry> for HistoryItem {
-    fn from(entry: strata_store::HistoryEntry) -> Self {
+impl From<strata_store::HistoryRecord> for HistoryItem {
+    fn from(record: strata_store::HistoryRecord) -> Self {
         Self {
-            sql: entry.sql,
-            started_at: entry.started_at,
-            duration_ms: entry.duration_ms,
-            rows: entry.rows,
-            status: entry.status.as_str().into(),
+            id: record.id,
+            connection_id: record.entry.connection_id,
+            source: record.entry.source.as_str().into(),
+            sql: record.entry.sql,
+            started_at: record.entry.started_at,
+            duration_ms: record.entry.duration_ms,
+            rows: record.entry.rows,
+            status: record.entry.status.as_str().into(),
+        }
+    }
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryPage {
+    pub items: Vec<HistoryItem>,
+    #[ts(type = "number")]
+    pub total: u64,
+    pub has_more: bool,
+}
+
+impl From<strata_store::HistoryPage> for HistoryPage {
+    fn from(page: strata_store::HistoryPage) -> Self {
+        Self {
+            items: page.items.into_iter().map(HistoryItem::from).collect(),
+            total: page.total,
+            has_more: page.has_more,
+        }
+    }
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedQueryItem {
+    pub id: String,
+    pub connection_id: Option<String>,
+    pub title: String,
+    pub sql: String,
+    #[ts(type = "number")]
+    pub created_at: i64,
+    #[ts(type = "number")]
+    pub updated_at: i64,
+}
+
+impl From<strata_store::SavedQuery> for SavedQueryItem {
+    fn from(item: strata_store::SavedQuery) -> Self {
+        Self {
+            id: item.id,
+            connection_id: item.connection_id,
+            title: item.title,
+            sql: item.sql,
+            created_at: item.created_at,
+            updated_at: item.updated_at,
         }
     }
 }
@@ -455,6 +530,8 @@ fn typescript_bindings() {
         crate::CatalogScope::decl(&cfg),
         crate::CatalogSnapshot::decl(&cfg),
         HistoryItem::decl(&cfg),
+        HistoryPage::decl(&cfg),
+        SavedQueryItem::decl(&cfg),
         strata_store::AuditEntry::decl(&cfg),
         strata_store::Settings::decl(&cfg),
         strata_store::Theme::decl(&cfg),

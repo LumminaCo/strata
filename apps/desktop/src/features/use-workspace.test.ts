@@ -160,6 +160,39 @@ describe("result tab activity transitions", () => {
     expect(afterClosingAll.results).toEqual([]);
     expect(afterClosingAll.selected).toBe("messages");
   });
+
+  it("applies custom result titles when running named queries in a new result tab", () => {
+    const initial = activityWithOneResult();
+    const running = beginQueryActivity(initial, session, true);
+
+    const first = applyResultStart(
+      running,
+      {
+        type: "resultStart",
+        cursorId: "cursor-2",
+        resultIndex: 0,
+        columns: [column],
+        rows: [[2]],
+      },
+      "  Active users  ",
+    );
+    expect(first.results[1]?.title).toBe("Active users");
+    expect(first.selected).toBe("cursor-2");
+
+    const second = applyResultStart(
+      first,
+      {
+        type: "resultStart",
+        cursorId: "cursor-3",
+        resultIndex: 1,
+        columns: [column],
+        rows: [[3]],
+      },
+      "Active users",
+    );
+    expect(second.results[2]?.title).toBe("Active users (2)");
+    expect(second.selected).toBe("cursor-2");
+  });
 });
 
 describe("tab file path persistence helper", () => {

@@ -169,9 +169,79 @@ impl Engine {
         .map_err(background_error)?
     }
 
+    pub async fn query_history(
+        &self,
+        profile: Option<Uuid>,
+        search: Option<String>,
+        offset: u32,
+        limit: u32,
+    ) -> Result<strata_store::HistoryPage> {
+        let path = self.paths.database.clone();
+        let connection_id = profile.map(|id| id.to_string());
+        tokio::task::spawn_blocking(move || {
+            Database::open(&path)?.query_history(
+                connection_id.as_deref(),
+                search.as_deref(),
+                offset,
+                limit,
+            )
+        })
+        .await
+        .map_err(background_error)?
+    }
+
     pub async fn record_history(&self, entry: HistoryEntry) -> Result<()> {
         let path = self.paths.database.clone();
         tokio::task::spawn_blocking(move || Database::open(&path)?.record_history(&entry))
+            .await
+            .map_err(background_error)?
+    }
+
+    pub async fn saved_queries(
+        &self,
+        profile: Option<Uuid>,
+        search: Option<String>,
+    ) -> Result<Vec<strata_store::SavedQuery>> {
+        let path = self.paths.database.clone();
+        let connection_id = profile.map(|id| id.to_string());
+        tokio::task::spawn_blocking(move || {
+            Database::open(&path)?.list_saved_queries(connection_id.as_deref(), search.as_deref())
+        })
+        .await
+        .map_err(background_error)?
+    }
+
+    pub async fn save_query(
+        &self,
+        id: Option<Uuid>,
+        profile: Option<Uuid>,
+        title: String,
+        sql: String,
+    ) -> Result<strata_store::SavedQuery> {
+        let path = self.paths.database.clone();
+        let connection_id = profile.map(|value| value.to_string());
+        let now = crate::now_ms();
+        tokio::task::spawn_blocking(move || {
+            let db = Database::open(&path)?;
+            match id {
+                Some(existing) => db.update_saved_query(&existing.to_string(), &title, &sql, now),
+                None => db.create_saved_query(
+                    &Uuid::now_v7().to_string(),
+                    connection_id.as_deref(),
+                    &title,
+                    &sql,
+                    now,
+                ),
+            }
+        })
+        .await
+        .map_err(background_error)?
+    }
+
+    pub async fn delete_saved_query(&self, id: Uuid) -> Result<()> {
+        let path = self.paths.database.clone();
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || Database::open(&path)?.delete_saved_query(&id))
             .await
             .map_err(background_error)?
     }

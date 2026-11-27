@@ -317,15 +317,44 @@ impl AppService {
             }
             Command::HistoryList {
                 connection_id,
+                search,
+                offset,
                 limit,
+            } => json(HistoryPage::from(
+                self.engine
+                    .query_history(
+                        connection_id,
+                        search,
+                        offset.unwrap_or(0),
+                        limit.unwrap_or(100).clamp(1, 1_000),
+                    )
+                    .await?,
+            )),
+            Command::SavedQueryList {
+                connection_id,
+                search,
             } => json(
                 self.engine
-                    .history(connection_id, limit.unwrap_or(100).clamp(1, 1_000))
+                    .saved_queries(connection_id, search)
                     .await?
                     .into_iter()
-                    .map(HistoryItem::from)
+                    .map(SavedQueryItem::from)
                     .collect::<Vec<_>>(),
             ),
+            Command::SavedQuerySave {
+                id,
+                connection_id,
+                title,
+                sql,
+            } => json(SavedQueryItem::from(
+                self.engine
+                    .save_query(id, connection_id, title, sql)
+                    .await?,
+            )),
+            Command::SavedQueryDelete { id } => {
+                self.engine.delete_saved_query(id).await?;
+                Ok(Value::Null)
+            }
             Command::ResolveAt {
                 scope,
                 session_id,
